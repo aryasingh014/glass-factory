@@ -13,7 +13,18 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["DM Sans", "sans-serif"],
+        display: ["Manrope", "sans-serif"],
+      },
       colors: {
+        brand: {
+          50: "#eef3ff",
+          100: "#dbe6ff",
+          500: "#3165ed",
+          600: "#2858dc",
+          950: "#172b5b",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

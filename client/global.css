@@ -1,120 +1,65 @@
-/** @import must precede all other statements */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /**
-   * Tailwind CSS theme
-   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
-   * A different format will require also updating the theme in tailwind.config.ts.
-  */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
+    --background: 220 33% 98%;
+    --foreground: 222 47% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.5rem;
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 84% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 25% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 25% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 220 25% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 22% 91%;
+    --input: 220 22% 91%;
+    --ring: 222 84% 56%;
+    --radius: 0.8rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 222 84% 56%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 220 25% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 220 22% 91%;
+    --sidebar-ring: 222 84% 56%;
   }
+
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; font-family: "DM Sans", sans-serif; }
+  h1, h2, h3, h4, h5, h6 { font-family: "Manrope", sans-serif; }
+  button, input { font-family: inherit; }
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) { overflow-wrap: anywhere; word-break: break-word; }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-  }
-
-  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  pre,
-  code {
-    overflow-x: auto;
-    white-space: pre;
-  }
+@layer components {
+  .brand-mark { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-[#3165ed] text-white shadow-[0_6px_14px_rgba(49,101,237,0.25)]; }
+  .sidebar-link { @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold text-slate-500 transition-all hover:bg-slate-50 hover:text-slate-800; }
+  .sidebar-link-active { @apply bg-[#eef3ff] text-[#3165ed] shadow-sm; }
+  .avatar { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#dbe6ff] text-[10px] font-extrabold text-[#3165ed]; }
+  .stat-card { @apply rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_2px_10px_rgba(35,55,90,0.025)] transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(35,55,90,0.07)]; }
+  .icon-tile { @apply flex h-9 w-9 items-center justify-center rounded-xl; }
+  .panel { @apply rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_2px_10px_rgba(35,55,90,0.025)]; }
+  .section-title { @apply text-[15px] font-extrabold tracking-[-0.025em] text-slate-900; }
+  .section-subtitle { @apply mt-1 text-[11px] font-medium text-slate-400; }
+  .stage-card { @apply rounded-2xl p-4 transition-transform hover:-translate-y-1; }
+  .stage-icon { @apply flex h-7 w-7 items-center justify-center rounded-lg text-white; }
+  .scan-panel { @apply rounded-2xl bg-[#172b5b] p-6 shadow-[0_10px_25px_rgba(23,43,91,0.12)]; }
+  .status-pill { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold; }
+  .status-blue { @apply bg-[#eef3ff] text-[#3165ed]; }
+  .status-green { @apply bg-[#eaf8ee] text-[#27904d]; }
+  .status-amber { @apply bg-[#fff5e9] text-[#c47720]; }
+  .queue-icon { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg; }
+  .toast-notice { @apply fixed right-5 top-20 z-50 flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-xs font-semibold text-white shadow-xl; }
 }
