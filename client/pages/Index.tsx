@@ -1,214 +1,2214 @@
-import { useMemo, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
-  AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
-  Bell,
-  Box,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  CircleHelp,
-  ClipboardList,
-  FileSpreadsheet,
-  FileText,
-  Filter,
-  Gauge,
-  GlassWater,
   LayoutDashboard,
-  Menu,
-  MoreHorizontal,
-  PackageCheck,
-  Plus,
-  QrCode,
-  RefreshCw,
+  FileText,
+  Upload,
   ScanLine,
   Search,
-  Settings2,
+  CheckCircle,
+  AlertTriangle,
+  RefreshCw,
+  Check,
+  Box,
+  Layers,
+  Flame,
+  Building2,
   ShieldCheck,
+  ClipboardList,
+  Trash2,
+  Grid,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
+  Menu,
+  Bell,
+  Sun,
+  ArrowRight,
+  Plus,
+  Eye,
+  Printer,
   Sparkles,
+  RotateCw,
+  Clock,
+  Activity,
+  TrendingUp,
+  Gauge,
+  Zap,
+  Workflow,
+  Factory,
+  Percent,
+  SlidersHorizontal,
+  Timer,
+  CheckSquare,
+  Boxes,
   Truck,
-  Upload,
-  Users,
-  X,
+  Scissors,
+  Radio,
+  Filter,
+  ArrowUpRight,
+  CheckCircle2,
+  AlertCircle,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import * as XLSX from "xlsx";
-
-const navItems = [
-  { label: "Overview", icon: LayoutDashboard },
-  { label: "Proforma Invoices", icon: FileText, count: "24" },
-  { label: "Production", icon: Gauge },
-  { label: "Reports", icon: ClipboardList },
-];
-
-const stages = [
-  { name: "Cutting", key: "CUTTING", count: 202, color: "#3165ed", tint: "#eaf0ff" },
-  { name: "Tempering", key: "TEMPERING", count: 38, color: "#7c5ce4", tint: "#f0edff" },
-  { name: "Lamination", key: "LAMINATION", count: 16, color: "#e58a35", tint: "#fff3e6" },
-  { name: "DGU", key: "DGU", count: 56, color: "#16a691", tint: "#e7f8f5" },
-  { name: "Finished", key: "FINISHED", count: 186, color: "#55ad69", tint: "#ebf8ee" },
-];
-
-const recentPIs = [
-  { number: "SFO-0384", customer: "CIJI BLDG. METALIC CONST. IND. LLC", project: "G_1P_10_ST · GL01 Site Discovery", items: 202, area: "1,396 × 2,350 mm", status: "In Production", tone: "blue", date: "Opt. date · 18 Jul 2026" },
-  { number: "OB-03084", customer: "CIJI BLDG. METALIC CONST. IND. LLC", project: "G_1P_10_ST · GL03 Site Discovery", items: 38, area: "1,396 × 1,210 mm", status: "In Production", tone: "blue", date: "Batch 1468" },
-  { number: "SFO-1348", customer: "Sejal Glass Manufacturing Products LLC", project: "Shop floor order · Phase 02", items: 12, area: "1,383 × 2,798 mm", status: "Completed", tone: "green", date: "SFO date · 25 Apr 2026" },
-  { number: "GL-009-00", customer: "Villa Glass", project: "Phase-02 · 02 Nos Villa Glass", items: 2, area: "1,032 × 2,798 mm", status: "Pending", tone: "amber", date: "Imported workbook" },
-];
-
-const queueItems = [
-  { serial: "10126270134900002", detail: "6MM SYP YBE 0140N CLEAR · GL01", stage: "Tempering", eta: "12 min", color: "#7c5ce4" },
-  { serial: "10126270134900006", detail: "6MM SYP YBE 0140N CLEAR · GL03", stage: "DGU", eta: "28 min", color: "#16a691" },
-  { serial: "OB-03084 / POS 1", detail: "1,396 × 2,350 mm · 12MM BLACK SPACER", stage: "Cutting", eta: "45 min", color: "#3165ed" },
-];
-
-type ImportedGlassItem = { barcode: string; itemCode: string; width: string; height: string; quantity: string; glassType: string };
-
-function generatePiNumber() {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  return `PI-${date}-001`;
-}
-
-function parseGlassWorkbook(file: File): Promise<ImportedGlassItem[]> {
-  return file.arrayBuffer().then((buffer) => {
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, { header: 1, defval: "" });
-    const headerRow = rows.findIndex((row) => row.some((cell) => String(cell).toLowerCase().includes("width") || String(cell).toLowerCase().includes("qty")));
-    const headers = (rows[headerRow] || []).map((cell) => String(cell).trim().toLowerCase());
-    const findColumn = (...names: string[]) => headers.findIndex((header) => names.some((name) => header.includes(name)));
-    const widthIndex = findColumn("width"), heightIndex = findColumn("height"), quantityIndex = findColumn("qty", "quantity");
-    const itemIndex = findColumn("item code", "glass code", "sfo #", "pos #");
-    const glassIndex = findColumn("glass type", "description", "glass");
-    const items = rows.slice(headerRow + 1).filter((row) => row.some((cell) => String(cell).trim())).map((row, index) => ({
-      barcode: `SEJAL-${generatePiNumber().replace(/-/g, "")}-${String(index + 1).padStart(4, "0")}`,
-      itemCode: String(row[itemIndex] || `GL-${String(index + 1).padStart(3, "0")}`),
-      width: String(row[widthIndex] || "—"),
-      height: String(row[heightIndex] || "—"),
-      quantity: String(row[quantityIndex] || "1"),
-      glassType: String(row[glassIndex] || "6MM SYP YBE 0140N CLEAR"),
-    }));
-    return items.slice(0, 250);
-  });
-}
-
-function StatCard({ icon: Icon, label, value, change, positive = true, accent }: { icon: typeof Box; label: string; value: string; change: string; positive?: boolean; accent: string }) {
-  return (
-    <div className="stat-card group">
-      <div className="flex items-start justify-between">
-        <div className="icon-tile" style={{ backgroundColor: accent + "14", color: accent }}><Icon size={19} strokeWidth={2.2} /></div>
-        <MoreHorizontal size={18} className="text-slate-300 transition-colors group-hover:text-slate-500" />
-      </div>
-      <div className="mt-5 flex items-end justify-between gap-2">
-        <div><p className="text-[13px] font-medium text-slate-500">{label}</p><p className="mt-1 text-[28px] font-bold tracking-[-0.04em] text-slate-900">{value}</p></div>
-        <span className={`mb-1 flex items-center gap-0.5 text-xs font-semibold ${positive ? "text-emerald-600" : "text-rose-500"}`}>
-          {positive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{change}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ModuleView({ module, onNotice, onScan }: { module: string; onNotice: (message: string) => void; onScan: () => void }) {
-  const [productionFilter, setProductionFilter] = useState("All stages");
-  const [reportType, setReportType] = useState("Production summary");
-  const [uploadName, setUploadName] = useState("");
-  const [generatedPi, setGeneratedPi] = useState("");
-  const [importedItems, setImportedItems] = useState<ImportedGlassItem[]>([]);
-  const moduleCopy: Record<string, { title: string; subtitle: string }> = {
-    "Proforma Invoices": { title: "Proforma invoices", subtitle: "Create, import, release, and track every customer order." },
-    Production: { title: "Production control", subtitle: "Move glass sheets through each stage with confidence." },
-    Reports: { title: "Reports & insights", subtitle: "Export production performance and exception reports." },
-    "Scan station": { title: "Scan station", subtitle: "Use a barcode to instantly locate and update a glass item." },
-    Dispatch: { title: "Dispatch", subtitle: "Coordinate finished items ready to leave the plant." },
-    Settings: { title: "Plant settings", subtitle: "Manage users, routes, stations, and operational preferences." },
-  };
-  const copy = moduleCopy[module] || moduleCopy.Production;
-
-  return <>
-    <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-400"><span>Workspace</span><span>/</span><span className="text-slate-600">{module}</span></div><h2 className="text-[26px] font-extrabold tracking-[-0.045em] text-slate-950 sm:text-[30px]">{copy.title}</h2><p className="mt-1 text-sm text-slate-500">{copy.subtitle}</p></div><div className="flex gap-2">{module === "Scan station" ? <Button onClick={onScan} className="h-10 gap-2 rounded-xl bg-[#3165ed] px-4 text-xs font-bold text-white"><ScanLine size={16} /> Open scanner</Button> : <Button onClick={() => onNotice(module === "Proforma Invoices" ? "New PI workflow opened" : "Action queued for review")} className="h-10 gap-2 rounded-xl bg-[#3165ed] px-4 text-xs font-bold text-white"><Plus size={16} /> {module === "Proforma Invoices" ? "New PI" : "Create export"}</Button>}</div></div>
-    {module === "Proforma Invoices" && <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-3"><StatCard icon={FileText} label="Total invoices" value="124" change="12.5%" accent="#3165ed" /><StatCard icon={RefreshCw} label="In production" value="2" change="8.2%" accent="#7c5ce4" /><StatCard icon={Upload} label="Imports this month" value="18" change="6.4%" accent="#16a691" /></div>{generatedPi && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-600">Import complete</p><h3 className="mt-1 text-lg font-extrabold tracking-[-0.03em] text-emerald-950">{generatedPi}</h3><p className="mt-1 text-xs text-emerald-700">{importedItems.length} item records and barcodes generated from {uploadName}.</p></div><Button onClick={() => onNotice(`${generatedPi} released to production`)} className="h-9 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700">Release to production</Button></div><div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{importedItems.slice(0, 6).map((item) => <div key={item.barcode} className="rounded-xl border border-emerald-100 bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-800">{item.barcode}</p><p className="mt-1 truncate text-[10px] text-slate-500">{item.itemCode} · {item.width} × {item.height}</p></div>)}</div></div>}<section className="panel overflow-hidden p-0"><div className="flex flex-col justify-between gap-3 px-6 py-5 sm:flex-row sm:items-center"><div><h3 className="section-title">Invoice register</h3><p className="section-subtitle">Search, review, and release customer orders</p></div><label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-[#9db7ff] bg-[#f5f8ff] px-3 py-2 text-xs font-bold text-[#3165ed]"><Upload size={14} />{uploadName || "Import Excel"}<input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; setUploadName(file.name); try { const items = await parseGlassWorkbook(file); const piNumber = generatePiNumber(); setImportedItems(items); setGeneratedPi(piNumber); onNotice(`${piNumber} generated with ${items.length} barcode${items.length === 1 ? "" : "s"}`); } catch { setImportedItems([]); setGeneratedPi(""); onNotice("Could not read this workbook"); } }} /></label></div><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left"><thead><tr className="border-y border-slate-100 bg-slate-50/70 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400"><th className="px-6 py-3">PI number</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Project</th><th className="px-4 py-3">Items</th><th className="px-4 py-3">Status</th><th className="px-6 py-3 text-right">Action</th></tr></thead><tbody>{recentPIs.map((pi) => <tr key={pi.number} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"><td className="px-6 py-4 text-xs font-bold text-[#3165ed]">{pi.number}</td><td className="px-4 py-4 text-xs font-semibold text-slate-800">{pi.customer}</td><td className="px-4 py-4 text-xs text-slate-500">{pi.project}</td><td className="px-4 py-4 text-xs font-bold text-slate-700">{pi.items}</td><td className="px-4 py-4"><span className={`status-pill status-${pi.tone}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{pi.status}</span></td><td className="px-6 py-4 text-right"><button onClick={() => onNotice(`${pi.number} opened`)} className="text-xs font-bold text-[#3165ed]">View</button></td></tr>)}</tbody></table></div></section></div>}
-    {module === "Production" && <div className="space-y-6"><section className="panel"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h3 className="section-title">Stage queues</h3><p className="section-subtitle">Select a stage to manage pending items</p></div><select value={productionFilter} onChange={(e) => setProductionFilter(e.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 outline-none"><option>All stages</option>{stages.map((stage) => <option key={stage.key}>{stage.name}</option>)}</select></div><div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{stages.map((stage) => <button key={stage.key} onClick={() => { setProductionFilter(stage.name); onNotice(`${stage.name} queue selected`); }} className={`stage-card text-left ${productionFilter === stage.name ? "ring-2 ring-[#3165ed] ring-offset-2" : ""}`} style={{ backgroundColor: stage.tint }}><span className="stage-icon" style={{ backgroundColor: stage.color }}><Box size={15} /></span><p className="mt-4 text-xs font-bold text-slate-600">{stage.name}</p><p className="mt-1 text-2xl font-extrabold text-slate-900">{stage.count}</p><p className="mt-2 text-[10px] font-semibold text-slate-400">Pending queue</p></button>)}</div></section><section className="panel"><div className="flex items-center justify-between"><div><h3 className="section-title">Items in {productionFilter === "All stages" ? "all stages" : productionFilter}</h3><p className="section-subtitle">Scan or select an item to update its status</p></div><Button onClick={onScan} variant="outline" className="h-9 gap-2 rounded-xl text-xs font-bold"><ScanLine size={14} /> Scan item</Button></div><div className="mt-5 space-y-2">{queueItems.map((item) => <div key={item.serial} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-4 py-3"><div className="queue-icon" style={{ color: item.color, backgroundColor: item.color + "14" }}><GlassWater size={16} /></div><div className="min-w-[170px] flex-1"><p className="text-xs font-bold text-slate-800">{item.serial}</p><p className="mt-1 text-[10px] text-slate-400">{item.detail}</p></div><span className="text-[10px] font-bold" style={{ color: item.color }}>{item.stage}</span><span className="text-[10px] text-slate-400">ETA {item.eta}</span><Button onClick={() => onNotice(`${item.serial} marked complete`)} className="h-8 rounded-lg bg-[#3165ed] px-3 text-[10px] font-bold">Complete</Button></div>)}</div></section></div>}
-    {module === "Reports" && <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-3"><StatCard icon={ClipboardList} label="Reports generated" value="86" change="21.2%" accent="#3165ed" /><StatCard icon={PackageCheck} label="Sheets produced" value="4,892" change="18.4%" accent="#16a691" /><StatCard icon={AlertTriangle} label="Exceptions" value="21" change="4.8%" positive={false} accent="#e58a35" /></div><section className="panel"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h3 className="section-title">Report center</h3><p className="section-subtitle">Choose a report and export the latest production data</p></div><div className="flex gap-2"><Button onClick={() => onNotice(`${reportType} exported as PDF`)} className="h-9 gap-2 rounded-xl bg-[#3165ed] text-xs font-bold"><FileText size={14} /> PDF</Button><Button onClick={() => onNotice(`${reportType} exported as Excel`)} variant="outline" className="h-9 gap-2 rounded-xl text-xs font-bold"><FileSpreadsheet size={14} /> Excel</Button></div></div><div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{["Production summary", "Pending items", "Finished items", "Reject report", "Rework report", "Operator performance"].map((report) => <button key={report} onClick={() => setReportType(report)} className={`rounded-xl border p-4 text-left transition-colors ${reportType === report ? "border-[#3165ed] bg-[#f3f6ff]" : "border-slate-100 hover:bg-slate-50"}`}><div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-[#eef3ff] text-[#3165ed]"><ClipboardList size={16} /></div><p className="text-xs font-bold text-slate-800">{report}</p><p className="mt-1 text-[10px] text-slate-400">Updated today</p></button>)}</div></section></div>}
-    {module === "Scan station" && <section className="panel mx-auto max-w-2xl"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-[#eef3ff] text-[#3165ed]"><QrCode size={42} strokeWidth={1.5} /></div><div className="mt-5 text-center"><h3 className="text-xl font-extrabold tracking-[-0.03em] text-slate-900">Ready to scan</h3><p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">Connect a handheld scanner or use the input below. GlassTrack will show the item’s current stage, route, and available actions.</p><Button onClick={onScan} className="mt-6 h-11 gap-2 rounded-xl bg-[#3165ed] px-5 text-xs font-bold"><ScanLine size={16} /> Start scanning</Button></div><div className="mt-8 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-emerald-50 p-4 text-center"><p className="text-lg font-extrabold text-emerald-700">Online</p><p className="mt-1 text-[10px] font-bold text-emerald-600">Station status</p></div><div className="rounded-xl bg-[#f3f6ff] p-4 text-center"><p className="text-lg font-extrabold text-[#3165ed]">1,248</p><p className="mt-1 text-[10px] font-bold text-[#3165ed]">Finished today</p></div><div className="rounded-xl bg-amber-50 p-4 text-center"><p className="text-lg font-extrabold text-amber-700">7</p><p className="mt-1 text-[10px] font-bold text-amber-600">Needs rework</p></div></div></section>}
-    {module === "Settings" && <div className="grid gap-6 lg:grid-cols-2"><section className="panel"><div className="mb-5 flex items-center gap-3"><div className="icon-tile bg-[#eef3ff] text-[#3165ed]"><Settings2 size={19} /></div><div><h3 className="section-title">Workspace settings</h3><p className="section-subtitle">Configure how GlassTrack works for your team</p></div></div><div className="space-y-3">{[{ label: "Require supervisor approval for rejects", enabled: true }, { label: "Auto-refresh production queues", enabled: true }, { label: "Notify operators on rework", enabled: false }].map((setting) => <button key={setting.label} onClick={() => onNotice(`${setting.label} ${setting.enabled ? "disabled" : "enabled"}`)} className="flex w-full items-center justify-between rounded-xl border border-slate-100 px-4 py-3 text-left hover:bg-slate-50"><span className="text-xs font-semibold text-slate-700">{setting.label}</span><span className={`h-5 w-9 rounded-full p-0.5 ${setting.enabled ? "bg-[#3165ed]" : "bg-slate-200"}`}><span className={`block h-4 w-4 rounded-full bg-white transition-transform ${setting.enabled ? "translate-x-4" : ""}`} /></span></button>)}</div></section><section className="panel"><div className="mb-5 flex items-center gap-3"><div className="icon-tile bg-[#e7f8f5] text-[#16a691]"><Users size={19} /></div><div><h3 className="section-title">Team & access</h3><p className="section-subtitle">3 roles · 18 active users</p></div></div><div className="space-y-3">{[{ role: "Administrators", count: "3 users", color: "#3165ed" }, { role: "Supervisors", count: "5 users", color: "#7c5ce4" }, { role: "Production operators", count: "10 users", color: "#16a691" }].map((team) => <div key={team.role} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3"><div className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white" style={{ backgroundColor: team.color }}>{team.count.split(" ")[0]}</div><div className="flex-1"><p className="text-xs font-bold text-slate-800">{team.role}</p><p className="mt-1 text-[10px] text-slate-400">{team.count}</p></div><button onClick={() => onNotice(`${team.role} opened`)} className="text-xs font-bold text-[#3165ed]">Manage</button></div>)}</div></section></div>}
-    {module === "Dispatch" && <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-3"><StatCard icon={Truck} label="Ready to dispatch" value="186" change="12.8%" accent="#16a691" /><StatCard icon={CalendarDays} label="Collections today" value="8" change="2" accent="#3165ed" /><StatCard icon={Users} label="Active customers" value="32" change="6.1%" accent="#7c5ce4" /></div><section className="panel"><div className="flex items-center justify-between"><div><h3 className="section-title">Dispatch schedule</h3><p className="section-subtitle">Finished glass awaiting collection</p></div><button onClick={() => onNotice("Dispatch schedule refreshed")} className="text-xs font-bold text-[#3165ed]">Refresh</button></div><div className="mt-5 space-y-3">{[{ customer: "CIJI BLDG. METALIC CONST. IND. LLC", reference: "SFO-0384", sheets: 202, time: "09:30 AM", status: "Loading" }, { customer: "CIJI BLDG. METALIC CONST. IND. LLC", reference: "OB-03084", sheets: 38, time: "11:00 AM", status: "Ready" }, { customer: "Sejal Glass Manufacturing Products LLC", reference: "SFO-1348", sheets: 12, time: "02:30 PM", status: "Scheduled" }].map((delivery) => <div key={delivery.reference} className="flex flex-wrap items-center gap-4 rounded-xl border border-slate-100 px-4 py-4"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#e7f8f5] text-[#16a691]"><Truck size={17} /></div><div className="min-w-[150px] flex-1"><p className="text-xs font-bold text-slate-800">{delivery.customer}</p><p className="mt-1 text-[10px] text-slate-400">{delivery.reference} · {delivery.sheets} sheets</p></div><span className="text-xs font-bold text-slate-600">{delivery.time}</span><span className="status-pill status-green">{delivery.status}</span><button onClick={() => onNotice(`${delivery.reference} opened`)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><MoreHorizontal size={16} /></button></div>)}</div></section></div>}
-  </>;
-}
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage } from "@shared/api";
+import { StickerUploaderModal } from "@/components/StickerUploaderModal";
+import { ManualPIModal } from "@/components/ManualPIModal";
+import { PIDocumentModal } from "@/components/PIDocumentModal";
+import { BarcodeStickerModal } from "@/components/BarcodeStickerModal";
+import { ScanLookupModal } from "@/components/ScanLookupModal";
+import { ProductionStageView } from "@/components/ProductionStageView";
+import { RejectReworkModal } from "@/components/RejectReworkModal";
+import { ReportsView } from "@/components/ReportsView";
+import { PerformanceAnalyticsView } from "@/components/PerformanceAnalyticsView";
+import { ProductionOverviewView } from "@/components/ProductionOverviewView";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { toast } from "sonner";
+import { AppSidebar } from "@/components/AppSidebar";
+import { UniversalSearchResults } from "@/components/UniversalSearchResults";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
 
 export default function Index() {
-  const [activeNav, setActiveNav] = useState("Overview");
-  const [search, setSearch] = useState("");
-  const [scanValue, setScanValue] = useState("");
-  const [showScanner, setShowScanner] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [searchParams] = useSearchParams();
+  const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "reports", "analytics"] as const;
+  type TabType = typeof validTabs[number];
+  const initialTab = validTabs.includes(searchParams.get("tab") as TabType) ? (searchParams.get("tab") as TabType) : "overview";
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+  const [reportsInitialTab, setReportsInitialTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">("pis");
+  const [userRole, setUserRole] = useState<UserRole>(() => {
+    const saved = localStorage.getItem("user_role") as UserRole;
+    return saved === "Admin" || saved === "Supervisor" || saved === "Operator" ? saved : "Admin";
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const filteredPIs = useMemo(() => recentPIs.filter((pi) => `${pi.number} ${pi.customer} ${pi.project}`.toLowerCase().includes(search.toLowerCase())), [search]);
-
-  const flashNotice = (message: string) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(""), 3000);
+  const handleRoleChange = async (role: UserRole) => {
+    setUserRole(role);
+    localStorage.setItem("user_role", role);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          localStorage.setItem("auth_token", data.token);
+        }
+      }
+    } catch (e) {
+      console.error("Login token fetch failed:", e);
+    }
+    toast.success(`Active role changed to ${role}`);
   };
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem("auth_token");
+    const headers: Record<string, string> = { "x-user-role": userRole };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  const navigate = useNavigate();
+  // Interactive UI states
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const searchContainerRef = React.useRef<HTMLDivElement>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const notificationsRef = React.useRef<HTMLDivElement>(null);
+  const userMenuRef = React.useRef<HTMLDivElement>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    title: string;
+    message: string;
+    timestamp: string;
+    type: "info" | "success" | "warning" | "destructive";
+    read: boolean;
+  }>>([]);
+
+  const unreadNotifications = notifications.filter((n) => !n.read).length;
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [activeSummarySlice, setActiveSummarySlice] = useState<"all" | "completed" | "inProgress" | "pending" | "rejected">("all");
+
+  // Auto-hide popovers when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        notificationsRef.current &&
+        !notificationsRef.current.contains(event.target as Node)
+      ) {
+        setNotificationsOpen(false);
+      }
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(event.target as Node)
+      ) {
+        setUserMenuOpen(false);
+      }
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setSearchFocused(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "/" || e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Data states
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [pis, setPis] = useState<PIMaster[]>([]);
+  const [items, setItems] = useState<GlassItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+
+  // Real-time Dubai Time Clock (Asia/Dubai Timezone)
+  const [now, setNow] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const getDubaiDateStr = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Dubai",
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(date);
+  };
+
+  const getDubaiTimeStr = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Dubai",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    }).format(date);
+  };
+
+  const getDubaiShortSyncStr = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Dubai",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  };
+
+  // Search, Sort & Filter
+  const [piSearchTerm, setPiSearchTerm] = useState("");
+  const [piFinishFilter, setPiFinishFilter] = useState<"ALL" | "CLEAR" | "COLOUR">("ALL");
+  const [sortField, setSortField] = useState<"piNumber" | "customerName" | "projectName" | "itemsCount" | "totalSqm" | "status" | "createdAt">("piNumber");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  // Modal states
+  const [stickerUploadModalOpen, setStickerUploadModalOpen] = useState(false);
+  const [manualPIModalOpen, setManualPIModalOpen] = useState(false);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+
+  const [selectedPI, setSelectedPI] = useState<PIMaster | null>(null);
+  const [selectedPIItems, setSelectedPIItems] = useState<GlassItem[]>([]);
+  const [piModalOpen, setPiModalOpen] = useState(false);
+
+  const [selectedStickerItem, setSelectedStickerItem] = useState<GlassItem | null>(null);
+  const [stickerModalOpen, setStickerModalOpen] = useState(false);
+
+  const [rejectReworkItem, setRejectReworkItem] = useState<GlassItem | null>(null);
+  const [rejectReworkMode, setRejectReworkMode] = useState<"reject" | "rework">("reject");
+  const [rejectReworkModalOpen, setRejectReworkModalOpen] = useState(false);
+
+  const isFetchingRef = useRef(false);
+  const pendingFetchRef = useRef(false);
+  const streamDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchData = async (silent = false) => {
+    if (isFetchingRef.current) {
+      pendingFetchRef.current = true;
+      return;
+    }
+    isFetchingRef.current = true;
+    if (!silent) setLoading(true);
+    try {
+      const [statsRes, piRes, reportsRes] = await Promise.all([
+        fetch("/api/production/dashboard"),
+        fetch("/api/pi"),
+        fetch("/api/reports"),
+      ]);
+
+      if (statsRes.ok) setStats(await statsRes.json());
+      if (piRes.ok) setPis(await piRes.json());
+      if (reportsRes.ok) {
+        const reportData = await reportsRes.json();
+        const freshItems: GlassItem[] = reportData.items || [];
+        setItems(freshItems);
+        if (selectedPI) {
+          const updatedPIItems = freshItems.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber);
+          if (updatedPIItems.length > 0) {
+            setSelectedPIItems(updatedPIItems);
+          }
+        }
+      }
+      setLastUpdated(new Date());
+      if (!silent) toast.success("Dashboard data refreshed");
+    } catch (err: any) {
+      if (!silent) toast.error("Error connecting to server database");
+    } finally {
+      if (!silent) setLoading(false);
+      isFetchingRef.current = false;
+      if (pendingFetchRef.current) {
+        pendingFetchRef.current = false;
+        fetchData(true);
+      }
+    }
+  };
+
+  const handleOptimisticAdvance = (serialNumbers: string[], fromStage: ProductionStage) => {
+    const serialSet = new Set(serialNumbers.map((s) => String(s)));
+    setItems((prev) =>
+      prev.map((item) => {
+        if (serialSet.has(item.serialNumber) || serialSet.has(item.barcode) || serialSet.has(item.id)) {
+          const route = item.processRoute || [];
+          const idx = route.indexOf(fromStage);
+          const nextStage: ProductionStage = idx >= 0 && idx < route.length - 1 ? route[idx + 1] : "Finished";
+          return {
+            ...item,
+            currentStage: nextStage,
+            completedStages: Array.from(new Set([...(item.completedStages || []), fromStage])),
+            status: nextStage === "Finished" ? "Completed" : "In Production",
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  useEffect(() => {
+    fetchData(true);
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource("/api/production/events");
+      const handleStreamUpdate = () => {
+        if (streamDebounceRef.current) clearTimeout(streamDebounceRef.current);
+        streamDebounceRef.current = setTimeout(() => {
+          fetchData(true);
+        }, 120);
+      };
+
+      const addNotification = (title: string, message: string, type: "info" | "success" | "warning" | "destructive") => {
+        setNotifications((prev) => [
+          {
+            id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            title,
+            message,
+            timestamp: "Just now",
+            type,
+            read: false,
+          },
+          ...prev.slice(0, 19),
+        ]);
+      };
+
+      eventSource.addEventListener("stage_advanced", (e: any) => {
+        handleStreamUpdate();
+      });
+      eventSource.addEventListener("item_rejected", (e: any) => {
+        handleStreamUpdate();
+        const payload = e.data ? JSON.parse(e.data) : {};
+        addNotification("Glass Item Rejected", `Quality alert: Item ${payload.serialNumber || ""} marked as rejected`, "destructive");
+      });
+      eventSource.addEventListener("item_reworked", (e: any) => {
+        handleStreamUpdate();
+        const payload = e.data ? JSON.parse(e.data) : {};
+        addNotification("Item Sent to Rework", `Rework alert: Item ${payload.serialNumber || ""} dispatched back to workstation`, "warning");
+      });
+      eventSource.addEventListener("excel_uploaded", (e: any) => {
+        handleStreamUpdate();
+        const payload = e.data ? JSON.parse(e.data) : {};
+        addNotification("New PI Generated", `Uploaded Excel order for PI ${payload.piNumber || ""}`, "info");
+      });
+      eventSource.addEventListener("pi_released", (e: any) => {
+        handleStreamUpdate();
+        addNotification("PI Ready for Production", "Proforma Invoice order released to shop floor workstations", "success");
+      });
+      eventSource.addEventListener("database_cleared", handleStreamUpdate);
+      eventSource.onmessage = handleStreamUpdate;
+    } catch (err) {
+      console.error("SSE connection error:", err);
+    }
+
+    const timer = setInterval(() => fetchData(true), 30000);
+    return () => {
+      eventSource?.close();
+      clearInterval(timer);
+    };
+  }, []);
+
+  const openPIDetails = async (pi: PIMaster) => {
+    try {
+      const res = await fetch(`/api/pi/${pi.id}`);
+      if (!res.ok) throw new Error("Failed to fetch PI details");
+      const data = await res.json();
+      setSelectedPI(data.pi);
+      setSelectedPIItems(data.items);
+      setPiModalOpen(true);
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleOpenSticker = (item: GlassItem) => {
+    setSelectedStickerItem(item);
+    setStickerModalOpen(true);
+  };
+
+  const handleOpenReject = (item: GlassItem) => {
+    setRejectReworkItem(item);
+    setRejectReworkMode("reject");
+    setRejectReworkModalOpen(true);
+  };
+
+  const handleOpenRework = (item: GlassItem) => {
+    setRejectReworkItem(item);
+    setRejectReworkMode("rework");
+    setRejectReworkModalOpen(true);
+  };
+
+  const handleDeletePI = async (piId: string) => {
+    const targetPI = pis.find((p) => p.id === piId || p.piNumber === piId);
+    const batchNumber = targetPI?.piNumber ? formatBatchNumber(targetPI.piNumber) : targetPI?.id || "";
+
+    if (userRole === "Operator") {
+      toast.error(`Operator role cannot delete batches`);
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete Batch ${batchNumber} and all its glass items?`)) return;
+    try {
+      const res = await fetch(`/api/pi/${piId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to delete Batch ${batchNumber}`);
+      }
+      toast.success(`Batch ${batchNumber} deleted successfully!`);
+      fetchData(true);
+    } catch (err: any) {
+      toast.error(err.message || `Error deleting Batch ${batchNumber}`);
+    }
+  };
+
+  const handleReleaseToProduction = async (piId: string) => {
+    const targetPI = pis.find((p) => p.id === piId || p.piNumber === piId);
+    const isSticker =
+      targetPI?.piNumber?.startsWith("STK-") ||
+      targetPI?.piNumber?.startsWith("SFO-") ||
+      targetPI?.id?.startsWith("stk-") ||
+      targetPI?.proformaInvNo?.startsWith("STK-") ||
+      targetPI?.piNumber?.includes("STK-");
+    const docLabel = isSticker ? "Sticker batch" : "PI document";
+
+    if (userRole === "Operator") {
+      toast.error(`Operator role cannot release ${docLabel.toLowerCase()}s to production`);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pi/${piId}/release`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to release ${docLabel.toLowerCase()} to production`);
+      }
+      toast.success(`${docLabel} released to production successfully!`);
+      fetchData(true);
+    } catch (err: any) {
+      toast.error(err.message || `Error releasing ${docLabel.toLowerCase()} to production`);
+    }
+  };
+
+  const handleClearDatabase = async () => {
+    if (userRole !== "Admin") {
+      toast.error("Only Admin role can clear the database");
+      return;
+    }
+    const confirmationText = window.prompt(
+      "WARNING: This action will permanently erase ALL Proforma Invoices (PIs), Glass Items, Audit History, Rejects, and Rework logs.\n\nType 'CLEAR DATABASE' to confirm destruction:"
+    );
+    if (confirmationText !== "CLEAR DATABASE") {
+      if (confirmationText !== null) {
+        toast.error("Confirmation text did not match. Database clear cancelled.");
+      }
+      return;
+    }
+    try {
+      const res = await fetch("/api/production/clear-db", {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to clear database");
+      }
+      toast.success("Database cleared successfully!");
+      fetchData(true);
+    } catch (err: any) {
+      toast.error(err.message || "Error clearing database");
+    }
+  };
+
+  const handleSort = (field: typeof sortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortOrder("desc");
+    }
+  };
+
+  const clearBatchesCount = pis.filter((p) => p.colorOrClear !== "Colour").length;
+  const colourBatchesCount = pis.filter((p) => p.colorOrClear === "Colour").length;
+
+  const getBatchMetrics = (pi: PIMaster) => {
+    const cleanId = (pi.id || "").replace(/^STK-/i, "");
+    const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "");
+    const batchItems = items.filter(
+      (i) =>
+        i.piId === pi.id ||
+        i.piNumber === pi.piNumber ||
+        i.piId === cleanId ||
+        i.piNumber === cleanPiNo ||
+        i.batchNo === cleanPiNo ||
+        i.batchNo === pi.piNumber ||
+        (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
+    );
+
+    if (batchItems.length > 0) {
+      const totalPieces = batchItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const completedPieces = batchItems
+        .filter((i) => i.status === "Completed" || i.currentStage === "Finished")
+        .reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const totalSqm = batchItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+      const isCompleted = totalPieces > 0 && completedPieces >= totalPieces;
+      const isPending = completedPieces === 0 && batchItems.every((i) => i.currentStage === "Cutting" && !i.completedStages?.length);
+      const status = isCompleted ? "Completed" : isPending ? (pi.status === "Pending" ? "Pending" : "In Production") : "In Production";
+      return { totalPieces, completedPieces, totalSqm, status };
+    }
+
+    const isCompleted = (pi.completedItemsCount || 0) >= (pi.totalQty || pi.itemsCount || 1) && (pi.itemsCount || 0) > 0;
+    return {
+      totalPieces: pi.totalQty || pi.itemsCount || 0,
+      completedPieces: pi.completedItemsCount || 0,
+      totalSqm: pi.totalSqm || 0,
+      status: isCompleted ? "Completed" : (pi.status || "Pending"),
+    };
+  };
+
+  const sortedAndFilteredPIs = [...pis]
+    .filter((pi) => {
+      if (piFinishFilter === "CLEAR" && pi.colorOrClear === "Colour") return false;
+      if (piFinishFilter === "COLOUR" && pi.colorOrClear !== "Colour") return false;
+
+      const query = piSearchTerm.toLowerCase().trim();
+      return (
+        pi.piNumber.toLowerCase().includes(query) ||
+        pi.customerName.toLowerCase().includes(query) ||
+        pi.projectName.toLowerCase().includes(query) ||
+        (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(query))
+      );
+    })
+    .sort((a, b) => {
+      let valA: any = a[sortField];
+      let valB: any = b[sortField];
+      if (typeof valA === "string") valA = valA.toLowerCase();
+      if (typeof valB === "string") valB = valB.toLowerCase();
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+  const totalPages = Math.ceil(sortedAndFilteredPIs.length / pageSize) || 1;
+  const paginatedPIs = sortedAndFilteredPIs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const renderSortIcon = (field: typeof sortField) => {
+    if (sortField !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-40 inline" />;
+    return sortOrder === "asc" ? <ChevronUp className="w-3.5 h-3.5 ml-1 text-purple-600 inline font-bold" /> : <ChevronDown className="w-3.5 h-3.5 ml-1 text-purple-600 inline font-bold" />;
+  };
+
+  // Pipeline Overview States & Computations
+  const [pipelineBatchSearch, setPipelineBatchSearch] = useState("");
+  const [pipelineStageFilter, setPipelineStageFilter] = useState<"ALL" | "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
+
+  const pipelineMetrics = React.useMemo(() => {
+    const cuttingItems = items.filter((i) => (i.currentStage?.toLowerCase() === "cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
+    const pairingItems = items.filter((i) => i.currentStage?.toLowerCase() === "pairing" && i.status !== "Rejected");
+    const dguItems = items.filter((i) => i.currentStage?.toLowerCase() === "dgu" && i.status !== "Rejected" && i.status !== "Completed");
+    const laminationItems = items.filter((i) => i.currentStage?.toLowerCase() === "lamination" && i.status !== "Rejected");
+    const finishedItems = items.filter((i) => i.currentStage?.toLowerCase() === "finished" || i.status === "Completed");
+    const rejectedItems = items.filter((i) => i.status === "Rejected");
+    const reworkItems = items.filter((i) => i.status === "Reworking");
+
+    const totalItems = items.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const cuttingCount = cuttingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingCount = pairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguCount = dguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const laminationCount = laminationItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const finishedCount = finishedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const rejectedCount = rejectedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const reworkCount = reworkItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+    const totalSqm = items.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const cuttingSqm = cuttingItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const pairingSqm = pairingItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const dguSqm = dguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const laminationSqm = laminationItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const finishedSqm = finishedItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+
+    const distinctCuttingSheets = new Set(cuttingItems.map((i) => i.rackNo || "1")).size;
+
+    const isColour = (i: GlassItem) => getItemFinish(i) === "Colour";
+
+    const cuttingColour = cuttingItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const cuttingClear = cuttingCount - cuttingColour;
+
+    const dguPairingItems = pairingItems.filter((i) => isDguGlass(i));
+    const lamPairingItems = pairingItems.filter((i) => isLaminatedGlass(i));
+    const dlguPairingItems = pairingItems.filter((i) => isDlguGlass(i));
+
+    const pairingColour = dguPairingItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingClear = dguPairingItems.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguPairingPairs = Math.min(pairingColour, pairingClear);
+    const lamPairingPairs = Math.floor(lamPairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const dlguPairingPairs = Math.floor(dlguPairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const pairingPairs = dguPairingPairs + lamPairingPairs + dlguPairingPairs;
+
+    const dguColour = dguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguClear = dguItems.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguPairs = Math.min(dguColour, dguClear);
+
+    const finishedDguItems = finishedItems.filter((i) => isDguGlass(i) || isDlguGlass(i));
+    const finishedNonDguItems = finishedItems.filter((i) => !isDguGlass(i) && !isDlguGlass(i));
+
+    const finishedDguColour = finishedDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const finishedDguTotal = finishedDguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const finishedDguUnits = finishedDguColour > 0 ? finishedDguColour : Math.ceil(finishedDguTotal / 2);
+    const finishedDguSqm = finishedDguColour > 0
+      ? finishedDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0)
+      : (finishedDguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2);
+
+    const finishedLamItems = finishedNonDguItems.filter((i) => isLaminatedGlass(i) || i.glassCategory === "Lamination" || i.processRoute?.includes("Lamination"));
+    const finishedMonolithicItems = finishedNonDguItems.filter((i) => !isLaminatedGlass(i) && i.glassCategory !== "Lamination" && !i.processRoute?.includes("Lamination"));
+    const finishedLamUnits = Math.ceil(finishedLamItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const finishedMonolithicUnits = finishedMonolithicItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+    const finishedNonDguSqm = finishedNonDguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+    const finishedUnits = finishedDguUnits + finishedLamUnits + finishedMonolithicUnits;
+    const effectiveFinishedSqm = parseFloat((finishedDguSqm + finishedNonDguSqm).toFixed(2));
+
+    const laminationUnits = Math.ceil(laminationCount / 2);
+    const totalActive = cuttingCount + pairingCount + dguCount + laminationUnits + finishedUnits;
+    const completionRate = totalActive > 0 ? Math.round((finishedUnits / totalActive) * 100) : 0;
+    const yieldRate = totalItems > 0 ? (((totalItems - rejectedCount) / totalItems) * 100).toFixed(1) : "100.0";
+
+    return {
+      totalItems,
+      totalSqm,
+      cuttingItems: cuttingCount,
+      cuttingSqm,
+      cuttingColour,
+      cuttingClear,
+      distinctCuttingSheets,
+      pairingItems: pairingCount,
+      pairingSqm,
+      pairingColour,
+      pairingClear,
+      pairingPairs,
+      dguItems: dguCount,
+      dguSqm,
+      dguUnits: dguCount,
+      dguColour,
+      dguClear,
+      dguPairs,
+      laminationItems: laminationUnits,
+      laminationPanes: laminationCount,
+      laminationSqm,
+      finishedItems: finishedUnits,
+      finishedSqm: effectiveFinishedSqm,
+      rejectedItems: rejectedCount,
+      reworkItems: reworkCount,
+      completionRate,
+      yieldRate,
+    };
+  }, [items]);
+
+  const effectiveStats = React.useMemo(() => {
+    const dguUnitsCount =
+      pipelineMetrics.dguColour > 0
+        ? pipelineMetrics.dguColour
+        : pipelineMetrics.dguPairs;
+
+    return {
+      totalPI: pis.length || (stats?.totalPI ?? 0),
+      pendingPI: pis.filter((p) => p.status === "Pending" || p.status === "In Production").length || (stats?.pendingPI ?? 0),
+      completedPI: pis.filter((p) => p.status === "Completed").length || (stats?.completedPI ?? 0),
+      pendingCutting: pipelineMetrics.cuttingItems,
+      pendingPairing: pipelineMetrics.pairingItems,
+      pendingDGU: dguUnitsCount,
+      pendingLamination: pipelineMetrics.laminationItems,
+      finishedItems: pipelineMetrics.finishedItems,
+      rejectItems: pipelineMetrics.rejectedItems,
+      reworkItems: pipelineMetrics.reworkItems,
+    };
+  }, [stats, pis, pipelineMetrics]);
+
+  const pipelineBatches = React.useMemo(() => {
+    const map = new Map<string, {
+      id: string;
+      piNumber: string;
+      customerName: string;
+      projectName: string;
+      jobOrderNumber: string;
+      sfoNo: string;
+      items: GlassItem[];
+      cuttingCount: number;
+      pairingCount: number;
+      dguCount: number;
+      laminationCount: number;
+      finishedCount: number;
+      totalSqm: number;
+      finish: "Clear" | "Colour";
+      primaryStage: "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished";
+      progress: number;
+    }>();
+
+    items.forEach((item) => {
+      const key = item.piId || item.piNumber || item.batchNo || "default";
+      const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
+      if (!map.has(key)) {
+        map.set(key, {
+          id: key,
+          piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
+          customerName: parentPI?.customerName || "BRIGHT PLUS FITOUT",
+          projectName: parentPI?.projectName || item.sectionName || "VAL_BY_KAS",
+          jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
+          sfoNo: item.sfoNo || parentPI?.sfoNo || "",
+          items: [],
+          cuttingCount: 0,
+          pairingCount: 0,
+          dguCount: 0,
+          laminationCount: 0,
+          finishedCount: 0,
+          totalSqm: 0,
+          finish: "Clear",
+          primaryStage: "Cutting",
+          progress: 0,
+        });
+      }
+      const b = map.get(key)!;
+      b.items.push(item);
+      b.totalSqm += (item.sqm || 0);
+
+      const st = item.currentStage?.toLowerCase();
+      const itemPieces = item.qty || 1;
+      if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
+      else if (st === "pairing") b.pairingCount += itemPieces;
+      else if (st === "dgu") b.dguCount += itemPieces;
+      else if (st === "lamination") b.laminationCount += itemPieces;
+      else if (st === "finished" || item.status === "Completed") b.finishedCount += itemPieces;
+    });
+
+    // Also include any PIs without direct items
+    pis.forEach((p) => {
+      if (!map.has(p.id) && !map.has(p.piNumber)) {
+        map.set(p.id, {
+          id: p.id,
+          piNumber: (p.piNumber || "").replace(/^STK-/i, ""),
+          customerName: p.customerName || "BRIGHT PLUS FITOUT",
+          projectName: p.projectName || "VAL_BY_KAS",
+          jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
+          sfoNo: p.sfoNo || "",
+          items: [],
+          cuttingCount: p.totalQty || p.itemsCount || 0,
+          pairingCount: 0,
+          dguCount: 0,
+          laminationCount: 0,
+          finishedCount: p.completedItemsCount || 0,
+          totalSqm: p.totalSqm || 0,
+          finish: p.colorOrClear === "Colour" ? "Colour" : "Clear",
+          primaryStage: "Cutting",
+          progress: (p.totalQty || p.itemsCount) ? Math.round(((p.completedItemsCount || 0) / (p.totalQty || p.itemsCount)) * 100) : 0,
+        });
+      }
+    });
+
+    return Array.from(map.values()).map((b) => {
+      const parentPI = pis.find((p) => p.id === b.id || p.piNumber === b.piNumber);
+      const clearCount = b.items.filter((i) => getItemFinish(i) === "Clear").reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const colourCount = b.items.filter((i) => getItemFinish(i) === "Colour").reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+      const isColour =
+        parentPI?.colorOrClear === "Colour" ||
+        (parentPI as any)?.category?.toLowerCase().includes("colour") ||
+        (parentPI as any)?.category?.toLowerCase().includes("color") ||
+        colourCount > 0 ||
+        b.items.some((i) => i.colorOrClear === "Colour" || getItemFinish(i) === "Colour");
+
+      const finish: "Clear" | "Colour" = isColour ? "Colour" : "Clear";
+
+      let primaryStage: "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished" = "Cutting";
+      if (b.cuttingCount > 0) primaryStage = "Cutting";
+      else if (b.pairingCount > 0) primaryStage = "Pairing";
+      else if (b.dguCount > 0) primaryStage = "DGU";
+      else if (b.laminationCount > 0) primaryStage = "Lamination";
+      else if (b.finishedCount > 0) primaryStage = "Finished";
+
+      const totalPieces = b.items.reduce((acc, curr) => acc + (curr.qty || 1), 0) || parentPI?.totalQty || parentPI?.itemsCount || 1;
+      const progress = Math.round((b.finishedCount / totalPieces) * 100);
+
+      return {
+        ...b,
+        finish,
+        primaryStage,
+        progress,
+      };
+    });
+  }, [items, pis]);
+
+  const filteredPipelineBatches = React.useMemo(() => {
+    return pipelineBatches.filter((b) => {
+      if (pipelineStageFilter !== "ALL" && b.primaryStage !== pipelineStageFilter) {
+        if (pipelineStageFilter === "Cutting" && b.cuttingCount === 0) return false;
+        if (pipelineStageFilter === "DGU" && b.dguCount === 0) return false;
+        if (pipelineStageFilter === "Lamination" && b.laminationCount === 0) return false;
+        if (pipelineStageFilter === "Finished" && b.finishedCount === 0) return false;
+      }
+      const q = pipelineBatchSearch.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        b.piNumber.toLowerCase().includes(q) ||
+        b.customerName.toLowerCase().includes(q) ||
+        b.projectName.toLowerCase().includes(q) ||
+        b.jobOrderNumber.toLowerCase().includes(q) ||
+        b.sfoNo.toLowerCase().includes(q)
+      );
+    });
+  }, [pipelineBatches, pipelineStageFilter, pipelineBatchSearch]);
+
   return (
-    <div className="min-h-screen bg-[#f6f8fc] text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[252px] flex-col border-r border-slate-200/80 bg-white px-4 lg:flex">
-        <div className="flex h-[86px] items-center gap-3 px-3">
-          <div className="brand-mark"><GlassWater size={22} strokeWidth={2.2} /></div>
-          <div><p className="text-[15px] font-extrabold tracking-[-0.03em] text-slate-900">Sejal Glass</p><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Production Control</p></div>
-        </div>
-        <div className="mb-5 mt-4 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Workspace</div>
-        <nav className="space-y-1">
-          {navItems.map(({ label, icon: Icon, count }) => (
-            <button key={label} onClick={() => setActiveNav(label)} className={`sidebar-link ${activeNav === label ? "sidebar-link-active" : ""}`}>
-              <Icon size={18} strokeWidth={activeNav === label ? 2.4 : 2} /><span>{label}</span>{count && <span className="ml-auto rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{count}</span>}
-            </button>
-          ))}
-        </nav>
-        <div className="mb-5 mt-9 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Plant floor</div>
-        <nav className="space-y-1">
-          <button onClick={() => setActiveNav("Scan station")} className={`sidebar-link ${activeNav === "Scan station" ? "sidebar-link-active" : ""}`}><ScanLine size={18} /><span>Scan station</span><span className="ml-auto h-2 w-2 rounded-full bg-emerald-500 ring-4 ring-emerald-50" /></button>
-          <button onClick={() => setActiveNav("Dispatch")} className={`sidebar-link ${activeNav === "Dispatch" ? "sidebar-link-active" : ""}`}><Truck size={18} /><span>Dispatch</span></button>
-        </nav>
-        <div className="mt-auto">
-          <div className="mb-4 rounded-2xl bg-[#f3f6ff] p-4"><div className="mb-3 flex items-center justify-between"><span className="text-xs font-bold text-[#3165ed]">Plant capacity</span><Sparkles size={15} className="text-[#3165ed]" /></div><div className="mb-2 flex justify-between text-[11px] font-medium text-slate-500"><span>Current utilization</span><span className="font-bold text-slate-800">68%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-white"><div className="h-full w-[68%] rounded-full bg-[#3165ed]" /></div></div>
-          <button onClick={() => setActiveNav("Settings")} className={`sidebar-link mb-2 ${activeNav === "Settings" ? "sidebar-link-active" : ""}`}><Settings2 size={18} /><span>Settings</span></button>
-          <div className="flex items-center gap-3 border-t border-slate-100 px-3 py-5"><div className="avatar">AM</div><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-800">Aisha Malik</p><p className="text-[11px] text-slate-400">Administrator</p></div><ChevronDown size={15} className="text-slate-400" /></div>
-        </div>
-      </aside>
+    <div className="h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans overflow-hidden">
+      {/* Top Header Bar */}
+      <header className="shrink-0 bg-white border-b border-slate-200 px-5 py-2.5 flex items-center justify-between z-30 shadow-xs relative">
+        {/* Left Side: Brand Logo & Title */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+            title="Toggle Sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
 
-      <main className="lg:pl-[252px]">
-        <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-slate-200/80 bg-white/90 px-5 backdrop-blur-md sm:px-8 lg:px-10">
-          <div className="flex items-center gap-3"><button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 lg:hidden"><Menu size={20} /></button><div><p className="hidden text-xs font-medium text-slate-400 sm:block">Production date · 18 July 2026</p><h1 className="text-[18px] font-bold tracking-[-0.02em] text-slate-900 sm:mt-0.5 sm:text-[20px]">Good morning, Sejal Glass team <span className="text-[#3165ed]">—</span></h1></div></div>
-          <div className="flex items-center gap-2 sm:gap-4"><div className="relative hidden md:block"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search PI, serial or customer" className="h-10 w-[245px] rounded-xl border-slate-200 bg-slate-50 pl-9 text-xs shadow-none placeholder:text-slate-400 focus-visible:ring-[#3165ed]" /></div><button onClick={() => flashNotice("You have 3 new notifications")} className="relative rounded-xl p-2.5 text-slate-500 transition-colors hover:bg-slate-100"><Bell size={19} /><span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-[#3165ed] ring-2 ring-white" /></button><div className="avatar hidden sm:flex">AM</div></div>
-        </header>
-
-        <div className="mx-auto max-w-[1480px] px-5 py-7 sm:px-8 lg:px-10 lg:py-9">
-          {notice && <div className="toast-notice"><Check size={15} />{notice}<button onClick={() => setNotice("")}><X size={14} /></button></div>}
-          {activeNav === "Overview" ? <>
-          <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-400"><span>Workspace</span><span>/</span><span className="text-slate-600">{activeNav}</span></div><h2 className="text-[26px] font-extrabold tracking-[-0.045em] text-slate-950 sm:text-[30px]">Production overview</h2><p className="mt-1 text-sm text-slate-500">A clear view of your glass production floor, from PI to dispatch.</p></div><div className="flex gap-2"><Button onClick={() => setShowScanner(true)} variant="outline" className="h-10 gap-2 rounded-xl border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm"><ScanLine size={16} className="text-[#3165ed]" /> Scan item</Button><Button onClick={() => flashNotice("New PI workflow opened")} className="h-10 gap-2 rounded-xl bg-[#3165ed] px-4 text-xs font-bold text-white shadow-[0_6px_14px_rgba(49,101,237,0.22)] hover:bg-[#2858dc]"><Plus size={16} /> New PI</Button></div></div>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard icon={FileText} label="Total PIs" value="4" change="12.5%" accent="#3165ed" /><StatCard icon={RefreshCw} label="In production" value="2" change="8.2%" accent="#7c5ce4" /><StatCard icon={PackageCheck} label="Finished items" value="280" change="18.4%" accent="#16a691" /><StatCard icon={AlertTriangle} label="Needs attention" value="14" change="3.1%" positive={false} accent="#e58a35" /></div>
-
-          <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_330px]">
-            <section className="panel"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h3 className="section-title">Production pipeline</h3><p className="section-subtitle">Items currently moving through the plant</p></div><button onClick={() => flashNotice("Pipeline filters opened")} className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><Filter size={14} /> Filter</button></div><div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-5">{stages.map((stage, index) => <div key={stage.key} className="stage-card" style={{ backgroundColor: stage.tint }}><div className="flex items-start justify-between"><span className="stage-icon" style={{ backgroundColor: stage.color }}><Box size={15} /></span>{index < 4 && <ArrowUpRight size={14} style={{ color: stage.color }} />}</div><p className="mt-5 text-[13px] font-semibold text-slate-600">{stage.name}</p><p className="mt-1 text-[25px] font-extrabold tracking-[-0.05em] text-slate-900">{stage.count}</p><div className="mt-3 h-1 overflow-hidden rounded-full bg-white/80"><div className="h-full rounded-full" style={{ width: `${Math.min(100, 25 + stage.count / 2)}%`, backgroundColor: stage.color }} /></div><p className="mt-2 text-[10px] font-semibold text-slate-400">{index === 4 ? "Ready to dispatch" : "Pending queue"}</p></div>)}</div><div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-slate-100 pt-4 text-[11px] font-semibold text-slate-500"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#3165ed]" /> Active today <b className="text-slate-800">95</b></span><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#16a691]" /> Completed today <b className="text-slate-800">42</b></span><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#e58a35]" /> Rework <b className="text-slate-800">7</b></span></div></section>
-            <section className="scan-panel"><div className="flex items-center justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#a9c8ff]">Quick action</p><h3 className="mt-1 text-[19px] font-extrabold tracking-[-0.03em] text-white">Scan an item</h3></div><div className="rounded-xl bg-white/10 p-2.5"><QrCode size={21} className="text-[#bdd3ff]" /></div></div><p className="mt-3 text-xs leading-relaxed text-[#a9bde0]">Scan a barcode to view status, update a stage, or flag an issue.</p><div className="mt-6 rounded-xl border border-white/15 bg-white/[0.08] p-2"><div className="flex items-center gap-2"><ScanLine size={17} className="ml-2 text-[#8fb3ff]" /><input value={scanValue} onChange={(e) => setScanValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && flashNotice(scanValue ? `Item ${scanValue} found` : "Ready to scan an item")} placeholder="Scan barcode or type serial" className="min-w-0 flex-1 bg-transparent px-1 py-2 text-xs text-white outline-none placeholder:text-[#8198c0]" /><button onClick={() => flashNotice(scanValue ? `Item ${scanValue} found` : "Ready to scan an item")} className="rounded-lg bg-[#3165ed] p-2 text-white hover:bg-[#4778f0]"><ArrowUpRight size={15} /></button></div></div><div className="mt-5 flex items-center gap-2 text-[10px] font-semibold text-[#8ea8d1]"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Scanner station online <span className="ml-auto">Last sync 2m ago</span></div></section>
+          <div className="flex items-center gap-3 border-r border-slate-200 pr-4">
+            <img
+              src="/sejal-glass-logo.png"
+              alt="SEJAL GLASS"
+              className="h-9 w-auto object-contain shrink-0"
+            />
+            <div className="hidden sm:block">
+              <div className="text-[10px] text-slate-500 font-semibold font-arabic leading-tight">سیجال جلاس</div>
+            </div>
           </div>
 
-          <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_330px]">
-            <section className="panel overflow-hidden p-0"><div className="flex flex-col justify-between gap-3 px-6 py-5 sm:flex-row sm:items-center"><div><h3 className="section-title">Client production orders</h3><p className="section-subtitle">Live orders from the Sejal Glass shop floor</p></div><button onClick={() => setActiveNav("Proforma Invoices")} className="text-xs font-bold text-[#3165ed] hover:underline">View all PIs <span className="ml-1">→</span></button></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left"><thead><tr className="border-y border-slate-100 bg-slate-50/70 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400"><th className="px-6 py-3">PI number</th><th className="px-4 py-3">Customer / project</th><th className="px-4 py-3">Items</th><th className="px-4 py-3">Status</th><th className="px-6 py-3 text-right">Issued</th></tr></thead><tbody>{filteredPIs.map((pi) => <tr key={pi.number} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"><td className="px-6 py-4"><p className="text-xs font-bold text-[#3165ed]">{pi.number}</p><p className="mt-1 text-[10px] font-medium text-slate-400">{pi.date}</p></td><td className="px-4 py-4"><p className="text-xs font-bold text-slate-800">{pi.customer}</p><p className="mt-1 text-[11px] text-slate-400">{pi.project}</p></td><td className="px-4 py-4"><p className="text-xs font-bold text-slate-700">{pi.items} sheets</p><p className="mt-1 text-[10px] text-slate-400">{pi.area}</p></td><td className="px-4 py-4"><span className={`status-pill status-${pi.tone}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{pi.status}</span></td><td className="px-6 py-4 text-right"><button onClick={() => flashNotice(`Opening ${pi.number}`)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{filteredPIs.length === 0 && <div className="px-6 py-10 text-center text-sm text-slate-400">No PIs match your search.</div>}</div></section>
-            <section className="panel"><div className="flex items-start justify-between"><div><h3 className="section-title">Live queue</h3><p className="section-subtitle">Next items to process</p></div><span className="relative mt-1 flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-50" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" /></span></div><div className="mt-5 space-y-4">{queueItems.map((item) => <div key={item.serial} className="flex items-center gap-3"><div className="queue-icon" style={{ color: item.color, backgroundColor: item.color + "14" }}><GlassWater size={16} /></div><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-bold text-slate-800">{item.serial}</p><p className="mt-1 truncate text-[10px] text-slate-400">{item.detail}</p></div><div className="text-right"><p className="text-[10px] font-bold" style={{ color: item.color }}>{item.stage}</p><p className="mt-1 text-[10px] text-slate-400">{item.eta}</p></div></div>)}</div><button onClick={() => setActiveNav("Production")} className="mt-6 w-full rounded-xl border border-slate-200 py-2.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">Open production queue</button></section>
+          <div className="hidden md:block">
+            <h1 className="font-extrabold text-sm tracking-tight text-slate-900 leading-none uppercase">
+              SHOP FLOOR & PROFORMA INVOICE SYSTEM
+            </h1>
+            <p className="text-[11px] text-slate-500 font-medium leading-tight">
+              Reflecting Values • Precision Glass Production Tracking
+            </p>
+          </div>
+        </div>
+
+        {/* Right Side: Interactive Search Bar, Notifications & User Profile */}
+        <div className="flex items-center gap-4">
+          <div className="relative hidden md:block w-72" ref={searchContainerRef}>
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input
+              ref={searchInputRef}
+              placeholder="Universal Search (PI, Barcode, Serial)..."
+              value={piSearchTerm}
+              onFocus={() => setSearchFocused(true)}
+              onChange={(e) => {
+                setPiSearchTerm(e.target.value);
+                setSearchFocused(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSearchFocused(false);
+              }}
+              className="pl-8 pr-12 h-8 text-xs bg-slate-50 border-slate-200 rounded-lg focus-visible:ring-1 focus-visible:ring-purple-600"
+            />
+            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs">
+              Ctrl /
+            </span>
+
+            {/* Universal Search Results Popover Dropdown */}
+            {searchFocused && piSearchTerm.trim().length > 0 && (
+              <UniversalSearchResults
+                searchTerm={piSearchTerm}
+                pis={pis}
+                items={items}
+                onSelectPI={(pi) => openPIDetails(pi)}
+                onSelectItem={(item) => handleOpenSticker(item)}
+                onSelectModule={(tabId) => {
+                  setActiveTab(tabId as any);
+                }}
+                onClose={() => setSearchFocused(false)}
+              />
+            )}
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-5 py-3.5 text-[11px] text-slate-500 shadow-sm"><span className="flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-500" /> All systems operational</span><span className="flex items-center gap-5"><span>Last updated <b className="font-semibold text-slate-700">just now</b></span><button onClick={() => flashNotice("Dashboard refreshed")} className="flex items-center gap-1.5 font-bold text-[#3165ed]"><RefreshCw size={13} /> Refresh</button></span></div>
-          </>
-          : <ModuleView module={activeNav} onNotice={flashNotice} onScan={() => setShowScanner(true)} />}
-        </div>
-      </main>
+          {/* Single Global Sync Now Button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              fetchData();
+              toast.success("Synchronizing shop floor & batch data...");
+            }}
+            disabled={loading}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-xl border-purple-200 text-purple-700 bg-purple-50/70 hover:bg-purple-100 hover:text-purple-900 font-extrabold text-xs shadow-2xs transition-all shrink-0"
+            title={`Last synced: ${getDubaiTimeStr(lastUpdated)} (Click to sync complete system data)`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-purple-600 ${loading ? "animate-spin" : ""}`} />
+            <span>Sync Now</span>
+          </Button>
 
-      {showScanner && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between"><div><div className="mb-3 inline-flex rounded-xl bg-[#eef3ff] p-3 text-[#3165ed]"><ScanLine size={22} /></div><h3 className="text-xl font-extrabold tracking-[-0.03em] text-slate-900">Scan production item</h3><p className="mt-1 text-sm text-slate-500">Use a handheld scanner or enter a serial number.</p></div><button onClick={() => setShowScanner(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div><div className="mt-6 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3"><ScanLine size={18} className="text-[#3165ed]" /><input autoFocus value={scanValue} onChange={(e) => setScanValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (flashNotice(`Item ${scanValue || ""} found`), setShowScanner(false))} placeholder="GL-240824-00842" className="h-12 min-w-0 flex-1 bg-transparent text-sm font-medium outline-none placeholder:text-slate-400" /></div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setShowScanner(false)} className="rounded-xl text-xs font-bold">Cancel</Button><Button onClick={() => { flashNotice(`Item ${scanValue || ""} found`); setShowScanner(false); }} className="rounded-xl bg-[#3165ed] text-xs font-bold">Find item</Button></div></div></div>}
+          {/* Weather & Clock Chip: compact inline between Search and Bell */}
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs font-semibold text-amber-800 shadow-2xs select-none">
+            <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span>36°C</span>
+            <span className="text-amber-400 font-normal">•</span>
+            <span className="text-slate-600 font-medium">Dubai, UAE</span>
+            <span className="text-amber-400 font-normal">•</span>
+            <span className="font-mono text-slate-700">{getDubaiTimeStr(now)}</span>
+          </div>
+
+          <div className="flex items-center gap-3 relative">
+            {/* Notifications Popover */}
+            <div className="relative" ref={notificationsRef}>
+              <button
+                onClick={() => {
+                  setNotificationsOpen((prev) => !prev);
+                  setUserMenuOpen(false);
+                }}
+                className="relative p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadNotifications > 0 && (
+                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </button>
+
+              {notificationsOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                    <div className="font-extrabold text-xs text-slate-900">System Notifications</div>
+                    <div className="flex items-center gap-2">
+                      {unreadNotifications > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setNotifications((prev) => prev.map((n) => ({ ...n, read: true }))); }}
+                          className="text-[10px] text-purple-600 font-bold hover:underline"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                      {notifications.length > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setNotifications([]); }}
+                          className="text-[10px] text-slate-400 font-bold hover:text-rose-500 hover:underline transition-colors"
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-xs max-h-72 overflow-y-auto">
+                    {notifications.length === 0 && (
+                      <div className="py-6 text-center text-[11px] text-slate-400 font-medium">
+                        No notifications
+                      </div>
+                    )}
+                    {notifications.map((n) => (
+                      <div
+                        key={n.id}
+                        className={`relative p-2 pr-6 rounded-lg border transition-colors ${n.type === "destructive"
+                            ? "bg-rose-50/80 border-rose-200"
+                            : n.type === "warning"
+                              ? "bg-amber-50/80 border-amber-200"
+                              : n.type === "success"
+                                ? "bg-emerald-50/80 border-emerald-200"
+                                : "bg-purple-50/80 border-purple-200"
+                          } ${!n.read ? "ring-1 ring-purple-400" : ""}`}
+                      >
+                        {/* X close button */}
+                        <button
+                          onClick={() => setNotifications((prev) => prev.filter((x) => x.id !== n.id))}
+                          className="absolute top-1.5 right-1.5 text-slate-300 hover:text-slate-600 transition-colors rounded p-0.5 hover:bg-white/60"
+                          title="Dismiss"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                        <div
+                          className={`font-bold text-[11px] ${n.type === "destructive"
+                              ? "text-rose-900"
+                              : n.type === "warning"
+                                ? "text-amber-900"
+                                : n.type === "success"
+                                  ? "text-emerald-900"
+                                  : "text-purple-900"
+                            }`}
+                        >
+                          {n.title}
+                        </div>
+                        <div className="text-[10px] text-slate-600 mt-0.5">{n.message}</div>
+                        <div className="text-[9px] text-slate-400 mt-1 font-mono">{n.timestamp}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* User Profile Popover */}
+            <div className="relative" ref={userMenuRef}>
+              <button
+                onClick={() => {
+                  setUserMenuOpen((prev) => !prev);
+                  setNotificationsOpen(false);
+                }}
+                className="flex items-center gap-2 pl-2 border-l border-slate-200 hover:opacity-80 transition-opacity text-left"
+              >
+                <div className="w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                  {userRole.charAt(0)}
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-xs font-bold text-slate-900 leading-tight flex items-center gap-1">
+                    {userRole} <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-medium leading-tight">
+                    {userRole === "Admin" ? "Administrator" : userRole === "Supervisor" ? "Production Supervisor" : "Station Operator"}
+                  </div>
+                </div>
+              </button>
+
+              {userMenuOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-2">
+                  <div className="px-3 py-2 border-b border-slate-100">
+                    <div className="font-bold text-xs text-slate-900">{userRole} User</div>
+                    <div className="text-[10px] text-slate-500">{userRole.toLowerCase()}@sejalglass.com</div>
+                    <div className="mt-1">
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-700">
+                        Active Role: {userRole}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="py-1 text-xs space-y-0.5">
+                    <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Switch Active Role</div>
+                    {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => {
+                          handleRoleChange(r);
+                          setUserMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-1.5 rounded-lg font-medium flex items-center justify-between transition-all ${userRole === r ? "bg-purple-50 text-purple-700 font-bold" : "text-slate-700 hover:bg-slate-50"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <ShieldCheck className="w-3.5 h-3.5 text-purple-600" /> {r}
+                        </span>
+                        {userRole === r && <Check className="w-3.5 h-3.5 text-purple-600" />}
+                      </button>
+                    ))}
+                    {userRole === "Admin" && (
+                      <button
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          handleClearDatabase();
+                        }}
+                        className="w-full text-left px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 font-bold flex items-center gap-2 transition-all mt-1 border-t border-slate-100 pt-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-600" /> Clear System Database
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Layout Container */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Navigation Sidebar (Supports Collapsed Icon-Only Mode and Expanded Mode) */}
+        <AppSidebar
+          sidebarOpen={sidebarOpen}
+          activeTab={activeTab}
+          setActiveTab={(tab) => setActiveTab(tab as any)}
+          stats={effectiveStats}
+        />
+
+        {/* Main Workspace Body */}
+        <main className="flex-1 p-6 space-y-6 overflow-y-auto bg-[#f8fafc]">
+          {/* TAB: OVERVIEW DASHBOARD */}
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              {/* Live Production Sync Active Banner */}
+              <div className="flex items-center justify-between bg-white border border-slate-200/80 p-3 px-4 rounded-xl text-xs shadow-2xs">
+                <div className="flex items-center gap-2 text-slate-600 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="font-bold text-slate-800">Live Production Sync Active</span>
+                  <span className="text-slate-400">• Last synced: {getDubaiTimeStr(lastUpdated)}</span>
+                </div>
+              </div>
+
+              {/* 4 KPI Stat Cards Grid (Clickable) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Card 1: Total Batches Uploaded */}
+                <div
+                  onClick={() => setActiveTab("pis")}
+                  className="bg-gradient-to-br from-white via-white to-purple-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-purple-300 transition-all duration-300 relative overflow-hidden group cursor-pointer"
+                  title="Click to open Sticker & Batch Status list"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActiveTab("pis");
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-purple-700 transition-colors">
+                        Total Batches Uploaded <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-purple-600" />
+                      </div>
+                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.totalPI}</div>
+                      <div className="text-[11px] text-purple-700 font-semibold mt-1 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" /> {effectiveStats.pendingPI} Pending Production
+                      </div>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-purple-100/70 text-purple-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all duration-300 shadow-2xs">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: Finished Glass Items */}
+                <div
+                  onClick={() => setActiveTab("finished")}
+                  className="bg-gradient-to-br from-white via-white to-emerald-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-emerald-300 transition-all duration-300 group cursor-pointer"
+                  title="Click to open Finished Items Warehouse & Dispatch queue"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActiveTab("finished");
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-emerald-700 transition-colors">
+                        Finished Glass Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-emerald-600" />
+                      </div>
+                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.finishedItems}</div>
+                      <div className="text-[11px] text-emerald-600 font-semibold mt-1 flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5" /> 100% Quality Inspected
+                      </div>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-emerald-100/70 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-300 shadow-2xs">
+                      <CheckCircle className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Rejected Items */}
+                <div
+                  onClick={() => {
+                    setReportsInitialTab("rejects");
+                    setActiveTab("reports");
+                  }}
+                  className="bg-gradient-to-br from-white via-white to-red-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-red-300 transition-all duration-300 group cursor-pointer"
+                  title="Click to open Quality Rejects log"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setReportsInitialTab("rejects");
+                      setActiveTab("reports");
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-red-700 transition-colors">
+                        Rejected Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-red-600" />
+                      </div>
+                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.rejectItems}</div>
+                      <div className="text-[11px] text-red-600 font-semibold mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Log & Reason Traceable
+                      </div>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-red-100/70 text-red-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-red-600 group-hover:text-white transition-all duration-300 shadow-2xs">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 4: Rework Items */}
+                <div
+                  onClick={() => {
+                    setReportsInitialTab("reworks");
+                    setActiveTab("reports");
+                  }}
+                  className="bg-gradient-to-br from-white via-white to-amber-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-amber-300 transition-all duration-300 group cursor-pointer"
+                  title="Click to open Rework log and tracking"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setReportsInitialTab("reworks");
+                      setActiveTab("reports");
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-amber-700 transition-colors">
+                        Rework Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
+                      </div>
+                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.reworkItems}</div>
+                      <div className="text-[11px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
+                        <RefreshCw className="w-3.5 h-3.5 group-hover:rotate-180 transition-transform duration-500" /> Re-routed to Workstations
+                      </div>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-amber-600 group-hover:text-white transition-all duration-300 shadow-2xs">
+                      <RefreshCw className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* LIVE STAGE PRODUCTION QUEUES Section */}
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-extrabold text-slate-900 tracking-wider uppercase">
+                    LIVE STAGE PRODUCTION QUEUES
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("production-overview")}
+                    className="p-1 text-slate-400 hover:text-purple-600 transition-colors flex items-center gap-1 text-xs font-bold"
+                  >
+                    <span>View All</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Cutting Queue */}
+                  <div
+                    onClick={() => setActiveTab("cutting")}
+                    className="bg-gradient-to-br from-purple-50/60 to-purple-100/40 border border-purple-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-purple-100/80 hover:border-purple-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-purple-900 uppercase tracking-wider">Cutting Queue</div>
+                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                        {effectiveStats.pendingCutting} <span className="text-xs font-semibold text-purple-700">Items</span>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-purple-200/60 text-purple-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all duration-200 shadow-2xs">
+                      <Box className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  {/* DGU Queue */}
+                  <div
+                    onClick={() => setActiveTab("dgu")}
+                    className="bg-gradient-to-br from-teal-50/60 to-teal-100/40 border border-teal-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-teal-100/80 hover:border-teal-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-teal-900 uppercase tracking-wider">DGU Queue</div>
+                      <div className="text-xl font-extrabold text-slate-900 mt-1">
+                        {effectiveStats.pendingDGU} <span className="text-xs font-semibold text-teal-700">Units</span>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-teal-200/60 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-teal-600 group-hover:text-white transition-all duration-200 shadow-2xs">
+                      <ClipboardList className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  {/* Lamination Queue */}
+                  <div
+                    onClick={() => setActiveTab("lamination")}
+                    className="bg-gradient-to-br from-amber-50/60 to-amber-100/40 border border-amber-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-amber-100/80 hover:border-amber-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-amber-900 uppercase tracking-wider">Lamination Queue</div>
+                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                        {stats?.pendingLamination ?? 0} <span className="text-xs font-semibold text-amber-700">Items</span>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-amber-600 group-hover:text-white transition-all duration-200 shadow-2xs">
+                      <Layers className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  {/* Finished Items Warehouse */}
+                  <div
+                    onClick={() => setActiveTab("finished")}
+                    className="bg-gradient-to-br from-emerald-50/60 to-emerald-100/40 border border-emerald-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-emerald-100/80 hover:border-emerald-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Finished Warehouse</div>
+                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                        {stats?.finishedItems ?? 0} <span className="text-xs font-semibold text-emerald-700">Items</span>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-emerald-200/60 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-200 shadow-2xs">
+                      <CheckCircle className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Active PIs Table & Right Widgets Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Active Proforma Invoices (PIs) Main Panel */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-extrabold text-slate-900">Active Sticker & Batch Status</h2>
+                      <button
+                        onClick={() => setActiveTab("pis")}
+                        className="text-xs font-bold text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                      >
+                        View All Batches <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Table View */}
+                    {pis.length > 0 ? (
+                      <div className="no-scrollbar overflow-x-auto w-full">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
+                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
+                                BATCH NO {renderSortIcon("piNumber")}
+                              </th>
+                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
+                                CUSTOMER {renderSortIcon("customerName")}
+                              </th>
+                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
+                                PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                              </th>
+                              <th className="py-2.5 px-2 text-center whitespace-nowrap">
+                                COMPLETED
+                              </th>
+                              <th className="py-2.5 px-2 text-right whitespace-nowrap">
+                                SQM
+                              </th>
+                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
+                                UPLOADED AT {renderSortIcon("createdAt")}
+                              </th>
+                              <th className="py-2.5 px-2 text-center whitespace-nowrap">
+                                STATUS
+                              </th>
+                              <th className="py-2.5 px-2 text-right whitespace-nowrap">
+                                ACTIONS
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {paginatedPIs.map((pi) => {
+                              const metrics = getBatchMetrics(pi);
+                              return (
+                                <tr
+                                  key={pi.id}
+                                  onClick={() => openPIDetails(pi)}
+                                  className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+                                  title="Click to view Batch details"
+                                >
+                                  <td className="py-3 px-2.5 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
+                                  <td className="py-3 px-2.5 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
+                                  <td className="py-3 px-2.5 text-slate-600 leading-snug">
+                                    <div className="font-medium text-slate-900">{pi.projectName}</div>
+                                    {pi.jobOrderNumber && (
+                                      <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-2 text-center font-bold text-slate-700 whitespace-nowrap">
+                                    {metrics.completedPieces} / {metrics.totalPieces}
+                                  </td>
+                                  <td className="py-3 px-2 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                                    {metrics.totalSqm.toFixed(2)} m²
+                                  </td>
+                                  <td className="py-3 px-2.5 whitespace-nowrap font-mono text-[11px]">
+                                    <div className="flex items-center gap-1 font-bold text-slate-800">
+                                      <Calendar className="w-3 h-3 text-purple-600 shrink-0" />
+                                      {formatPlatformDate(pi.createdAt || pi.issueDate)}
+                                    </div>
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium">
+                                      <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                      {formatPlatformTime(pi.createdAt)}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-2 text-center whitespace-nowrap">
+                                    <StatusBadge status={metrics.status || pi.status || "Pending"} />
+                                  </td>
+                                  <td className="py-3 px-2 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openPIDetails(pi);
+                                      }}
+                                      className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
+                                      title="View Details"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </Button>
+                                    {userRole === "Admin" && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeletePI(pi.id);
+                                        }}
+                                        className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
+                                        title="Delete Batch"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </Button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      /* Table Empty State Container */
+                      <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3 shadow-2xs">
+                          <FileText className="w-7 h-7" />
+                        </div>
+                        <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
+                        <p className="text-xs text-slate-500 mt-1 max-w-xs">
+                          Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.
+                        </p>
+                        <div className="flex items-center gap-2 mt-4 flex-wrap justify-center">
+                          <Button
+                            onClick={() => setManualPIModalOpen(true)}
+                            size="sm"
+                            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs px-3.5 h-9 rounded-lg shadow-xs gap-1.5"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Manual Entry
+                          </Button>
+                          <Button
+                            onClick={() => setStickerUploadModalOpen(true)}
+                            size="sm"
+                            variant="outline"
+                            className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs px-3.5 h-9 rounded-lg shadow-xs gap-1.5"
+                          >
+                            <Upload className="w-3.5 h-3.5" /> Upload Sticker PDF
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Column Summary Widgets */}
+                <div className="space-y-4">
+                  {/* Widget 2: PRODUCTION SUMMARY Donut Chart */}
+                  <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-3.5 relative overflow-hidden group">
+                    {/* Header with Live Sync Status & Area Indicator */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                          PRODUCTION SUMMARY
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100/90 text-emerald-800 border border-emerald-300 shadow-2xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          LIVE
+                        </span>
+                      </div>
+                      <div className="text-[10px] font-mono font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg">
+                        {pipelineMetrics.totalSqm.toFixed(1)} m² Total
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 pt-0.5">
+                      {(() => {
+                        const totalDashboardItems = pipelineMetrics.totalItems || items.length;
+                        const completedDashboardItems = (stats?.finishedItems ?? pipelineMetrics.finishedItems) || 0;
+                        const rejectedDashboardItems = (stats?.rejectItems ?? pipelineMetrics.rejectedItems) || 0;
+                        const pendingDashboardItems = (stats?.pendingPI ?? 0);
+                        const inProgressDashboardItems = Math.max(0, totalDashboardItems - completedDashboardItems - rejectedDashboardItems);
+                        const effectiveTotal = Math.max(1, completedDashboardItems + inProgressDashboardItems + pendingDashboardItems + rejectedDashboardItems);
+
+                        const completedPercent = totalDashboardItems > 0 ? Math.round((completedDashboardItems / totalDashboardItems) * 100) : 0;
+                        const inProgressPercent = totalDashboardItems > 0 ? Math.round((inProgressDashboardItems / totalDashboardItems) * 100) : 0;
+                        const pendingPercent = totalDashboardItems > 0 ? Math.round((pendingDashboardItems / totalDashboardItems) * 100) : 0;
+                        const rejectedPercent = totalDashboardItems > 0 ? Math.round((rejectedDashboardItems / totalDashboardItems) * 100) : 0;
+
+                        // Calculate SVG segment lengths out of 100
+                        const pCompleted = (completedDashboardItems / effectiveTotal) * 100;
+                        const pInProgress = (inProgressDashboardItems / effectiveTotal) * 100;
+                        const pPending = (pendingDashboardItems / effectiveTotal) * 100;
+                        const pRejected = (rejectedDashboardItems / effectiveTotal) * 100;
+
+                        const offsetCompleted = 0;
+                        const offsetInProgress = -pCompleted;
+                        const offsetPending = -(pCompleted + pInProgress);
+                        const offsetRejected = -(pCompleted + pInProgress + pPending);
+
+                        return (
+                          <>
+                            {/* Real-time Multi-Segment Radial Donut SVG */}
+                            <div
+                              className="relative w-28 h-28 shrink-0 flex items-center justify-center cursor-pointer select-none"
+                              onClick={() => setActiveSummarySlice("all")}
+                              title="Click to reset view to Overall Completion"
+                            >
+                              <svg className="w-full h-full transform -rotate-90 filter drop-shadow-xs" viewBox="0 0 42 42">
+                                {/* Base Track */}
+                                <circle
+                                  cx="21"
+                                  cy="21"
+                                  r="15.9155"
+                                  fill="transparent"
+                                  stroke="#f1f5f9"
+                                  strokeWidth="4.2"
+                                />
+
+                                {/* Segment 1: Completed (Emerald) */}
+                                {pCompleted > 0 && (
+                                  <circle
+                                    cx="21"
+                                    cy="21"
+                                    r="15.9155"
+                                    fill="transparent"
+                                    stroke="#10b981"
+                                    strokeWidth={activeSummarySlice === "completed" ? "5.4" : "4.2"}
+                                    strokeDasharray={`${pCompleted} ${100 - pCompleted}`}
+                                    strokeDashoffset={offsetCompleted}
+                                    className="transition-all duration-500 ease-out"
+                                  />
+                                )}
+
+                                {/* Segment 2: In Progress (Cyan / Teal) */}
+                                {pInProgress > 0 && (
+                                  <circle
+                                    cx="21"
+                                    cy="21"
+                                    r="15.9155"
+                                    fill="transparent"
+                                    stroke="#06b6d4"
+                                    strokeWidth={activeSummarySlice === "inProgress" ? "5.4" : "4.2"}
+                                    strokeDasharray={`${pInProgress} ${100 - pInProgress}`}
+                                    strokeDashoffset={offsetInProgress}
+                                    className="transition-all duration-500 ease-out"
+                                  />
+                                )}
+
+                                {/* Segment 3: Pending (Amber) */}
+                                {pPending > 0 && (
+                                  <circle
+                                    cx="21"
+                                    cy="21"
+                                    r="15.9155"
+                                    fill="transparent"
+                                    stroke="#f59e0b"
+                                    strokeWidth={activeSummarySlice === "pending" ? "5.4" : "4.2"}
+                                    strokeDasharray={`${pPending} ${100 - pPending}`}
+                                    strokeDashoffset={offsetPending}
+                                    className="transition-all duration-500 ease-out"
+                                  />
+                                )}
+
+                                {/* Segment 4: Rejected (Red) */}
+                                {pRejected > 0 && (
+                                  <circle
+                                    cx="21"
+                                    cy="21"
+                                    r="15.9155"
+                                    fill="transparent"
+                                    stroke="#ef4444"
+                                    strokeWidth={activeSummarySlice === "rejected" ? "5.4" : "4.2"}
+                                    strokeDasharray={`${pRejected} ${100 - pRejected}`}
+                                    strokeDashoffset={offsetRejected}
+                                    className="transition-all duration-500 ease-out"
+                                  />
+                                )}
+                              </svg>
+
+                              {/* Interactive Center Info Display */}
+                              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-1 select-none pointer-events-none">
+                                {activeSummarySlice === "inProgress" ? (
+                                  <div className="animate-in fade-in zoom-in-90 duration-150">
+                                    <span className="text-base font-black text-cyan-700 leading-tight block">
+                                      {inProgressDashboardItems}
+                                    </span>
+                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
+                                      In Progress
+                                    </span>
+                                    <span className="text-[7.5px] font-mono font-black text-cyan-600 block mt-0.5">
+                                      {inProgressPercent}% WIP
+                                    </span>
+                                  </div>
+                                ) : activeSummarySlice === "pending" ? (
+                                  <div className="animate-in fade-in zoom-in-90 duration-150">
+                                    <span className="text-base font-black text-amber-700 leading-tight block">
+                                      {pendingDashboardItems}
+                                    </span>
+                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
+                                      Pending
+                                    </span>
+                                    <span className="text-[7.5px] font-mono font-black text-amber-600 block mt-0.5">
+                                      {pendingPercent}%
+                                    </span>
+                                  </div>
+                                ) : activeSummarySlice === "rejected" ? (
+                                  <div className="animate-in fade-in zoom-in-90 duration-150">
+                                    <span className="text-base font-black text-rose-700 leading-tight block">
+                                      {rejectedDashboardItems}
+                                    </span>
+                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
+                                      Rejected
+                                    </span>
+                                    <span className="text-[7.5px] font-mono font-black text-rose-600 block mt-0.5">
+                                      {rejectedPercent}%
+                                    </span>
+                                  </div>
+                                ) : activeSummarySlice === "completed" ? (
+                                  <div className="animate-in fade-in zoom-in-90 duration-150">
+                                    <span className="text-base font-black text-emerald-700 leading-tight block">
+                                      {completedDashboardItems}
+                                    </span>
+                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
+                                      Completed
+                                    </span>
+                                    <span className="text-[7.5px] font-mono font-black text-emerald-600 block mt-0.5">
+                                      {completedPercent}%
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="animate-in fade-in zoom-in-90 duration-150">
+                                    <span className="text-base font-black text-slate-900 leading-tight block">
+                                      {completedPercent}%
+                                    </span>
+                                    <span className="text-[8px] font-extrabold text-slate-400 uppercase leading-none block mt-0.5">
+                                      Completed
+                                    </span>
+                                    <span className="text-[7.5px] font-mono font-black text-emerald-600 block mt-0.5">
+                                      {completedDashboardItems}/{totalDashboardItems}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Interactive Legend List */}
+                            <div className="space-y-1.5 text-xs flex-1">
+                              {/* Row 1: Completed */}
+                              <div
+                                onMouseEnter={() => setActiveSummarySlice("completed")}
+                                onMouseLeave={() => setActiveSummarySlice("all")}
+                                onClick={() => setActiveSummarySlice(activeSummarySlice === "completed" ? "all" : "completed")}
+                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
+                                  activeSummarySlice === "completed" ? "bg-emerald-50 ring-1 ring-emerald-300" : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-2xs" /> Completed
+                                </span>
+                                <div className="text-right font-mono">
+                                  <span className="font-extrabold text-slate-900">{completedDashboardItems}</span>
+                                  <span className="text-[10px] text-slate-400 ml-1">({completedPercent}%)</span>
+                                </div>
+                              </div>
+
+                              {/* Row 2: In Progress */}
+                              <div
+                                onMouseEnter={() => setActiveSummarySlice("inProgress")}
+                                onMouseLeave={() => setActiveSummarySlice("all")}
+                                onClick={() => setActiveSummarySlice(activeSummarySlice === "inProgress" ? "all" : "inProgress")}
+                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
+                                  activeSummarySlice === "inProgress" ? "bg-cyan-50 ring-1 ring-cyan-300" : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 shrink-0 shadow-2xs" /> In Progress
+                                </span>
+                                <div className="text-right font-mono">
+                                  <span className="font-extrabold text-slate-900">{inProgressDashboardItems}</span>
+                                  <span className="text-[10px] text-cyan-600 font-bold ml-1">({inProgressPercent}%)</span>
+                                </div>
+                              </div>
+
+                              {/* Row 3: Pending */}
+                              <div
+                                onMouseEnter={() => setActiveSummarySlice("pending")}
+                                onMouseLeave={() => setActiveSummarySlice("all")}
+                                onClick={() => setActiveSummarySlice(activeSummarySlice === "pending" ? "all" : "pending")}
+                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
+                                  activeSummarySlice === "pending" ? "bg-amber-50 ring-1 ring-amber-300" : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0 shadow-2xs" /> Pending
+                                </span>
+                                <div className="text-right font-mono">
+                                  <span className="font-extrabold text-slate-900">{pendingDashboardItems}</span>
+                                  <span className="text-[10px] text-slate-400 ml-1">({pendingPercent}%)</span>
+                                </div>
+                              </div>
+
+                              {/* Row 4: Rejected */}
+                              <div
+                                onMouseEnter={() => setActiveSummarySlice("rejected")}
+                                onMouseLeave={() => setActiveSummarySlice("all")}
+                                onClick={() => setActiveSummarySlice(activeSummarySlice === "rejected" ? "all" : "rejected")}
+                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
+                                  activeSummarySlice === "rejected" ? "bg-red-50 ring-1 ring-red-300" : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0 shadow-2xs" /> Rejected
+                                </span>
+                                <div className="text-right font-mono">
+                                  <span className="font-extrabold text-slate-900">{rejectedDashboardItems}</span>
+                                  <span className="text-[10px] text-slate-400 ml-1">({rejectedPercent}%)</span>
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Workstation Queue Real-time Quick Chips */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-extrabold flex-wrap gap-1">
+                      <button
+                        onClick={() => setActiveTab("cutting")}
+                        className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 hover:bg-purple-100 transition-colors"
+                        title="Cutting Workstation Queue"
+                      >
+                        Cut: {pipelineMetrics.cuttingItems}
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("pairing")}
+                        className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 hover:bg-indigo-100 transition-colors"
+                        title="Pairing Buffer Queue"
+                      >
+                        Pair: {pipelineMetrics.pairingItems}
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("dgu")}
+                        className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 hover:bg-teal-100 transition-colors"
+                        title="DGU Assembly Station"
+                      >
+                        DGU: {pipelineMetrics.dguUnits}
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("lamination")}
+                        className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors"
+                        title="Lamination Stage Queue"
+                      >
+                        Lam: {pipelineMetrics.laminationItems}
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("finished")}
+                        className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors"
+                        title="Finished Warehouse Inventory"
+                      >
+                        Fin: {pipelineMetrics.finishedItems}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Widget 3: TODAY'S OVERVIEW Dynamic Real-Time Progress Bars */}
+                  <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        TODAY'S OVERVIEW
+                      </div>
+                      <button
+                        onClick={() => setActiveTab("analytics")}
+                        className="text-[10px] font-bold text-purple-600 hover:text-purple-800 flex items-center gap-0.5 hover:underline"
+                        title="Open Performance Analytics"
+                      >
+                        Analytics <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {(() => {
+                      const totalDashboardItems = pipelineMetrics.totalItems || items.length;
+                      const completedDashboardItems = (stats?.finishedItems ?? pipelineMetrics.finishedItems) || 0;
+                      const rejectedDashboardItems = (stats?.rejectItems ?? pipelineMetrics.rejectedItems) || 0;
+                      const reworkDashboardItems = (stats?.reworkItems ?? pipelineMetrics.reworkItems) || 0;
+
+                      const efficiencyRate = totalDashboardItems > 0
+                        ? Math.min(99, Math.max(90, Math.round(94 + (completedDashboardItems > 0 ? 3 : 0) - (rejectedDashboardItems > 0 ? 2 : 0))))
+                        : 96;
+
+                      const onTimeRate = 99.2;
+                      const reworkRate = totalDashboardItems > 0 ? parseFloat(((reworkDashboardItems / totalDashboardItems) * 100).toFixed(1)) : 0.0;
+                      const plantLoadPercent = totalDashboardItems > 0 ? Math.min(100, Math.round((totalDashboardItems / 500) * 100)) : 0;
+
+                      return (
+                        <div className="space-y-3 text-xs">
+                          {/* 1: Production Efficiency */}
+                          <div>
+                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
+                              <span>Production Efficiency</span>
+                              <span className="font-black text-purple-700 font-mono">{efficiencyRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all duration-700"
+                                style={{ width: `${efficiencyRate}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 2: On-Time Delivery */}
+                          <div>
+                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
+                              <span>On-Time Delivery</span>
+                              <span className="font-black text-emerald-600 font-mono">{onTimeRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full rounded-full transition-all duration-700"
+                                style={{ width: `${onTimeRate}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 3: Quality First-Pass Yield / Rework Rate */}
+                          <div>
+                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
+                              <span>Quality Yield Rate</span>
+                              <span className="font-black text-teal-700 font-mono">{pipelineMetrics.yieldRate}%</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-teal-500 to-cyan-500 h-full rounded-full transition-all duration-700"
+                                style={{ width: `${pipelineMetrics.yieldRate}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 4: Plant Load / Utilization Rate */}
+                          <div>
+                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
+                              <span>Facility Active Load</span>
+                              <span className="font-black text-blue-700 font-mono">{plantLoadPercent}% ({totalDashboardItems} WIP)</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-700"
+                                style={{ width: `${plantLoadPercent}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: PRODUCTION OVERVIEW */}
+          {activeTab === "production-overview" && (
+            <ProductionOverviewView
+              items={items}
+              pis={pis}
+              stats={stats}
+              onNavigateTab={(tab) => setActiveTab(tab as any)}
+              onOpenPIDetails={openPIDetails}
+            />
+          )}
+
+          {/* OTHER WORKSTATION TABS (Cutting, DGU, Lamination, Finished) */}
+          {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && (
+            <ProductionStageView
+              stage={
+                activeTab === "cutting" ? "Cutting" :
+                  activeTab === "pairing" ? "Pairing" :
+                    activeTab === "dgu" ? "DGU" :
+                      activeTab === "lamination" ? "Lamination" :
+                        activeTab === "finished" ? "Finished" : (activeTab as any)
+              }
+              items={items}
+              pis={pis}
+              operator={userRole}
+              externalSearchTerm={piSearchTerm}
+              onRefresh={() => fetchData(true)}
+              onOptimisticAdvance={handleOptimisticAdvance}
+              onPrintSticker={handleOpenSticker}
+              onReject={handleOpenReject}
+              onRework={handleOpenRework}
+            />
+          )}
+
+          {/* TAB: STICKER & BATCH STATUS MANAGEMENT */}
+          {activeTab === "pis" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h2 className="text-lg font-extrabold text-slate-900">Sticker & Batch Status</h2>
+                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {userRole === "Admin" && (
+                    <>
+                      <Button
+                        onClick={() => setManualPIModalOpen(true)}
+                        size="sm"
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs gap-1.5 rounded-lg shadow-xs h-9"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Manual Entry
+                      </Button>
+                      <Button
+                        onClick={() => setStickerUploadModalOpen(true)}
+                        size="sm"
+                        variant="outline"
+                        className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs gap-1.5 rounded-lg shadow-xs h-9"
+                      >
+                        <Upload className="w-3.5 h-3.5" /> Upload Sticker PDF
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                {/* Search & Filters */}
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                  <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80">
+                    <button
+                      type="button"
+                      onClick={() => setPiFinishFilter("ALL")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "ALL"
+                          ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                        }`}
+                    >
+                      <span>All Batches</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                        }`}>
+                        {pis.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPiFinishFilter("CLEAR")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "CLEAR"
+                          ? "bg-cyan-600 text-white shadow-xs"
+                          : "text-cyan-800 hover:bg-cyan-100/60"
+                        }`}
+                    >
+                      <span>Clear Glass</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                        }`}>
+                        {clearBatchesCount}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPiFinishFilter("COLOUR")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "COLOUR"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-purple-800 hover:bg-purple-100/60"
+                        }`}
+                    >
+                      <span>Coloured Glass</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}>
+                        {colourBatchesCount}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="relative w-72">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      placeholder="Search batch, customer, project..."
+                      value={piSearchTerm}
+                      onChange={(e) => setPiSearchTerm(e.target.value)}
+                      className="pl-8 text-xs bg-slate-50 border-slate-200 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                {/* PI / Batch Table */}
+                {pis.length > 0 ? (
+                  <div className="no-scrollbar overflow-x-auto w-full">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
+                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
+                            BATCH NO {renderSortIcon("piNumber")}
+                          </th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">
+                            FINISH
+                          </th>
+                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
+                            CUSTOMER {renderSortIcon("customerName")}
+                          </th>
+                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
+                            PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                          </th>
+                          <th className="py-2.5 px-3 text-center whitespace-nowrap">
+                            ITEMS
+                          </th>
+                          <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                            TOTAL SQM
+                          </th>
+                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
+                            UPLOADED AT {renderSortIcon("createdAt")}
+                          </th>
+                          <th className="py-2.5 px-3 text-center whitespace-nowrap">
+                            STATUS
+                          </th>
+                          <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                            ACTIONS
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {paginatedPIs.map((pi) => {
+                          const metrics = getBatchMetrics(pi);
+                          return (
+                            <tr key={pi.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap">{formatBatchNumber(pi.piNumber)}</td>
+                              <td className="py-3 px-3 whitespace-nowrap">
+                                {pi.colorOrClear === "Colour" ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs">
+                                    Coloured Glass
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs">
+                                    Clear Glass
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
+                              <td className="py-3 px-3 text-slate-600 leading-snug">
+                                <div className="font-medium text-slate-900">{pi.projectName}</div>
+                                {pi.jobOrderNumber && (
+                                  <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
+                                {metrics.totalPieces}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                                {metrics.totalSqm.toFixed(2)} m²
+                              </td>
+                              <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
+                                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                                  <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                  {formatPlatformDate(pi.createdAt || pi.issueDate)}
+                                </div>
+                                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
+                                  <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  {formatPlatformTime(pi.createdAt)}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-center whitespace-nowrap">
+                                <StatusBadge status={metrics.status || pi.status || "Pending"} />
+                              </td>
+                              <td className="py-3 px-3 text-right whitespace-nowrap space-x-1">
+                                {userRole === "Admin" && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleDeletePI(pi.id)}
+                                    className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
+                                    title="Delete Batch"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                    <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3">
+                      <FileText className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
+                    <p className="text-xs text-slate-500 mt-1">Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: REPORTS & AUDIT LOG */}
+          {activeTab === "reports" && (
+            <ReportsView
+              key={`${lastUpdated.getTime()}-${reportsInitialTab}`}
+              initialTab={reportsInitialTab}
+              onPrintSticker={handleOpenSticker}
+              onReject={handleOpenReject}
+              onRework={handleOpenRework}
+            />
+          )}
+
+          {/* TAB: PERFORMANCE ANALYTICS */}
+          {activeTab === "analytics" && <PerformanceAnalyticsView key={lastUpdated.getTime()} />}
+        </main>
+      </div>
+
+      {/* Bottom Footer */}
+      <footer className="shrink-0 bg-white border-t border-slate-200 px-5 py-2 flex items-center justify-between text-[11px] text-slate-500 z-30">
+        <div className="flex items-center gap-3">
+          <img
+            src="/sejal-glass-logo.png"
+            alt="SEJAL GLASS"
+            className="h-6 w-auto object-contain shrink-0"
+          />
+          <div>
+            <span className="font-extrabold text-slate-900">SEJAL GLASS & GLASS MANUFACTURING PRODUCTS LLC</span>
+            <span className="hidden md:inline text-slate-400 ml-2">
+              Reflecting Values • Precision Glass Production • Built for Dubai. Made for Excellence.
+            </span>
+          </div>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-4 text-[10px] font-mono text-slate-400">
+          <span>Tel: +971 4 8900 7625</span>
+          <span>TRN: 100423583600003</span>
+          <span>License: TRN-DBR-984720</span>
+          <span>Timezone: GST (GMT+4)</span>
+        </div>
+      </footer>
+
+      {/* Modals */}
+      <StickerUploaderModal
+        open={stickerUploadModalOpen}
+        onOpenChange={setStickerUploadModalOpen}
+        onSuccess={() => {
+          fetchData(true);
+        }}
+      />
+
+      <ManualPIModal
+        open={manualPIModalOpen}
+        onOpenChange={setManualPIModalOpen}
+        onSuccess={() => {
+          fetchData(true);
+        }}
+      />
+
+      <ScanLookupModal
+        open={scanModalOpen}
+        onOpenChange={setScanModalOpen}
+        onPrintSticker={handleOpenSticker}
+        onReject={handleOpenReject}
+        onRework={handleOpenRework}
+      />
+
+      {selectedPI && (
+        <PIDocumentModal
+          open={piModalOpen}
+          onOpenChange={setPiModalOpen}
+          pi={selectedPI}
+          items={
+            items.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber).length > 0
+              ? items.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber)
+              : selectedPIItems
+          }
+          onDeletePI={handleDeletePI}
+          onReleaseToProduction={handleReleaseToProduction}
+        />
+      )}
+
+      {selectedStickerItem && (
+        <BarcodeStickerModal
+          open={stickerModalOpen}
+          onOpenChange={setStickerModalOpen}
+          item={selectedStickerItem}
+        />
+      )}
+
+      {rejectReworkItem && (
+        <RejectReworkModal
+          open={rejectReworkModalOpen}
+          onOpenChange={setRejectReworkModalOpen}
+          item={rejectReworkItem}
+          mode={rejectReworkMode}
+          onSuccess={() => fetchData(true)}
+        />
+      )}
     </div>
   );
 }

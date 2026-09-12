@@ -16,14 +16,21 @@ export default {
       fontFamily: {
         sans: ["DM Sans", "sans-serif"],
         display: ["Manrope", "sans-serif"],
+        arabic: ["Cairo", "sans-serif"],
       },
       colors: {
         brand: {
           50: "#eef3ff",
           100: "#dbe6ff",
-          500: "#3165ed",
-          600: "#2858dc",
-          950: "#172b5b",
+          500: "#1a3a6b",     // Deep navy blue (UAE flag-inspired)
+          600: "#0d2145",     // Darker navy
+          950: "#0a1628",     // Near-black navy
+          gold: {
+            50: "#fef9e7",
+            100: "#fce4b8",
+            500: "#c5a04f",   // Gold accent
+            600: "#a8842e",
+          },
         },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

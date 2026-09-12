@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Cairo:wght@400;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -6,14 +6,17 @@
 
 @layer base {
   :root {
+    --font-arabic: "Cairo", sans-serif;
     --background: 220 33% 98%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    --primary: 222 84% 56%;
+    --primary: 216 61% 26%;
     --primary-foreground: 0 0% 100%;
+    --gold: 43 51% 54%;
+    --gold-foreground: 0 0% 100%;
     --secondary: 220 25% 96%;
     --secondary-foreground: 222 47% 11%;
     --muted: 220 25% 96%;
@@ -24,42 +27,170 @@
     --destructive-foreground: 0 0% 100%;
     --border: 220 22% 91%;
     --input: 220 22% 91%;
-    --ring: 222 84% 56%;
+    --ring: 216 61% 26%;
     --radius: 0.8rem;
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 222 84% 56%;
+    --sidebar-primary: 216 61% 26%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 220 25% 96%;
     --sidebar-accent-foreground: 222 47% 11%;
     --sidebar-border: 220 22% 91%;
-    --sidebar-ring: 222 84% 56%;
+    --sidebar-ring: 216 61% 26%;
+  }
+
+  [dir="rtl"] body,
+  [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3, [dir="rtl"] h4, [dir="rtl"] h5, [dir="rtl"] h6 {
+    font-family: "Cairo", sans-serif;
   }
 
   * { @apply border-border; }
   body { @apply bg-background text-foreground; font-family: "DM Sans", sans-serif; }
   h1, h2, h3, h4, h5, h6 { font-family: "Manrope", sans-serif; }
-  button, input { font-family: inherit; }
-  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) { overflow-wrap: anywhere; word-break: break-word; }
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label) { overflow-wrap: anywhere; word-break: break-word; }
+  th, td { word-break: normal; overflow-wrap: normal; }
+
+  /* Hide number input spinner increase/decrease buttons */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 @layer components {
-  .brand-mark { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-[#3165ed] text-white shadow-[0_6px_14px_rgba(49,101,237,0.25)]; }
+  .brand-mark { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-[#1a3a6b] text-white shadow-[0_6px_14px_rgba(26,58,107,0.25)]; }
+  .brand-gold { @apply bg-[#c5a04f] text-white; }
   .sidebar-link { @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold text-slate-500 transition-all hover:bg-slate-50 hover:text-slate-800; }
-  .sidebar-link-active { @apply bg-[#eef3ff] text-[#3165ed] shadow-sm; }
-  .avatar { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#dbe6ff] text-[10px] font-extrabold text-[#3165ed]; }
-  .stat-card { @apply rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_2px_10px_rgba(35,55,90,0.025)] transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(35,55,90,0.07)]; }
+  .sidebar-link-active { @apply bg-[#eef3ff] text-[#1a3a6b] border-l-4 border-[#c5a04f] shadow-sm font-bold; }
+  .avatar { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#fef9e7] text-[10px] font-extrabold text-[#c5a04f] border border-[#fce4b8]; }
+  .stat-card { @apply rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_2px_10px_rgba(26,58,107,0.03)] transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(26,58,107,0.08)]; }
+  .stat-card-navy { @apply border-t-4 border-t-[#1a3a6b]; }
+  .stat-card-gold { @apply border-t-4 border-t-[#c5a04f]; }
   .icon-tile { @apply flex h-9 w-9 items-center justify-center rounded-xl; }
-  .panel { @apply rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_2px_10px_rgba(35,55,90,0.025)]; }
-  .section-title { @apply text-[15px] font-extrabold tracking-[-0.025em] text-slate-900; }
+  .panel { @apply rounded-2xl border border-slate-200/80 bg-white p-6 shadow-[0_2px_10px_rgba(26,58,107,0.03)]; }
+  .section-title { @apply text-[15px] font-extrabold tracking-[-0.025em] text-[#0a1628]; }
   .section-subtitle { @apply mt-1 text-[11px] font-medium text-slate-400; }
   .stage-card { @apply rounded-2xl p-4 transition-transform hover:-translate-y-1; }
   .stage-icon { @apply flex h-7 w-7 items-center justify-center rounded-lg text-white; }
-  .scan-panel { @apply rounded-2xl bg-[#172b5b] p-6 shadow-[0_10px_25px_rgba(23,43,91,0.12)]; }
+  .scan-panel { @apply rounded-2xl bg-[#0a1628] p-6 shadow-[0_10px_25px_rgba(10,22,40,0.2)]; }
   .status-pill { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold; }
-  .status-blue { @apply bg-[#eef3ff] text-[#3165ed]; }
+  .status-blue { @apply bg-[#eef3ff] text-[#1a3a6b]; }
+  .status-gold { @apply bg-[#fef9e7] text-[#a8842e] border border-[#fce4b8]; }
   .status-green { @apply bg-[#eaf8ee] text-[#27904d]; }
   .status-amber { @apply bg-[#fff5e9] text-[#c47720]; }
   .queue-icon { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg; }
-  .toast-notice { @apply fixed right-5 top-20 z-50 flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-xs font-semibold text-white shadow-xl; }
+  .writing-mode-vertical {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+}
+
+@keyframes radarPulse {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 0.25; }
+  100% { transform: scale(0.6); opacity: 0.8; }
+}
+
+.animate-radar-pulse {
+  animation: radarPulse 2.5s infinite ease-in-out;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 6mm;
+  }
+
+  /* 1. Reset html and body */
+  html, body {
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+  }
+
+  /* 2. Hide everything by default */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 3. Make ONLY printable containers visible */
+  #printable-opt-report,
+  #printable-opt-report *,
+  #printable-glass-sticker,
+  #printable-glass-sticker * {
+    visibility: visible !important;
+  }
+
+  /* 4. Strip Radix UI modal dialog centering transforms */
+  [data-radix-portal],
+  [role="dialog"],
+  div[data-state="open"] {
+    position: static !important;
+    transform: none !important;
+    left: 0 !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  /* 5. Position #printable-opt-report cleanly at top-left 0 */
+  #printable-opt-report {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+    box-sizing: border-box !important;
+    transform: none !important;
+  }
+
+  /* 6. Support sticker printing */
+  #printable-glass-sticker {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    transform: none !important;
+  }
+
+  /* Page break rules for layout cards */
+  .print-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
 }

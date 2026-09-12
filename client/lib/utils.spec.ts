@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn } from "./utils";
+import { cn, formatBatchNumber, isLaminatedGlass, isDguGlass, isDguStickerPairMatch } from "./utils";
 
 describe("cn function", () => {
   it("should merge classes correctly", () => {
@@ -30,3 +30,137 @@ describe("cn function", () => {
     );
   });
 });
+
+describe("formatBatchNumber", () => {
+  it("should strip B prefix and legacy SFO prefix", () => {
+    expect(formatBatchNumber("B5441")).toBe("5441");
+    expect(formatBatchNumber("B5442")).toBe("5442");
+    expect(formatBatchNumber("201765-B5442")).toBe("5442");
+    expect(formatBatchNumber("STK-201765-B5442")).toBe("5442");
+    expect(formatBatchNumber("5442")).toBe("5442");
+    expect(formatBatchNumber("")).toBe("-");
+  });
+});
+
+describe("isLaminatedGlass & isDguGlass", () => {
+  it("should correctly identify laminated glass", () => {
+    expect(isLaminatedGlass({ processRoute: ["Cutting", "Lamination", "Finished"] })).toBe(true);
+    expect(isLaminatedGlass({ glassType: "10MM CLEAR + 1.52 PVB + 10MM CLEAR LAMINATED" })).toBe(true);
+    expect(isLaminatedGlass({ glassType: "6MM SGP TOUGHENED" })).toBe(true);
+    expect(isLaminatedGlass({ glassType: "6MM CLEAR FLOAT" })).toBe(false);
+  });
+
+  it("should correctly identify DGU glass", () => {
+    expect(isDguGlass({ processRoute: ["Cutting", "Pairing", "DGU", "Finished"] })).toBe(true);
+    expect(isDguGlass({ glassType: "28MM DGU (6MM STOPRAY + 16A + 6MM CLEAR)" })).toBe(true);
+    expect(isDguGlass({ glassType: "6MM CLEAR FLOAT" })).toBe(false);
+  });
+});
+
+describe("isDguStickerPairMatch Category Isolation", () => {
+  it("should match two DGU panes with identical specifications", () => {
+    const dguColour = {
+      orderNo: "2045",
+      posNo: "1",
+      width: 1000,
+      height: 2000,
+      colorOrClear: "Colour",
+      glassCategory: "DGU",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+    const dguClear = {
+      orderNo: "2045",
+      posNo: "1",
+      width: 1000,
+      height: 2000,
+      colorOrClear: "Clear",
+      glassCategory: "DGU",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+    expect(isDguStickerPairMatch(dguColour, dguClear)).toBe(true);
+  });
+
+  it("should NEVER match a DGU Colour pane with a Lamination Clear pane even with same dimensions and posNo", () => {
+    const dguColour = {
+      orderNo: "2045",
+      posNo: "1",
+      width: 1000,
+      height: 2000,
+      glassCategory: "DGU",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+    const lamClear = {
+      orderNo: "2045",
+      posNo: "1",
+      width: 1000,
+      height: 2000,
+      glassCategory: "Lamination",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+    };
+    expect(isDguStickerPairMatch(dguColour, lamClear)).toBe(false);
+    expect(isDguStickerPairMatch(lamClear, dguColour)).toBe(false);
+  });
+
+  it("should correctly identify DLGU glass and isolate from pure DGU/Lamination", () => {
+    const dlguItem = {
+      glassType: "37.52MM DLGU (8MM SN GREY + 16A + 13.52MM CLEAR LAMINATED)",
+      glassCategory: "DLGU",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+    expect(isLaminatedGlass(dlguItem)).toBe(false);
+    expect(isDguGlass(dlguItem)).toBe(false);
+  });
+
+  it("should match DLGU Phase 1 (Lamination pairing) panes: 6mm Clear + 13.52mm Clear Laminated", () => {
+    const pane1 = {
+      orderNo: "00821",
+      posNo: "1",
+      width: 1500,
+      height: 2500,
+      glassCode: "13.52MM CLEAR LAMINATED",
+      glassCategory: "DLGU" as const,
+      dlguPhase: "LamPairing" as const,
+      colorOrClear: "Clear" as const,
+      completedStages: ["Cutting"],
+    };
+    const pane2 = {
+      orderNo: "00821",
+      posNo: "1",
+      width: 1500,
+      height: 2500,
+      glassCode: "6MM CLEAR",
+      glassCategory: "DLGU" as const,
+      dlguPhase: "LamPairing" as const,
+      colorOrClear: "Clear" as const,
+      completedStages: ["Cutting"],
+    };
+    expect(isDguStickerPairMatch(pane1, pane2)).toBe(true);
+  });
+
+  it("should match DLGU Phase 2 (DGU pairing): post-Lamination unit + 8mm SN Grey", () => {
+    const laminatedUnit = {
+      orderNo: "00821",
+      posNo: "1",
+      width: 1500,
+      height: 2500,
+      glassCode: "13.52MM CLEAR LAMINATED",
+      glassCategory: "DLGU" as const,
+      dlguPhase: "DguPairing" as const,
+      colorOrClear: "Clear" as const,
+      completedStages: ["Cutting", "Pairing", "Lamination"],
+    };
+    const outerGrey = {
+      orderNo: "00821",
+      posNo: "1",
+      width: 1500,
+      height: 2500,
+      glassCode: "8MM GUARDIAN SUNGUARD SN GREY 50 T",
+      glassCategory: "DLGU" as const,
+      dlguPhase: "DguPairing" as const,
+      colorOrClear: "Colour" as const,
+      completedStages: ["Cutting"],
+    };
+    expect(isDguStickerPairMatch(laminatedUnit, outerGrey)).toBe(true);
+  });
+});
+

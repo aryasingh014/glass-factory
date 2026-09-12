@@ -1,14 +1,26 @@
 [build]
-command = "npm run build:client"
-functions = "netlify/functions"
+command = "npm run build:client && npm run build:netlify"
+functions = "netlify/functions-dist"
 publish = "dist/spa"
 
-
 [functions]
-external_node_modules = ["express"]
 node_bundler = "esbuild"
+included_files = ["server/data/**"]
+
 [[redirects]]
 force = true
 from = "/api/*"
 status = 200
 to = "/.netlify/functions/api/:splat"
+
+# SPA fallback: serve index.html for all non-API, non-asset routes
+[[redirects]]
+from = "/*"
+status = 200
+to = "/index.html"
+conditions = {Role = ["admin"]}
+
+[[redirects]]
+from = "/*"
+status = 200
+to = "/index.html"
