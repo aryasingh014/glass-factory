@@ -1,6 +1,6 @@
 import { RequestHandler, Response } from "express";
-import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, DashboardStats, ProductionStage } from "@shared/api";
-import { piDatabase, glassItemsDatabase, productionHistoryDatabase, rejectDatabase, reworkDatabase, saveDatabaseToDisk, loadDatabaseFromDisk } from "./pi";
+import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, DashboardStats, ProductionStage, SystemNotification } from "@shared/api";
+import { piDatabase, glassItemsDatabase, productionHistoryDatabase, rejectDatabase, reworkDatabase, notificationsDatabase, createAndBroadcastNotification, saveDatabaseToDisk, loadDatabaseFromDisk } from "./pi";
 import { logger } from "../lib/logger";
 
 const sseClients: Response[] = [];
@@ -122,10 +122,14 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
 
     if (nextStage === "Pairing") {
       hasPairingItems = true;
-      if (item.completedStages.includes("Lamination") || item.colorOrClear === "Colour" || !route.includes("Lamination")) {
-        item.dlguPhase = "DguPairing";
+      if (item.glassCategory === "DLGU" || isDlguItem(item) || (Array.isArray(route) && route.includes("Lamination") && route.includes("DGU"))) {
+        if (item.completedStages.includes("Lamination") || item.colorOrClear === "Colour" || !route.includes("Lamination")) {
+          item.dlguPhase = "DguPairing";
+        } else {
+          item.dlguPhase = "LamPairing";
+        }
       } else {
-        item.dlguPhase = "LamPairing";
+        delete item.dlguPhase;
       }
     }
 
@@ -278,14 +282,40 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     }
   }
 
+  const hasLaminationAdvanced = updatedItems.some(
+    (i) => i.completedStages.includes("Lamination") && isDlguItem(i)
+  );
+  const hasDlguPairingArrived = hasPairingItems && updatedItems.some((i) => isDlguItem(i));
+
   if (hasPairingItems) {
     autoAdvancePairedDguItems();
     autoAdvancePairedLaminationItems();
-    autoAdvancePairedDlguItems(); // Phase 2: Laminated + 8MM SN Grey → DGU
+    autoAdvancePairedDlguItems(); // Phase 1: Clear + Clear -> Lamination
   }
 
-  saveDatabaseToDisk();
+  // Phase 2 DLGU auto-pairing: triggers when DLGU glass is sent from Lamination (or when matching Colour glass arrives and Laminated glass is already sent)
+  if (hasLaminationAdvanced || hasDlguPairingArrived) {
+    manualPairDlguPhase2Items();
+  }
+
+  saveDatabaseToDisk(false);
   broadcastUpdate("stage_advanced", { count: updatedItems.length });
+
+  if (updatedItems.length > 0) {
+    const firstItem = updatedItems[0];
+    const targetStageName = firstItem?.currentStage || "Next Stage";
+    const operatorName = (req as any).user?.username || req.body?.operator || "Operator";
+    createAndBroadcastNotification({
+      title: `${targetStageName} Stage Advanced`,
+      message: `${updatedItems.length} item(s) advanced to ${targetStageName}${firstItem?.serialNumber ? ` (Item #${firstItem.serialNumber})` : ""} by ${operatorName}`,
+      category: "STAGE_ADVANCE",
+      type: "success",
+      stage: targetStageName,
+      serialNumber: firstItem?.serialNumber,
+      piNumber: firstItem?.piNumber,
+      operator: operatorName,
+    });
+  }
 
   res.json({
     message: updatedItems.length > 0 ? "Item(s) advanced successfully" : "No items were advanced",
@@ -298,8 +328,10 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
 export function isDlguItem(item: any): boolean {
   if (!item) return false;
   if (item.glassCategory === "DLGU") return true;
+  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
   if (Array.isArray(item.processRoute)) {
     if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
   const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu");
@@ -354,8 +386,6 @@ export function isDlguStickerPairMatch(paneA: any, paneB: any): boolean {
     const clrPane = isAColour ? paneB : paneA;
     const isClrReady =
       clrPane.dlguPhase === "DguPairing" ||
-      isAInLam ||
-      isBInLam ||
       isALamDone ||
       isBLamDone ||
       (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
@@ -709,6 +739,14 @@ export const handlePairLamination: RequestHandler = (req, res) => {
   const advancedCount = autoAdvancePairedLaminationItems(posNo, piNumber);
   if (advancedCount > 0) {
     broadcastUpdate("stage_advanced", { count: advancedCount });
+    createAndBroadcastNotification({
+      title: "Lamination Pairing Completed",
+      message: `Paired ${advancedCount / 2} set(s) (${advancedCount} panes) and advanced to Lamination Workstation`,
+      category: "STAGE_ADVANCE",
+      type: "success",
+      stage: "Lamination",
+      operator: (req as any).user?.username || "Pairing Station",
+    });
     res.json({
       success: true,
       message: `Successfully paired ${advancedCount / 2} set(s) (${advancedCount} panes) and advanced to Lamination!`,
@@ -730,6 +768,14 @@ export const handlePairDgu: RequestHandler = (req, res) => {
   if (advancedCount > 0) {
     saveDatabaseToDisk();
     broadcastUpdate("stage_advanced", { count: advancedCount });
+    createAndBroadcastNotification({
+      title: "DGU Pairing Completed",
+      message: `Paired ${advancedCount / 2} DGU unit(s) (${advancedCount} panes) and advanced to DGU Workstation`,
+      category: "STAGE_ADVANCE",
+      type: "success",
+      stage: "DGU",
+      operator: (req as any).user?.username || "Pairing Station",
+    });
     res.json({
       success: true,
       message: `Successfully paired ${advancedCount / 2} DGU unit(s) (${advancedCount} panes) and advanced to DGU Workstation!`,
@@ -750,7 +796,7 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
   let advancedCount = 0;
   const usedSerials = new Set<string>();
 
-  // 1. Phase 1: Lamination Pairing in Pairing Buffer (e.g. 6mm Clear + 13.52mm Clear partner)
+  // 1. Phase 1: Lamination Pairing in Pairing Buffer (e.g. 6mm Clear + 13.52mm Clear partner) - AUTOMATIC
   const lamPairingPanes = glassItemsDatabase.filter(
     (i) =>
       i.currentStage === "Pairing" &&
@@ -814,7 +860,24 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
     }
   }
 
-  // 2. Phase 2: DGU Pairing (Colour outer pane waiting in Pairing buffer + Laminated Clear pane available at Lamination or post-Lamination Pairing)
+  if (advancedCount > 0) {
+    saveDatabaseToDisk();
+  }
+
+  return advancedCount;
+}
+
+/**
+ * Phase 2: Manual DLGU DGU Pairing (Colour outer pane waiting in Pairing buffer + Laminated Clear pane post-Lamination)
+ * Triggered MANUALLY by operator via Pair button in Pairing Buffer or barcode scan.
+ */
+export function manualPairDlguPhase2Items(filterPosNo?: string, filterPi?: string, operator = "Operator"): number {
+  let advancedCount = 0;
+  const usedSerials = new Set<string>();
+
+  const cleanPiFilter = filterPi ? filterPi.replace(/^STK-/i, "").trim().toLowerCase() : undefined;
+  const cleanPosFilter = filterPosNo ? String(filterPosNo).trim().toLowerCase() : undefined;
+
   const waitingColourPanes = glassItemsDatabase.filter(
     (i) =>
       i.currentStage === "Pairing" &&
@@ -822,19 +885,23 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
       i.status !== "Rejected" &&
       isDlguItem(i) &&
       i.colorOrClear === "Colour" &&
-      !usedSerials.has(i.serialNumber)
+      !usedSerials.has(i.serialNumber) &&
+      (!cleanPiFilter || (i.piNumber && i.piNumber.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter) || (i.piId && i.piId.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter)) &&
+      (!cleanPosFilter || String(i.posNo).trim().toLowerCase() === cleanPosFilter)
   );
 
   if (waitingColourPanes.length > 0) {
-    // Available Laminated Clear panes: currently at Lamination stage OR in Pairing stage with Lamination completed
     const availableLamPanes = glassItemsDatabase.filter(
       (i) =>
-        (i.currentStage === "Lamination" || (i.currentStage === "Pairing" && i.completedStages.includes("Lamination"))) &&
+        (i.currentStage === "Pairing" || i.currentStage === "Lamination") &&
         i.status !== "Completed" &&
         i.status !== "Rejected" &&
         isDlguItem(i) &&
         i.colorOrClear !== "Colour" &&
-        !usedSerials.has(i.serialNumber)
+        (i.completedStages.includes("Lamination") || i.currentStage === "Lamination" || i.dlguPhase === "DguPairing") &&
+        !usedSerials.has(i.serialNumber) &&
+        (!cleanPiFilter || (i.piNumber && i.piNumber.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter) || (i.piId && i.piId.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter)) &&
+        (!cleanPosFilter || String(i.posNo).trim().toLowerCase() === cleanPosFilter)
     );
 
     waitingColourPanes.forEach((col) => {
@@ -883,9 +950,9 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
           piNumber: col.piNumber,
           stage: "Pairing",
           status: "Completed",
-          operator: "Auto-Pairing Engine",
+          operator: operator,
           timestamp: new Date().toISOString(),
-          remarks: `[DLGU Phase 2] Auto-paired with Laminated Clear Pane ${match.serialNumber} (${match.barcode}) and advanced to DGU Assembly Line`,
+          remarks: `[DLGU Phase 2] Manually paired with Laminated Clear Pane ${match.serialNumber} (${match.barcode}) and advanced to DGU Assembly Line`,
         });
 
         productionHistoryDatabase.unshift({
@@ -895,13 +962,13 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
           piNumber: match.piNumber,
           stage: "Pairing",
           status: "Completed",
-          operator: "Auto-Pairing Engine",
+          operator: operator,
           timestamp: new Date().toISOString(),
-          remarks: `[DLGU Phase 2] Auto-paired with Colour Pane ${col.serialNumber} (${col.barcode}) and advanced to DGU Assembly Line`,
+          remarks: `[DLGU Phase 2] Manually paired with Colour Pane ${col.serialNumber} (${col.barcode}) and advanced to DGU Assembly Line`,
         });
 
         advancedCount += 2 + siblingPanes.length;
-        logger.info(`[DLGU Phase 2] Paired Colour ${col.serialNumber} + Laminated Clear ${match.serialNumber} -> Advanced to DGU!`);
+        logger.info(`[DLGU Phase 2] Manually paired Colour ${col.serialNumber} + Laminated Clear ${match.serialNumber} -> Advanced to DGU!`);
       }
     });
   }
@@ -914,13 +981,22 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
 }
 
 export const handlePairDlgu: RequestHandler = (req, res) => {
-  const { posNo, piNumber } = req.body || {};
-  const advancedCount = autoAdvancePairedDlguItems(posNo, piNumber);
+  const { posNo, piNumber, operator } = req.body || {};
+  const cleanOperator = sanitizeString(operator || (req as any).user?.username || "Operator", 100);
+  const advancedCount = manualPairDlguPhase2Items(posNo, piNumber, cleanOperator);
   if (advancedCount > 0) {
     broadcastUpdate("stage_advanced", { count: advancedCount });
+    createAndBroadcastNotification({
+      title: "DLGU Pairing Completed",
+      message: `Manually paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes) and advanced to DGU Assembly Line`,
+      category: "STAGE_ADVANCE",
+      type: "success",
+      stage: "DGU",
+      operator: cleanOperator,
+    });
     res.json({
       success: true,
-      message: `Successfully paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes)!`,
+      message: `Successfully paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes) and advanced to DGU!`,
       pairedSets: advancedCount / 2,
       advancedPanes: advancedCount,
     });
@@ -935,9 +1011,8 @@ export const handlePairDlgu: RequestHandler = (req, res) => {
 };
 
 /**
- * Advances all DLGU items that have completed Lamination into Phase 2 (DGU Pairing),
- * then immediately triggers the Phase 2 auto-pairing engine.
- * Call this when the Lamination workstation "Sends All" DLGU items.
+ * Advances all DLGU items that have completed Lamination into Glass Pairing & Buffer (Phase 2),
+ * where they wait for manual pairing with Colour glass.
  */
 export const handleAdvanceDlguLamination: RequestHandler = (req, res) => {
   const lamItems = glassItemsDatabase.filter(
@@ -957,17 +1032,25 @@ export const handleAdvanceDlguLamination: RequestHandler = (req, res) => {
     return res.json({ success: false, message: "No DLGU items found in Lamination stage.", movedCount: 0, pairedSets: 0 });
   }
 
-  // Trigger Phase 2 pairing (Laminated + 8MM SN Grey → DGU)
-  const pairedCount = autoAdvancePairedDlguItems();
+  // Now that items are sent from Lamination, auto-pair with waiting Colour glass in Pairing Buffer
+  const pairedCount = manualPairDlguPhase2Items();
   saveDatabaseToDisk();
   broadcastUpdate("stage_advanced", { count: movedCount + pairedCount });
+  createAndBroadcastNotification({
+    title: "DLGU Sent from Lamination",
+    message: `Sent ${movedCount} laminated pane(s) from Lamination.${pairedCount > 0 ? ` Paired ${pairedCount / 2} DLGU set(s) to DGU.` : " Staged in Pairing Buffer."}`,
+    category: "STAGE_ADVANCE",
+    type: "success",
+    stage: "Pairing",
+    operator: (req as any).user?.username || "Lamination Station",
+  });
 
   res.json({
     success: true,
-    message: `Moved ${movedCount} items from Lamination to Phase 2 Pairing. Paired ${pairedCount / 2} DGU sets.`,
+    message: `Sent ${movedCount} laminated pane(s) from Lamination.${pairedCount > 0 ? ` Paired ${pairedCount / 2} DLGU set(s) to DGU.` : " Staged in Pairing Buffer."}`,
     movedCount,
     pairedSets: pairedCount / 2,
-    advancedPanes: pairedCount,
+    advancedPanes: movedCount + pairedCount,
   });
 };
 
@@ -1024,7 +1107,17 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("item_rejected", { serialNumber: item.serialNumber });
+  broadcastUpdate("item_rejected", { serialNumber: item.serialNumber, stage: item.currentStage, reason: cleanReason });
+  createAndBroadcastNotification({
+    title: `Quality Reject: Item #${item.serialNumber}`,
+    message: `Rejected at ${item.currentStage} by ${cleanOperator}. Reason: ${cleanReason}`,
+    category: "REJECTION",
+    type: "destructive",
+    stage: item.currentStage,
+    serialNumber: item.serialNumber,
+    piNumber: item.piNumber,
+    operator: cleanOperator,
+  });
 
   res.json({ message: "Item marked as rejected", rejectEntry, item });
 };
@@ -1088,7 +1181,17 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("item_reworked", { serialNumber: item.serialNumber });
+  broadcastUpdate("item_reworked", { serialNumber: item.serialNumber, targetStage, reason: cleanReason });
+  createAndBroadcastNotification({
+    title: `Rework Dispatched: Item #${item.serialNumber}`,
+    message: `Routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`,
+    category: "REWORK",
+    type: "warning",
+    stage: targetStage,
+    serialNumber: item.serialNumber,
+    piNumber: item.piNumber,
+    operator: cleanOperator,
+  });
 
   res.json({ message: "Item sent to rework", reworkEntry, item });
 };
@@ -1263,7 +1366,15 @@ export const handleExcelUpload: RequestHandler = (req, res) => {
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("excel_uploaded", { piNumber: newPI.piNumber });
+  broadcastUpdate("excel_uploaded", { piNumber: newPI.piNumber, customerName: newPI.customerName, itemsCount: newPI.itemsCount });
+  createAndBroadcastNotification({
+    title: `PI #${newPI.piNumber} Registered`,
+    message: `${newPI.customerName || "Customer"} - ${newPI.itemsCount} items (${newPI.totalSqm} m²) uploaded via Excel`,
+    category: "PI_CREATED",
+    type: "info",
+    piNumber: newPI.piNumber,
+    operator: (req as any).user?.username || "Admin",
+  });
 
   res.json({ message: "Excel uploaded and PI generated successfully", pi: newPI, items: newItems });
 };
@@ -1567,6 +1678,15 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
 
   saveDatabaseToDisk();
   broadcastUpdate("sticker_batch_uploaded", { batchIdentifier, totalItems: newItems.length });
+  createAndBroadcastNotification({
+    title: `Batch #${batchNo || batchIdentifier} Uploaded`,
+    message: `${totalStickerCount} glass units (${batchRecord.totalSqm} m²) imported from ${fileName || batchIdentifier}`,
+    category: "BATCH_UPLOAD",
+    type: "info",
+    batchNumber: batchNo || batchIdentifier,
+    piNumber: batchRecord.piNumber,
+    operator: (req as any).user?.username || "Operator",
+  });
 
   res.json({
     message: "Sticker batch uploaded and items imported successfully",
@@ -1657,7 +1777,6 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   const finishedLamUnits = Math.ceil(finishedLamList.reduce((a, b) => a + (b.qty || 1), 0) / 2);
   const finishedMonolithicUnits = finishedMonolithicList.reduce((a, b) => a + (b.qty || 1), 0);
   const finishedItems = finishedDguUnits + finishedLamUnits + finishedMonolithicUnits;
-
   const rejectItems = rejectDatabase.length;
   const reworkItems = reworkDatabase.length;
 
@@ -1674,84 +1793,74 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
     reworkItems,
   };
 
-  res.json(stats);
+  res.json({
+    ...stats,
+    items: glassItemsDatabase,
+  });
 };
 
-// Real-Time System Notifications API (Generated dynamically from real database records)
+// Real-Time System Notifications API (Directly from persisted notificationsDatabase)
 export const handleGetNotifications: RequestHandler = (_req, res) => {
-  const notifications: Array<{
-    id: string;
-    title: string;
-    message: string;
-    timestamp: string;
-    type: "info" | "success" | "warning" | "destructive";
-    read: boolean;
-  }> = [];
-
-  // 1. Stage Advancement Events
-  const recentHistory = [...productionHistoryDatabase].reverse().slice(0, 8);
-  recentHistory.forEach((h, idx) => {
-    notifications.push({
-      id: `notif-hist-${h.id || idx}`,
-      title: `${h.stage} Stage Advanced`,
-      message: `Item ${h.serialNumber} completed ${h.stage} stage by ${h.operator || "Operator"}.`,
-      timestamp: h.timestamp ? new Date(h.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently",
-      type: "success",
-      read: false,
-    });
-  });
-
-  // 2. Reject Events
-  const recentRejects = [...rejectDatabase].reverse().slice(0, 5);
-  recentRejects.forEach((r, idx) => {
-    notifications.push({
-      id: `notif-rej-${r.id || idx}`,
-      title: `Item Rejected at ${r.stage}`,
-      message: `Item ${r.serialNumber} flagged: ${r.reason}`,
-      timestamp: r.date ? new Date(r.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently",
-      type: "destructive",
-      read: false,
-    });
-  });
-
-  // 3. Rework Events
-  const recentReworks = [...reworkDatabase].reverse().slice(0, 5);
-  recentReworks.forEach((rw, idx) => {
-    notifications.push({
-      id: `notif-rw-${rw.id || idx}`,
-      title: `Rework Order Created`,
-      message: `Item ${rw.serialNumber} routed back to ${rw.targetStage}: ${rw.reason}`,
-      timestamp: rw.date ? new Date(rw.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently",
-      type: "warning",
-      read: false,
-    });
-  });
-
-  // 4. PI Registration Events
-  const recentPIs = [...piDatabase].reverse().slice(0, 5);
-  recentPIs.forEach((p, idx) => {
-    notifications.push({
-      id: `notif-pi-${p.id || idx}`,
-      title: `PI ${p.piNumber} Active`,
-      message: `${p.customerName} - ${p.itemsCount} items (${p.totalSqm?.toFixed(1) || 0} m²) registered`,
-      timestamp: p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently",
-      type: "info",
-      read: false,
-    });
-  });
-
-  if (notifications.length === 0) {
-    notifications.push({
-      id: "notif-sys-0",
+  // If no notifications yet, initialize with system ready notification
+  if (notificationsDatabase.length === 0) {
+    const defaultNotif: SystemNotification = {
+      id: "notif-sys-init",
       title: "System Operational",
-      message: `Live database sync active with ${glassItemsDatabase.length} glass items.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      message: `Live database sync active with ${glassItemsDatabase.length} glass items across all workstations.`,
+      category: "SYSTEM",
       type: "info",
+      timestamp: new Date().toISOString(),
+      rawDate: Date.now(),
       read: false,
-    });
+      createdAt: new Date().toISOString(),
+    };
+    notificationsDatabase.push(defaultNotif);
+    saveDatabaseToDisk();
   }
 
-  res.json(notifications.slice(0, 15));
+  res.json(notificationsDatabase.slice(0, 50));
+};
+
+// Mark all notifications as read
+export const handleMarkAllNotificationsRead: RequestHandler = (_req, res) => {
+  notificationsDatabase.forEach((n) => {
+    n.read = true;
+  });
+  saveDatabaseToDisk();
+  broadcastUpdate("notifications_updated");
+  res.json({ success: true, message: "All notifications marked as read" });
+};
+
+// Mark specific notification as read
+export const handleMarkNotificationRead: RequestHandler = (req, res) => {
+  const { id } = req.params;
+  const notif = notificationsDatabase.find((n) => n.id === id);
+  if (notif) {
+    notif.read = true;
+    saveDatabaseToDisk();
+    broadcastUpdate("notifications_updated");
+  }
+  res.json({ success: true });
+};
+
+// Delete a single notification
+export const handleDeleteNotification: RequestHandler = (req, res) => {
+  const { id } = req.params;
+  const idx = notificationsDatabase.findIndex((n) => n.id === id);
+  if (idx !== -1) {
+    notificationsDatabase.splice(idx, 1);
+    saveDatabaseToDisk();
+    broadcastUpdate("notifications_updated");
+  }
+  res.json({ success: true });
+};
+
+// Clear all notifications
+export const handleClearAllNotifications: RequestHandler = (_req, res) => {
+  notificationsDatabase.length = 0;
+  saveDatabaseToDisk();
+  broadcastUpdate("notifications_updated");
+  res.json({ success: true, message: "Notifications cleared" });
 };
 
 // Reports API
@@ -1797,9 +1906,17 @@ export const handleClearDatabase: RequestHandler = (_req, res) => {
   productionHistoryDatabase.length = 0;
   rejectDatabase.length = 0;
   reworkDatabase.length = 0;
+  notificationsDatabase.length = 0;
 
   saveDatabaseToDisk();
   broadcastUpdate("database_cleared");
+  createAndBroadcastNotification({
+    title: "System Reset",
+    message: "Factory database cleared and reset by Administrator",
+    category: "SYSTEM",
+    type: "warning",
+    operator: "Admin",
+  });
 
   res.json({ message: "Database cleared successfully" });
 };

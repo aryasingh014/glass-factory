@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Boxes,
   Factory,
@@ -25,6 +25,7 @@ import {
   Flame,
   Sparkles,
   TrendingUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,8 +49,19 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
   onOpenPIDetails,
 }) => {
   const [stageFilter, setStageFilter] = useState<"ALL" | "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
-  const [glassTypeFilter, setGlassTypeFilter] = useState<"ALL" | "DGU" | "DLGU" | "Lamination" | "Monolithic">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
+  const [stationMenuOpen, setStationMenuOpen] = useState(false);
+  const stationMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (stationMenuRef.current && !stationMenuRef.current.contains(event.target as Node)) {
+        setStationMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Helper: check colour vs clear finish
   const isColour = (item: GlassItem) =>
@@ -326,12 +338,20 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       const totalPieces = b.items.reduce((acc, curr) => acc + (curr.qty || 1), 0) || parentPI?.totalQty || parentPI?.itemsCount || 1;
       const progress = Math.min(100, Math.round((b.finishedCount / totalPieces) * 100));
 
+      const isDlgu = b.items.some(isDlguGlass) || (parentPI as any)?.glassCategory === "DLGU";
+      const isLam = !isDlgu && (b.items.some((i) => isLaminatedGlass(i) && !isDguGlass(i)) || (parentPI as any)?.glassCategory === "Lamination");
+      const isDgu = !isDlgu && !isLam && (b.items.some(isDguGlass) || (parentPI as any)?.glassCategory === "DGU");
+      const productCategory: "DLGU" | "DGU" | "Lamination" | "Monolithic" = isDlgu ? "DLGU" : isLam ? "Lamination" : isDgu ? "DGU" : "Monolithic";
+      const mainGlassType = Array.from(b.glassTypes)[0] || b.items[0]?.glassType || (parentPI as any)?.glassType || "";
+
       return {
         ...b,
         finish,
         primaryStage,
         progress,
         totalPieces,
+        productCategory,
+        mainGlassType,
       };
     });
   }, [items, pis]);
@@ -347,18 +367,6 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         if (stageFilter === "Finished" && b.finishedCount === 0) return false;
       }
 
-      if (glassTypeFilter !== "ALL") {
-        const hasDgu = b.items.some((i) => isDguGlass(i) && !isDlguGlass(i));
-        const hasDlgu = b.items.some(isDlguGlass);
-        const hasLam = b.items.some((i) => isLaminatedGlass(i) && !isDguGlass(i) && !isDlguGlass(i));
-        const hasMono = b.items.some((i) => !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i));
-
-        if (glassTypeFilter === "DGU" && !hasDgu) return false;
-        if (glassTypeFilter === "DLGU" && !hasDlgu) return false;
-        if (glassTypeFilter === "Lamination" && !hasLam) return false;
-        if (glassTypeFilter === "Monolithic" && !hasMono) return false;
-      }
-
       const q = searchTerm.toLowerCase().trim();
       if (!q) return true;
       return (
@@ -369,7 +377,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         b.sfoNo.toLowerCase().includes(q)
       );
     });
-  }, [batchRows, stageFilter, glassTypeFilter, searchTerm]);
+  }, [batchRows, stageFilter, searchTerm]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -378,7 +386,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">Production Pipeline Overview</h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
               Dubai Plant Facility
             </span>
           </div>
@@ -387,24 +395,147 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
           <Button
             size="sm"
             onClick={() => onNavigateTab("cutting")}
-            className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs gap-1.5 h-8 px-3 rounded-xl shadow-xs"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 h-8 px-3 rounded-xl shadow-xs"
           >
             <Scissors className="w-3.5 h-3.5" />
             <span>Open Cutting Floor</span>
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onNavigateTab("dgu")}
-            className="border-teal-200 text-teal-800 bg-teal-50/70 hover:bg-teal-100 font-bold text-xs gap-1.5 h-8 px-3 rounded-xl shadow-xs"
-          >
-            <ClipboardList className="w-3.5 h-3.5 text-teal-600" />
-            <span>DGU Station</span>
-          </Button>
+
+          {/* Workstations Dropdown: DGU, DLGU, Lamination, Cutting, Dispatch */}
+          <div className="relative" ref={stationMenuRef}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setStationMenuOpen((prev) => !prev)}
+              className="border-slate-300 text-slate-800 bg-white hover:bg-slate-50 font-bold text-xs gap-1.5 h-8 px-3 rounded-xl shadow-xs"
+            >
+              <Factory className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Workstations & Lines</span>
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${stationMenuOpen ? "rotate-180" : ""}`} />
+            </Button>
+
+            {stationMenuOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-2.5 py-1 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                  Select Workstation Line
+                </div>
+
+                {/* DGU Station */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("dgu");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-teal-50 text-slate-800 hover:text-teal-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
+                      <ClipboardList className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">DGU / IGU Station</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Double Glazed Line</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200">
+                    {metrics.dguTotalUnits} Units
+                  </span>
+                </button>
+
+                {/* DLGU / Pairing Buffer */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("pairing");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-purple-50 text-slate-800 hover:text-purple-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">DLGU & Pairing Buffer</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Multi-Layer Assembly</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                    {metrics.dlguTotalUnits} Units
+                  </span>
+                </button>
+
+                {/* Lamination Line */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("lamination");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-amber-50 text-slate-800 hover:text-amber-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                      <Flame className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Lamination Line</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Autoclave & PVB Line</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                    {metrics.lamTotalUnits} Pairs
+                  </span>
+                </button>
+
+                {/* Cutting Floor */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("cutting");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-indigo-50 text-slate-800 hover:text-indigo-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                      <Scissors className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Cutting Workstation</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">CNC & Manual Tables</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                    {metrics.cuttingCount} Panes
+                  </span>
+                </button>
+
+                {/* Dispatch & Shipping */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("finished");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                      <Truck className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Dispatch & Shipping</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Completed Units</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    {metrics.finishedCount} Pcs
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -413,18 +544,18 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         {/* 1. Total Production */}
         <div
           onClick={() => onNavigateTab("pis")}
-          className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-purple-300 transition-all cursor-pointer group"
+          className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-blue-300 transition-all cursor-pointer group"
           title="Click to view all Sticker & Batch statuses"
         >
           <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
             <span>Total Production</span>
-            <Boxes className="w-3.5 h-3.5 text-purple-600 group-hover:scale-110 transition-transform" />
+            <Boxes className="w-3.5 h-3.5 text-blue-600 group-hover:scale-110 transition-transform" />
           </div>
           <div className="text-2xl font-black text-slate-900 mt-1.5 tracking-tight">
-            {metrics.totalItems} <span className="text-xs font-bold text-purple-700">Pcs</span>
+            {metrics.totalItems} <span className="text-xs font-bold text-blue-700">Pcs</span>
           </div>
-          <div className="text-[11px] text-purple-700 font-semibold mt-1 flex items-center gap-1">
-            <Layers className="w-3 h-3 text-purple-500" />
+          <div className="text-[11px] text-blue-700 font-semibold mt-1 flex items-center gap-1">
+            <Layers className="w-3 h-3 text-blue-500" />
             <span>{metrics.totalSqm.toFixed(1)} m² Total</span>
           </div>
         </div>
@@ -537,7 +668,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
           {/* 1. DGU / IGU Double Glazing Units */}
           <div className="bg-gradient-to-br from-teal-50/70 via-white to-teal-50/20 border-2 border-teal-200/90 rounded-2xl p-4 shadow-2xs relative group hover:shadow-md transition-all">
             <div className="flex items-center justify-between">
@@ -666,49 +797,6 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
               <ArrowRight className="w-3 h-3 ml-1" />
             </Button>
           </div>
-
-          {/* 4. Monolithic / Single Tempered Glass */}
-          <div className="bg-gradient-to-br from-purple-50/70 via-white to-purple-50/20 border-2 border-purple-200/90 rounded-2xl p-4 shadow-2xs relative group hover:shadow-md transition-all">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-100 text-purple-900 border border-purple-300">
-                Monolithic Tempered
-              </span>
-              <Box className="w-4 h-4 text-purple-600" />
-            </div>
-
-            <div className="mt-2.5">
-              <div className="text-xl font-black text-slate-900">
-                {metrics.monoTotalUnits} <span className="text-xs font-bold text-purple-700">Single Panes</span>
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                {metrics.monoTotalSqm} m² Toughened / Heat Treated
-              </div>
-            </div>
-
-            <div className="mt-3 pt-2.5 border-t border-purple-100 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Tempering Furnace:</span>
-                <strong className="text-purple-800 font-bold">Standard Route</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Active in Cutting/Furnace:</span>
-                <strong className="text-slate-800 font-bold">{metrics.monoActiveUnits} Panes</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Completed Monolithic:</span>
-                <strong className="text-emerald-700 font-bold">{metrics.monoFinishedUnits} Panes</strong>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("cutting")}
-              className="mt-3.5 w-full h-7 text-xs font-black bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-2xs"
-            >
-              <span>Manage Cutting Line</span>
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
-          </div>
         </div>
       </div>
 
@@ -716,7 +804,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
           <div className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-purple-600 animate-pulse" />
+            <span className="w-2.5 h-2.5 rounded-full bg-purple-600" />
             STAGE-WISE STATUS & MATERIAL WORKFLOW
           </div>
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-50 text-purple-700 border border-purple-200">
@@ -756,7 +844,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
               </div>
 
               <div className="text-[10px] text-purple-700 font-extrabold bg-purple-100/70 px-2 py-1 rounded-lg flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-ping" />
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
                 <span>Auto-Scan & Batch Advance Active</span>
               </div>
             </div>
@@ -991,23 +1079,6 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                 </button>
               ))}
             </div>
-
-            {/* Glass Type Filters */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-              {(["ALL", "DGU", "DLGU", "Lamination", "Monolithic"] as const).map((gt) => (
-                <button
-                  key={gt}
-                  onClick={() => setGlassTypeFilter(gt)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
-                    glassTypeFilter === gt
-                      ? "bg-purple-600 text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  {gt === "ALL" ? "All Glass Types" : gt}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="relative w-full sm:w-64">
@@ -1051,14 +1122,41 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                       {formatBatchNumber(b.piNumber)}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {b.finish === "Colour" ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                            Colour
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* Product Category Badge: DGU / DLGU / Lamination / Monolithic */}
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide border shadow-2xs ${
+                              b.productCategory === "DLGU"
+                                ? "bg-purple-600 text-white border-purple-700"
+                                : b.productCategory === "DGU"
+                                ? "bg-teal-600 text-white border-teal-700"
+                                : b.productCategory === "Lamination"
+                                ? "bg-amber-600 text-white border-amber-700"
+                                : "bg-slate-700 text-white border-slate-800"
+                            }`}
+                          >
+                            {b.productCategory}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
-                            Clear
+
+                          {/* Finish Badge: Colour / Clear */}
+                          {b.finish === "Colour" ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              Colour
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">
+                              Clear
+                            </span>
+                          )}
+                        </div>
+
+                        {b.mainGlassType && (
+                          <span
+                            className="text-[10px] font-medium text-slate-500 truncate max-w-[210px] block"
+                            title={b.mainGlassType}
+                          >
+                            {b.mainGlassType}
                           </span>
                         )}
                       </div>

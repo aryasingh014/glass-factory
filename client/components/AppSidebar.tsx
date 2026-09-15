@@ -24,6 +24,8 @@ import {
   Activity,
   ChevronLeft,
   CircleDot,
+  ExternalLink,
+  Globe,
 } from "lucide-react";
 import {
   Tooltip,
@@ -95,27 +97,27 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           id: "overview",
           label: "Executive Dashboard",
           icon: LayoutDashboard,
-          iconColor: "text-indigo-600",
-          activeBg: "bg-indigo-50/80 text-indigo-700 border-indigo-200/80",
-          activeColor: "text-indigo-700",
+          iconColor: "text-blue-400",
+          activeBg: "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white border border-blue-500/40 font-bold",
+          activeColor: "text-blue-300",
         },
         {
           id: "production-overview",
           label: "Production Overview",
           icon: Factory,
-          iconColor: "text-violet-600",
-          activeBg: "bg-violet-50/80 text-violet-700 border-violet-200/80",
-          activeColor: "text-violet-700",
+          iconColor: "text-indigo-400",
+          activeBg: "bg-gradient-to-r from-indigo-900/50 via-indigo-900/30 to-transparent text-white border border-indigo-500/40 font-bold",
+          activeColor: "text-indigo-300",
         },
         {
           id: "pis",
           label: "Stickers & Batches",
           icon: FileText,
-          iconColor: "text-purple-600",
+          iconColor: "text-sky-400",
           badge: stats?.totalPI,
-          badgeBg: "bg-purple-100/90 text-purple-700 border border-purple-200",
-          activeBg: "bg-purple-50/80 text-purple-700 border-purple-200/80",
-          activeColor: "text-purple-700",
+          badgeBg: "bg-sky-950/80 text-sky-300 border border-sky-800/70",
+          activeBg: "bg-gradient-to-r from-sky-900/50 via-sky-900/30 to-transparent text-white border border-sky-500/40 font-bold",
+          activeColor: "text-sky-300",
         },
       ],
     },
@@ -126,53 +128,53 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           id: "cutting",
           label: "Cutting Workstation",
           icon: Scissors,
-          iconColor: "text-blue-600",
+          iconColor: "text-indigo-400",
           badge: stats?.pendingCutting ?? 0,
-          badgeBg: "bg-blue-100/90 text-blue-700 border border-blue-200",
-          activeBg: "bg-blue-50/80 text-blue-700 border-blue-200/80",
-          activeColor: "text-blue-700",
+          badgeBg: "bg-indigo-950/80 text-indigo-300 border border-indigo-800/70",
+          activeBg: "bg-gradient-to-r from-indigo-900/50 via-indigo-900/30 to-transparent text-white border border-indigo-500/40 font-bold",
+          activeColor: "text-indigo-300",
           children: [
             {
               id: "pairing",
               label: "Glass Pairing & Buffer",
               icon: Link2,
-              iconColor: "text-cyan-600",
+              iconColor: "text-sky-400",
               badge: stats?.pendingPairing ?? 0,
-              badgeBg: "bg-cyan-100/90 text-cyan-700 border border-cyan-200",
-              activeBg: "bg-cyan-50/90 text-cyan-800 border-cyan-300/80 font-bold",
-              activeColor: "text-cyan-700",
+              badgeBg: "bg-sky-950/80 text-sky-300 border border-sky-800/70",
+              activeBg: "bg-gradient-to-r from-sky-900/50 via-sky-900/30 to-transparent text-white border border-sky-500/40 font-bold",
+              activeColor: "text-sky-300",
             },
           ],
         },
         {
           id: "dgu",
-          label: "DGU / IGU Assembly",
+          label: "DLGU / IGU Assembly",
           icon: Boxes,
-          iconColor: "text-teal-600",
+          iconColor: "text-teal-400",
           badge: stats?.pendingDGU ?? 0,
-          badgeBg: "bg-teal-100/90 text-teal-700 border border-teal-200",
-          activeBg: "bg-teal-50/80 text-teal-700 border-teal-200/80",
-          activeColor: "text-teal-700",
+          badgeBg: "bg-teal-950/80 text-teal-300 border border-teal-800/70",
+          activeBg: "bg-gradient-to-r from-teal-900/50 via-teal-900/30 to-transparent text-white border border-teal-500/40 font-bold",
+          activeColor: "text-teal-300",
         },
         {
           id: "lamination",
           label: "Lamination Line",
           icon: Layers,
-          iconColor: "text-amber-600",
+          iconColor: "text-amber-400",
           badge: stats?.pendingLamination ?? 0,
-          badgeBg: "bg-amber-100/90 text-amber-700 border border-amber-200",
-          activeBg: "bg-amber-50/80 text-amber-700 border-amber-200/80",
-          activeColor: "text-amber-700",
+          badgeBg: "bg-amber-950/80 text-amber-300 border border-amber-800/70",
+          activeBg: "bg-gradient-to-r from-amber-900/50 via-amber-900/30 to-transparent text-white border border-amber-500/40 font-bold",
+          activeColor: "text-amber-300",
         },
         {
           id: "finished",
           label: "Dispatch & Shipping",
           icon: Truck,
-          iconColor: "text-emerald-600",
+          iconColor: "text-emerald-400",
           badge: stats?.finishedItems ?? 0,
-          badgeBg: "bg-emerald-100/90 text-emerald-700 border border-emerald-200",
-          activeBg: "bg-emerald-50/80 text-emerald-700 border-emerald-200/80",
-          activeColor: "text-emerald-700",
+          badgeBg: "bg-emerald-950/80 text-emerald-300 border border-emerald-800/70",
+          activeBg: "bg-gradient-to-r from-emerald-900/50 via-emerald-900/30 to-transparent text-white border border-emerald-500/40 font-bold",
+          activeColor: "text-emerald-300",
         },
       ],
     },
@@ -183,17 +185,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           id: "reports",
           label: "Live Audit & Reports",
           icon: ClipboardList,
-          iconColor: "text-slate-600",
-          activeBg: "bg-slate-100/90 text-slate-900 border-slate-300/80",
-          activeColor: "text-slate-900",
+          iconColor: "text-slate-400",
+          activeBg: "bg-gradient-to-r from-slate-800/80 via-slate-800/50 to-transparent text-white border border-slate-600/60 font-bold",
+          activeColor: "text-slate-200",
         },
         {
           id: "analytics",
           label: "Performance Analytics",
           icon: BarChart3,
-          iconColor: "text-indigo-600",
-          activeBg: "bg-indigo-50/80 text-indigo-700 border-indigo-200/80",
-          activeColor: "text-indigo-700",
+          iconColor: "text-blue-400",
+          activeBg: "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white border border-blue-500/40 font-bold",
+          activeColor: "text-blue-300",
         },
       ],
     },
@@ -233,17 +235,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <button
               onClick={() => handleItemClick(item)}
               className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center relative transition-all duration-200 group focus:outline-none focus:ring-2 focus:ring-indigo-400 shrink-0 cursor-pointer",
+                "w-10 h-10 rounded-xl flex items-center justify-center relative transition-all duration-200 group focus:outline-none focus:ring-2 focus:ring-blue-500/40 shrink-0 cursor-pointer",
                 isActive
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  ? "bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25 border border-blue-400/40"
+                  : "text-slate-400 hover:bg-slate-800/80 hover:text-white border border-transparent"
               )}
               aria-label={item.label}
             >
               <Icon
                 className={cn(
                   "w-4.5 h-4.5 transition-transform group-hover:scale-110 shrink-0",
-                  isActive ? "text-white" : item.iconColor
+                  isActive ? "text-white" : item.iconColor || "text-slate-400"
                 )}
               />
 
@@ -251,10 +253,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               {hasBadge && (
                 <span
                   className={cn(
-                    "absolute -top-1 -right-1 min-w-[17px] h-[17px] rounded-full text-[9px] font-black flex items-center justify-center px-1 border-2 border-white shadow-xs group-hover:scale-110 transition-transform",
+                    "absolute -top-1 -right-1 min-w-[17px] h-[17px] rounded-full text-[9px] font-black flex items-center justify-center px-1 border-2 border-[#0a1120] shadow-xs group-hover:scale-110 transition-transform",
                     isActive
-                      ? "bg-slate-900 text-white"
-                      : "bg-indigo-600 text-white"
+                      ? "bg-amber-400 text-slate-950 font-bold"
+                      : "bg-blue-600 text-white font-bold"
                   )}
                 >
                   {item.badge > 99 ? "99+" : item.badge}
@@ -265,12 +267,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           <TooltipContent
             side="right"
             sideOffset={8}
-            className="text-xs font-bold bg-slate-900 text-white px-3 py-1.5 z-50 shadow-xl rounded-lg border border-slate-800"
+            className="text-xs font-bold bg-[#0f172a] text-white px-3 py-1.5 z-50 shadow-2xl rounded-lg border border-slate-700/80"
           >
             <div className="flex items-center gap-2">
               <span>{item.label}</span>
               {hasBadge && (
-                <span className="text-indigo-300 font-extrabold bg-indigo-950 px-1.5 py-0.5 rounded text-[10px]">
+                <span className="text-blue-300 font-extrabold bg-blue-950/90 border border-blue-800/60 px-1.5 py-0.5 rounded text-[10px]">
                   {item.badge}
                 </span>
               )}
@@ -296,29 +298,29 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             "w-full flex items-center justify-between px-3 rounded-xl relative transition-all duration-200 group text-left cursor-pointer select-none",
             isChild ? "py-2 text-[11.5px]" : "py-2.5 text-xs",
             isActive
-              ? item.activeBg || "bg-indigo-50/90 text-indigo-700 font-bold border border-indigo-200/80 shadow-2xs"
+              ? item.activeBg || "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white font-bold border border-blue-500/40 shadow-sm shadow-blue-500/10"
               : isChild
-              ? "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 font-medium hover:translate-x-0.5"
-              : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 font-medium hover:translate-x-0.5"
+              ? "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 font-medium hover:translate-x-0.5"
+              : "text-slate-300 hover:bg-slate-800/60 hover:text-white font-medium hover:translate-x-0.5"
           )}
         >
           {/* Active Accent Left Glowing Indicator */}
           {isActive && (
             <span
               className={cn(
-                "absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full shadow-sm",
-                isChild ? "bg-cyan-600" : "bg-indigo-600"
+                "absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full shadow-[0_0_8px_rgba(96,165,250,0.8)]",
+                isChild ? "bg-cyan-400" : "bg-blue-400"
               )}
             />
           )}
 
-          <span className="flex items-center gap-2.5 min-w-0">
+          <span className="flex items-center gap-2.5 min-w-0 flex-1 mr-1">
             <span
               className={cn(
-                "p-1.5 rounded-lg transition-all duration-200 shrink-0",
+                "p-1.5 rounded-lg transition-all duration-200 shrink-0 border",
                 isActive
-                  ? "bg-white shadow-2xs"
-                  : "bg-slate-50 group-hover:bg-white group-hover:shadow-2xs"
+                  ? "bg-blue-500/20 border-blue-400/40 shadow-inner"
+                  : "bg-slate-800/60 border-slate-700/40 group-hover:bg-slate-700/70 group-hover:border-slate-600/60"
               )}
             >
               <Icon
@@ -326,29 +328,30 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                   "shrink-0 group-hover:scale-110 transition-transform duration-200",
                   isChild ? "w-3.5 h-3.5" : "w-4 h-4",
                   isActive
-                    ? item.activeColor || "text-indigo-600"
-                    : item.iconColor || "text-slate-500"
+                    ? item.activeColor || "text-blue-300"
+                    : item.iconColor || "text-slate-400 group-hover:text-blue-300"
                 )}
               />
             </span>
 
             <span
               className={cn(
-                "whitespace-nowrap tracking-tight",
-                isActive ? "font-bold text-slate-900" : "font-semibold text-slate-700 group-hover:text-slate-900",
+                "truncate tracking-tight",
+                isActive ? "font-bold text-white" : "font-medium text-slate-300 group-hover:text-white",
                 isChild ? "text-[11.5px]" : "text-[12.5px]"
               )}
+              title={item.label}
             >
               {item.label}
             </span>
           </span>
 
-          <div className="flex items-center gap-1.5 shrink-0 ml-auto pl-1">
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
             {hasBadge && (
               <span
                 className={cn(
                   "min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black flex items-center justify-center shrink-0 whitespace-nowrap group-hover:scale-105 transition-transform duration-200 shadow-2xs",
-                  item.badgeBg || "bg-slate-100 text-slate-700"
+                  item.badgeBg || "bg-slate-800 text-slate-300 border border-slate-700/70"
                 )}
               >
                 {item.badge}
@@ -360,13 +363,13 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               <button
                 type="button"
                 onClick={(e) => toggleDropdown(item.id, e)}
-                className="w-5 h-5 rounded-md flex items-center justify-center hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors focus:outline-none"
+                className="w-5 h-5 rounded-md flex items-center justify-center hover:bg-slate-700/80 text-slate-400 hover:text-white transition-colors focus:outline-none"
                 title={isDropdownOpen ? "Collapse sub-modules" : "Expand sub-modules"}
               >
                 <ChevronDown
                   className={cn(
                     "w-3.5 h-3.5 transition-transform duration-200",
-                    isDropdownOpen ? "rotate-180 text-indigo-600" : ""
+                    isDropdownOpen ? "rotate-180 text-blue-400" : ""
                   )}
                 />
               </button>
@@ -376,7 +379,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
         {/* Dropdown Sub-modules connected branch list */}
         {hasChildren && isDropdownOpen && (
-          <div className="ml-5 pl-2.5 border-l-2 border-slate-200 my-1 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          <div className="ml-5 pl-2.5 border-l border-slate-800 my-1 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
             {item.children!.map((child) => renderExpandedItem(child, true))}
           </div>
         )}
@@ -387,20 +390,20 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   return (
     <aside
       className={cn(
-        "shrink-0 bg-white border-r border-slate-200/90 overflow-y-auto flex flex-col justify-between transition-all duration-300 ease-in-out select-none shadow-2xs z-20",
-        sidebarOpen ? "w-64 p-3.5 space-y-4" : "w-16 py-4 px-2 items-center space-y-4"
+        "shrink-0 bg-[#0a1120] border-r border-slate-800/80 overflow-y-auto flex flex-col justify-between transition-all duration-300 ease-in-out select-none shadow-2xl z-20",
+        sidebarOpen ? "w-[270px] p-3.5 space-y-4" : "w-16 py-4 px-2 items-center space-y-4"
       )}
     >
       <div className={cn("w-full", sidebarOpen ? "space-y-4" : "space-y-4 flex flex-col items-center")}>
         {navGroups.map((group, idx) => (
           <div key={group.title} className="w-full">
             {sidebarOpen ? (
-              <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5 px-2.5 flex items-center justify-between">
+              <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400/80 mb-1.5 px-2.5 flex items-center justify-between">
                 <span>{group.title}</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
+                <span className="w-1 h-1 rounded-full bg-slate-700" />
               </div>
             ) : (
-              idx > 0 && <div className="w-8 h-[1px] bg-slate-200/80 my-2 mx-auto" />
+              idx > 0 && <div className="w-8 h-[1px] bg-slate-800 my-2 mx-auto" />
             )}
 
             <nav className={cn("space-y-1", !sidebarOpen && "flex flex-col items-center space-y-2")}>
@@ -423,21 +426,21 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
       {/* ── BOTTOM ENTERPRISE PRODUCTION STATUS WIDGET ── */}
       {sidebarOpen && (
-        <div className="space-y-2 shrink-0 pt-2 border-t border-slate-100">
+        <div className="space-y-2 shrink-0 pt-2 border-t border-slate-800/80">
           {/* Glass Manufacturing Hero Widget */}
-          <div className="relative rounded-2xl overflow-hidden border border-slate-200/90 shadow-2xs h-24 group select-none">
+          <div className="relative rounded-2xl overflow-hidden border border-slate-800/90 shadow-lg h-24 group select-none">
             <img
               src="/glass-building-hero.jpg"
               alt="Precision Architectural Glass"
               className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-900/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0a1120] via-slate-950/80 to-transparent/40" />
 
             <div className="absolute inset-0 p-3 flex flex-col justify-end">
               <div className="flex items-end justify-between">
                 <div>
-                  <span className="block text-[8px] uppercase tracking-wider text-indigo-300 font-extrabold flex items-center gap-1">
-                    <Sparkles className="w-2.5 h-2.5 text-indigo-300" />
+                  <span className="block text-[8px] uppercase tracking-wider text-blue-400 font-extrabold flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5 text-blue-400" />
                     SEJAL GLASS SYSTEM
                   </span>
                   <span className="block text-[11px] font-black text-white leading-tight mt-0.5">
@@ -447,22 +450,35 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 <button
                   type="button"
                   onClick={() => handleItemClick("production-overview")}
-                  className="w-6.5 h-6.5 rounded-full bg-white/95 hover:bg-white text-slate-900 flex items-center justify-center shadow-xs transition-transform group-hover:translate-x-0.5 cursor-pointer"
+                  className="w-6.5 h-6.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-md shadow-blue-600/30 transition-all group-hover:translate-x-0.5 cursor-pointer border border-blue-400/40"
                   title="Explore Production Overview"
                 >
-                  <ArrowRight className="w-3.5 h-3.5 text-indigo-700" />
+                  <ArrowRight className="w-3.5 h-3.5 text-white" />
                 </button>
               </div>
             </div>
           </div>
 
+          {/* Public Portal Showcase Link */}
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="w-full bg-slate-900/90 hover:bg-slate-800 text-slate-200 font-bold text-[11px] py-2 px-2.5 rounded-xl border border-slate-800 hover:border-slate-700 flex items-center justify-between transition-colors shadow-xs cursor-pointer"
+          >
+            <span className="flex items-center gap-1.5 text-amber-300">
+              <Globe className="w-3.5 h-3.5 text-amber-400" />
+              Public Portal & Specs
+            </span>
+            <ExternalLink className="w-3 h-3 text-slate-400" />
+          </button>
+
           {/* Live System Clock & Status Pill */}
-          <div className="bg-slate-50 p-2 rounded-xl border border-slate-200/80 flex items-center justify-between text-[10px] text-slate-600">
+          <div className="bg-[#070d18] p-2 rounded-xl border border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
             <div className="flex items-center gap-1.5 font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Plant Online (GST)</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-slate-300">Plant Online (GST)</span>
             </div>
-            <div className="font-mono font-bold text-slate-800">
+            <div className="font-mono font-bold text-blue-300">
               {formatPlatformTime(currentTime)}
             </div>
           </div>

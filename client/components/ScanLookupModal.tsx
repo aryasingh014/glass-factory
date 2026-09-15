@@ -151,6 +151,14 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
                   <span className="font-bold text-blue-600">{scannedResult.item.piNumber}</span>
                 </div>
                 <div>
+                  <span className="text-slate-500 block">Batch:</span>
+                  <span className="font-mono font-bold text-slate-900">{scannedResult.item.batchNo || scannedResult.item.sfoNo || "—"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Position (POS):</span>
+                  <span className="font-mono font-bold text-indigo-700">POS {scannedResult.item.posNo || "—"}</span>
+                </div>
+                <div>
                   <span className="text-slate-500 block">Customer:</span>
                   <span className="font-bold text-slate-900 truncate">{scannedResult.pi?.customerName}</span>
                 </div>
@@ -198,7 +206,7 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
                             isDone
                               ? "bg-emerald-100 border-emerald-300 text-emerald-800"
                               : isCurrent
-                              ? "bg-blue-600 border-blue-600 text-white shadow-sm animate-pulse"
+                              ? "bg-blue-600 border-blue-600 text-white shadow-sm"
                               : "bg-white border-slate-200 text-slate-400"
                           }`}
                         >

@@ -92,6 +92,8 @@ interface StageRowItem {
   isDguPair: boolean; // true if paired 1 Col + 1 Clr unit
   dguPairReady: boolean;
   dguWaitingFinish?: "Clear" | "Colour";
+  isHolding?: boolean;
+  holdingReason?: string;
   allSerials: string[]; // Serial numbers to complete when advancing this row
   effectiveSqm: number;
   displaySerial: string;
@@ -515,10 +517,77 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const usedLam = new Set<string>();
       const rows: StageRowItem[] = [];
 
+      // Pre-compute an index of all Colour / DGU partner items cut status across all items (O(N) single pass)
+      const colourCutIndex = new Map<string, { total: number; cut: number }>();
+      for (let i = 0; i < items.length; i++) {
+        const other = items[i];
+        if (
+          getItemFinish(other) === "Colour" ||
+          isDguGlass(other) ||
+          (Array.isArray(other.processRoute) && other.processRoute.includes("DGU"))
+        ) {
+          const otherPos = String(other.posNo || "").replace(/\D/g, "") || String(other.posNo || "").trim().toLowerCase();
+          const otherOrder = (other.orderNo || other.piNumber || other.sfoNo || "").trim().toLowerCase();
+          const otherPiId = (other.piId || "").trim().toLowerCase();
+          const isCut = other.currentStage !== "Cutting" || (Array.isArray(other.completedStages) && other.completedStages.includes("Cutting"));
+
+          const keys = [
+            `${otherOrder}_${otherPos}_${Number(other.width)}_${Number(other.height)}`,
+            otherPiId ? `${otherPiId}_${otherPos}_${Number(other.width)}_${Number(other.height)}` : null,
+            `pos_${otherPos}_${Number(other.width)}_${Number(other.height)}`,
+          ].filter(Boolean) as string[];
+
+          for (let k = 0; k < keys.length; k++) {
+            const entry = colourCutIndex.get(keys[k]) || { total: 0, cut: 0 };
+            entry.total += 1;
+            if (isCut) entry.cut += 1;
+            colourCutIndex.set(keys[k], entry);
+          }
+        }
+      }
+
+      const isItemDlgu = (pane: GlassItem) => {
+        if (!pane) return false;
+        if (pane.glassCategory === "Lamination" || (pane.glassCategory as string) === "Laminated") return false;
+        if (Array.isArray(pane.processRoute) && pane.processRoute.includes("Lamination") && !pane.processRoute.includes("DGU")) return false;
+        if (pane.glassCategory === "DLGU" || isDlguGlass(pane)) return true;
+        if (
+          Array.isArray(pane.processRoute) &&
+          pane.processRoute.includes("Lamination") &&
+          pane.processRoute.includes("DGU")
+        ) {
+          return true;
+        }
+        return false;
+      };
+
+      const checkIsDlguHolding = (pane: GlassItem) => {
+        if (!pane || !isItemDlgu(pane)) return false;
+
+        const cleanPos = String(pane.posNo || "").replace(/\D/g, "") || String(pane.posNo || "").trim().toLowerCase();
+        const cleanOrder = (pane.orderNo || pane.piNumber || pane.sfoNo || "").trim().toLowerCase();
+        const cleanPiId = (pane.piId || "").trim().toLowerCase();
+        const w = Number(pane.width);
+        const h = Number(pane.height);
+
+        // O(1) Map lookups
+        const primaryKey = `${cleanOrder}_${cleanPos}_${w}_${h}`;
+        const piKey = cleanPiId ? `${cleanPiId}_${cleanPos}_${w}_${h}` : null;
+        const posKey = `pos_${cleanPos}_${w}_${h}`;
+
+        const entry = colourCutIndex.get(primaryKey) || (piKey ? colourCutIndex.get(piKey) : null) || colourCutIndex.get(posKey);
+
+        if (entry && entry.total > 0) {
+          // If any colour pane is NOT cut yet (cut < total), hold!
+          return entry.cut < entry.total;
+        }
+
+        // If no colour partner glass found in items at all, hold
+        return true;
+      };
+
       // --- DLGU Phase-1: Group by server-stamped lamPairId ---
-      const dlguItems = stageItems.filter(
-        (i) => (i as any).glassCategory === "DLGU" || (i as any).dlguPhase === "LamPairing"
-      );
+      const dlguItems = stageItems.filter((i) => isItemDlgu(i));
 
       if (dlguItems.length > 0) {
         // Group by lamPairId (stamped by server when pairs advance from Pairing→Lamination)
@@ -548,7 +617,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             partnerItem: paneB || null,
             isDguPair: true,
             dguPairReady: true,
-            glassCategory: "Laminated",
+            isHolding: false,
+            holdingReason: undefined,
+            glassCategory: "DLGU",
             allSerials: panes.map((p) => p.serialNumber),
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
             displaySerial: paneA.serialNumber,
@@ -580,7 +651,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               partnerItem: match || null,
               isDguPair: !!match,
               dguPairReady: true,
-              glassCategory: "Laminated",
+              isHolding: false,
+              holdingReason: undefined,
+              glassCategory: "DLGU",
               allSerials: match ? [paneA.serialNumber, match.serialNumber] : [paneA.serialNumber],
               effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
               displaySerial: paneA.serialNumber,
@@ -596,7 +669,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               partnerItem: null,
               isDguPair: false,
               dguPairReady: true,
-              glassCategory: "Laminated",
+              isHolding: false,
+              holdingReason: undefined,
+              glassCategory: "DLGU",
               allSerials: [paneB.serialNumber],
               effectiveSqm: paneB.sqm || parseFloat(((paneB.width * paneB.height) / 1000000).toFixed(2)),
               displaySerial: paneB.serialNumber,
@@ -606,9 +681,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         }
       }
 
-      // --- Regular Lamination glass (non-DLGU) ---
+      // --- Regular Direct Lamination glass (non-DLGU: completely independent, always active & selectable) ---
       const regularLamItems = stageItems.filter(
-        (i) => isLaminatedGlass(i) && !((i as any).glassCategory === "DLGU" || (i as any).dlguPhase)
+        (i) => !isItemDlgu(i)
       ).sort((a, b) => {
         const numA = parseInt(a.serialNumber.replace(/\D/g, ""), 10) || 0;
         const numB = parseInt(b.serialNumber.replace(/\D/g, ""), 10) || 0;
@@ -633,6 +708,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             partnerItem: match,
             isDguPair: true,
             dguPairReady: true,
+            isHolding: false,
             glassCategory: "Laminated",
             allSerials: [paneA.serialNumber, match.serialNumber],
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
@@ -647,6 +723,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             partnerItem: null,
             isDguPair: false,
             dguPairReady: true,
+            isHolding: false,
             glassCategory: "Laminated",
             allSerials: [paneA.serialNumber],
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
@@ -979,7 +1056,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     }
 
     return rows;
-  }, [stage, stageItems]);
+  }, [stage, stageItems, items]);
 
   const totalStagePieces =
     stage === "Finished" || stage === "DGU" || stage === "Lamination"
@@ -1138,30 +1215,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     return filteredRows.filter((r) => selectedSheetRackNos.includes(r.item.rackNo || "1"));
   }, [filteredRows, isAllSheetsSelected, selectedSheetRackNos]);
 
-  const handleSheetMouseDown = (index: number, rackNo: string, e: React.MouseEvent) => {
-    // Shift + Click range selection
-    if (e.shiftKey && lastClickedSheetIndex !== null) {
-      const start = Math.min(lastClickedSheetIndex, index);
-      const end = Math.max(lastClickedSheetIndex, index);
-      const range = sheetGroups.slice(start, end + 1).map((g) => g.rackNo);
-      setSelectedSheetRackNos(range);
-      setSelectedRowIds([]);
-      return;
-    }
-
-    // Ctrl / Cmd + Click toggle
-    if (e.ctrlKey || e.metaKey) {
-      setSelectedSheetRackNos((prev) => {
-        const withoutAll = prev.filter((r) => r !== "ALL");
-        const next = withoutAll.includes(rackNo) ? withoutAll.filter((r) => r !== rackNo) : [...withoutAll, rackNo];
-        return next.length === 0 ? ["ALL"] : next;
-      });
-      setLastClickedSheetIndex(index);
-      setSelectedRowIds([]);
-      return;
-    }
-
-    // Start drag selection
+  // ponytail: Handle drag selection from grip handle only
+  const handleSheetGripMouseDown = (index: number, rackNo: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     setIsDraggingSheets(true);
     setDragStartIndex(index);
     setLastClickedSheetIndex(index);
@@ -1178,6 +1234,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     setSelectedRowIds([]);
   };
 
+  // ponytail: Independent multi-sheet checkbox toggle (allows selecting arbitrary combinations like 2, 4, 5, 7)
   const handleToggleSheet = (rackNo: string) => {
     if (rackNo === "ALL") {
       setSelectedSheetRackNos(["ALL"]);
@@ -1185,9 +1242,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       return;
     }
     setSelectedSheetRackNos((prev) => {
-      const withoutAll = prev.filter((r) => r !== "ALL");
-      const next = withoutAll.includes(rackNo) ? withoutAll.filter((r) => r !== rackNo) : [...withoutAll, rackNo];
-      return next.length === 0 ? ["ALL"] : next;
+      // If currently "ALL" or all sheets were selected, clicking one sheet checks only that sheet
+      const isCurrentlyAll = prev.includes("ALL") || prev.length === 0 || (sheetGroups.length > 0 && prev.length >= sheetGroups.length);
+      if (isCurrentlyAll) {
+        return [rackNo];
+      }
+      // If already selected, toggle off
+      if (prev.includes(rackNo)) {
+        const next = prev.filter((r) => r !== rackNo);
+        return next.length === 0 ? ["ALL"] : next;
+      } else {
+        // Toggle on and sort numerically
+        return [...prev, rackNo].sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+      }
     });
     setSelectedRowIds([]);
   };
@@ -1329,6 +1396,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     const selectableRows =
       stage === "DGU"
         ? displayedRows.filter((r) => r.dguPairReady)
+        : stage === "Lamination"
+        ? displayedRows.filter((r) => !r.isHolding)
         : displayedRows;
 
     if (selectableRows.length === 0) return;
@@ -1347,6 +1416,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       toast.warning("Cannot select: matching Clear glass has not been cut yet.");
       return;
     }
+    if (stage === "Lamination" && row && row.isHolding) {
+      toast.warning("Cannot select: matching Colour glass has not been cut in Cutting Workstation yet. Glass is held in Lamination staging.");
+      return;
+    }
     setSelectedRowIds((prev) =>
       prev.includes(rowId) ? prev.filter((s) => s !== rowId) : [...prev, rowId]
     );
@@ -1354,6 +1427,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   // Open the scan modal for any row
   const openScanModal = (row: StageRowItem) => {
+    if (stage === "Lamination" && row.isHolding) {
+      toast.warning("Cannot advance DLGU glass: The matching Colour glass has not been cut in Cutting Workstation yet. Please cut the Colour glass first before releasing from Lamination.");
+      return;
+    }
     setScanRow(row);
     setScanInput("");
     setTimeout(() => scanInputRef.current?.focus(), 100);
@@ -1499,6 +1576,15 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         return;
       }
     }
+    if (stage === "Lamination") {
+      const holding = selectedRows.filter((r) => r.isHolding);
+      if (holding.length > 0) {
+        toast.error(
+          `❌ Cannot advance: ${holding.length} DLGU unit(s) must hold in Lamination staging until the matching Colour glass is cut in Cutting Workstation.`
+        );
+        return;
+      }
+    }
 
     const serialsToAdvance = Array.from(new Set(selectedRows.flatMap((r) => r.allSerials)));
     setSelectedRowIds([]);
@@ -1523,7 +1609,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       toast.error("❌ Cannot advance: No items found in the queue.");
       return;
     }
-    const serialsToAdvance = Array.from(new Set(displayedRows.flatMap((r) => r.allSerials)));
+    const readyRows = stage === "Lamination" ? displayedRows.filter((r) => !r.isHolding) : displayedRows;
+    if (readyRows.length === 0) {
+      toast.error("❌ Cannot advance: All DLGU items are holding in Lamination staging awaiting Colour glass cutting.");
+      return;
+    }
+    const serialsToAdvance = Array.from(new Set(readyRows.flatMap((r) => r.allSerials)));
     setSelectedRowIds([]);
     await completeStage(serialsToAdvance, undefined, true);
   };
@@ -1555,41 +1646,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
     return (
       <div className="space-y-4 animate-in fade-in duration-200">
-        {/* ── Top Header Banner with Stage Stats ── */}
-        <div className="bg-gradient-to-r from-purple-900 via-purple-800 to-indigo-900 rounded-2xl p-5 text-white shadow-lg flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center shadow-inner">
-              <Scissors className="w-6 h-6 text-purple-200" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-black tracking-tight">Cutting Workstation — Batch Queues</h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-500/30 text-purple-200 border border-purple-400/30">
-                  Step 1 in Pipeline
-                </span>
-              </div>
-              <p className="text-xs text-purple-200/90 font-medium mt-0.5 max-w-xl">
-                Select any sticker batch below to enter the cutting floor, organize raw sheets, and execute auto-scan rules.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <div className="bg-white/10 backdrop-blur-sm border border-white/15 px-3.5 py-2 rounded-xl text-center">
-              <div className="text-[10px] text-purple-200 font-bold uppercase tracking-wider">Active Batches</div>
-              <div className="text-lg font-black text-white">{batchSummaries.length}</div>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm border border-white/15 px-3.5 py-2 rounded-xl text-center">
-              <div className="text-[10px] text-purple-200 font-bold uppercase tracking-wider">Pending Glass</div>
-              <div className="text-lg font-black text-white">{totalCuttingPending} Items</div>
-            </div>
-            <div className="bg-purple-600/60 backdrop-blur-sm border border-purple-400/30 px-3.5 py-2 rounded-xl text-center">
-              <div className="text-[10px] text-purple-200 font-bold uppercase tracking-wider">Total Area</div>
-              <div className="text-lg font-black text-white">{totalCuttingSqm.toFixed(1)} m²</div>
-            </div>
-          </div>
-        </div>
-
         {/* ── Filter Bar with FINISH Tabs (Clear / Colour / All) & Search ── */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1728,7 +1784,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         </div>
 
         {/* ── BATCH TABLE ── */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
+        <div className="bg-white border border-slate-300 rounded-2xl shadow-xs overflow-hidden">
           {filteredBatches.length > 0 ? (
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left text-xs border-collapse">
@@ -2191,140 +2247,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         </div>
       )}
 
-      {/* ── Lamination Line Header ── */}
-      {stage === "Lamination" && (
-        <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 text-xs shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center font-black text-sm shadow-2xs">
-              🛡️
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-extrabold text-amber-950 text-sm">Lamination Workstation & Line</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
-                  Autoclave / Pre-Lam
-                </span>
-                {lamDirectCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                    {lamDirectCount} Direct Lamination Units (Next: Finished)
-                  </span>
-                )}
-                {lamDlguCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
-                    {lamDlguCount} DLGU Sub-Assembly Units (Next: DGU Assembly)
-                  </span>
-                )}
-              </div>
-              <span className="text-amber-800 text-xs font-medium block mt-0.5">
-                Two types of glass processed: Direct Laminated glass (advances directly to Finished) & DLGU laminated sub-assemblies (advances to DGU Assembly Line).
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <div className="bg-amber-600 text-white px-3.5 py-1.5 rounded-xl text-center shadow-2xs">
-              <div className="text-[10px] text-amber-100 font-bold uppercase">Total in Lamination</div>
-              <div className="text-sm font-black">
-                {totalStagePieces} {totalStagePieces === 1 ? "Unit" : "Units"}
-              </div>
-              <div className="text-[9.5px] text-amber-200 font-medium">({stageItems.length} Panes)</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── DGU Assembly Line Header ── */}
-      {stage === "DGU" && (
-        <div className="bg-gradient-to-r from-teal-500/10 via-teal-500/5 to-transparent border border-teal-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 text-xs shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center font-black text-sm shadow-2xs">
-              🪟
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-extrabold text-teal-950 text-sm">DGU / IGU Assembly Line</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-300">
-                  Insulated Glass Assembly
-                </span>
-                {dguStandardCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-900 border border-teal-300">
-                    {dguStandardCount} Standard DGU Units
-                  </span>
-                )}
-                {dguDlguCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
-                    {dguDlguCount} DLGU Units (Laminated IGU)
-                  </span>
-                )}
-              </div>
-              <span className="text-teal-800 text-xs font-medium block mt-0.5">
-                Two types of insulated glass: Standard DGU Units (Monolithic Colour + Clear Float) & DLGU Units (Outer Colour + Laminated Inner Sub-Assembly).
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <div className="bg-teal-600 text-white px-3.5 py-1.5 rounded-xl text-center shadow-2xs">
-              <div className="text-[10px] text-teal-100 font-bold uppercase">Total in DGU</div>
-              <div className="text-sm font-black">
-                {stageRows.length} {stageRows.length === 1 ? "Unit" : "Units"}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Finished Items Warehouse Info Banner ── */}
-      {stage === "Finished" && (
-        <div className="bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 text-xs shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-sm shadow-2xs">
-              ✓
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-extrabold text-emerald-950 text-sm">Finished Items Warehouse Inventory</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  Dispatch Ready
-                </span>
-                {finishedDlguCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
-                    {finishedDlguCount} DLGU Units
-                  </span>
-                )}
-                {finishedDguCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
-                    {finishedDguCount} DGU / IGU Units
-                  </span>
-                )}
-                {finishedLamCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                    {finishedLamCount} Laminated Units
-                  </span>
-                )}
-                {finishedGenCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
-                    {finishedGenCount} General Glass
-                  </span>
-                )}
-              </div>
-              <span className="text-emerald-700 text-xs font-medium block mt-0.5">
-                Completed glass ready for dispatch across all production lines (DLGU Units, DGU Units, Laminated Glass & General Glass).
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <div className="bg-emerald-600 text-white px-3.5 py-1.5 rounded-xl text-center shadow-2xs">
-              <div className="text-[10px] text-emerald-100 font-bold uppercase">Total Dispatch Ready</div>
-              <div className="text-sm font-black">
-                {stageRows.length} {stageRows.length === 1 ? "Unit" : "Units"}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Unified Single-Line Header Controls: Finish Tabs + Search + Action Buttons (For Non-Cutting Workstations or General Stage View) ── */}
       {stage !== "Cutting" && (
-        <div className="bg-white p-3 rounded-2xl border border-slate-200/90 shadow-xs flex items-center justify-between flex-wrap gap-3">
+        <div className="bg-white p-3 rounded-2xl border border-slate-300 shadow-xs flex items-center justify-between flex-wrap gap-3">
           {/* Left: Finish Filter Tabs */}
           <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 shrink-0 flex-wrap">
             <button
@@ -2742,20 +2667,35 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 {isSheetDropdownOpen && (
                   <div className="absolute top-full left-0 mt-1.5 w-[380px] sm:w-[460px] max-w-[94vw] bg-white border-2 border-purple-300 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150">
                     {/* Header with Drag Hint & Quick Presets */}
-                    <div className="p-3 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 border-b border-purple-200">
+                    <div className="p-3 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 border-b border-purple-200 space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 font-black text-xs text-purple-950">
                           <Layers className="w-3.5 h-3.5 text-purple-600" />
                           <span>Select Raw Sheets for Cutting</span>
                         </div>
-                        <span className="text-[10px] font-bold text-purple-800 bg-purple-200/90 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <MousePointer className="w-3 h-3" /> Drag / Shift+Click to multi-select
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleSelectAllSheets}
+                            className="px-2 py-0.5 text-[10.5px] font-black bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-md transition-colors cursor-pointer"
+                          >
+                            All Sheets
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSheetRackNos([]);
+                              setSelectedRowIds([]);
+                            }}
+                            className="px-2 py-0.5 text-[10.5px] font-black bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition-colors cursor-pointer"
+                          >
+                            Reset
+                          </button>
+                        </div>
                       </div>
 
-
                       {/* Direct Range Selector Inputs */}
-                      <form onSubmit={handleApplyRangeInput} className="flex items-center gap-1.5 mt-2 bg-white/90 p-1.5 rounded-xl border border-purple-200 shadow-2xs flex-wrap">
+                      <form onSubmit={handleApplyRangeInput} className="flex items-center gap-1.5 bg-white/90 p-1.5 rounded-xl border border-purple-200 shadow-2xs flex-wrap">
                         <span className="text-[10px] font-bold text-slate-600">From Sheet:</span>
                         <input
                           type="number"
@@ -2783,7 +2723,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       </form>
                     </div>
 
-                    {/* Scrollable Sheet List (Interactive Click & Drag with Auto-scroll) */}
+                    {/* Scrollable Sheet List (Interactive Click Checkboxes & Drag) */}
                     <div
                       ref={sheetScrollContainerRef}
                       className="max-h-[340px] overflow-y-auto p-1.5 space-y-1 select-none scroll-smooth"
@@ -2822,8 +2762,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           <div
                             key={g.rackNo}
                             data-sheet-index={index}
-                            onMouseDown={(e) => handleSheetMouseDown(index, g.rackNo, e)}
-                            onMouseEnter={() => handleSheetMouseEnter(index)}
+                            onClick={() => handleToggleSheet(g.rackNo)}
                             className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-all border ${
                               isSelected
                                 ? "bg-purple-600 text-white border-purple-700 shadow-xs scale-[1.005]"
@@ -2833,18 +2772,26 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             }`}
                           >
                             <div className="flex items-center gap-2 min-w-0">
-                              <GripVertical className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-purple-200" : "text-slate-300"}`} />
+                              <div
+                                onMouseDown={(e) => handleSheetGripMouseDown(index, g.rackNo, e)}
+                                onMouseEnter={() => handleSheetMouseEnter(index)}
+                                className="cursor-grab p-0.5"
+                                title="Drag to select range"
+                              >
+                                <GripVertical className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-purple-200" : "text-slate-300"}`} />
+                              </div>
                               <div
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleToggleSheet(g.rackNo);
                                 }}
-                                className="cursor-pointer"
+                                className="cursor-pointer p-0.5"
+                                title={isSelected ? `Uncheck Sheet ${g.rackNo}` : `Check Sheet ${g.rackNo}`}
                               >
                                 {isSelected ? (
                                   <CheckSquare className="w-4 h-4 text-white" />
                                 ) : (
-                                  <Square className="w-4 h-4 text-slate-400" />
+                                  <Square className="w-4 h-4 text-slate-400 hover:text-purple-600" />
                                 )}
                               </div>
                               <div className="font-extrabold text-xs truncate">
@@ -2881,7 +2828,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         type="button"
                         size="sm"
                         onClick={() => setIsSheetDropdownOpen(false)}
-                        className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold h-7 px-3 rounded-lg shadow-2xs"
+                        className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold h-7 px-3 rounded-lg shadow-2xs cursor-pointer"
                       >
                         Apply / Close
                       </Button>
@@ -3011,7 +2958,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       )}
 
       {/* ── Glass Items / DGU Units Table View ── */}
-      <div className="border-2 border-slate-200/90 rounded-2xl bg-white shadow-xs overflow-hidden">
+      <div className="border-2 border-slate-300 rounded-2xl bg-white shadow-xs overflow-hidden">
         {/* Table Summary Sub-bar */}
         <div className="p-3 bg-gradient-to-r from-slate-50 via-teal-50/20 to-blue-50/30 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs">
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -3113,9 +3060,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 size="sm"
                 onClick={handleBatchComplete}
                 disabled={loading}
-                className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-extrabold text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs animate-in fade-in"
+                className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-black text-xs h-7 px-3.5 gap-1.5 rounded-xl shadow-xs border border-orange-400/30 active:scale-95 transition-all animate-in fade-in"
               >
-                <CheckCircle className="w-3.5 h-3.5" /> Cut & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+                <CheckCircle className="w-3.5 h-3.5 text-amber-100" /> Cut & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
               </Button>
             )}
 
@@ -3179,13 +3126,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   type="button"
                   size="sm"
                   onClick={handleBatchComplete}
-                  disabled={loading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs animate-in fade-in transition-all"
-                  title="Send selected items in Lamination queue to Finished"
+                  disabled={
+                    loading ||
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                  }
+                  className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs animate-in fade-in transition-all ${
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                  }`}
+                  title={
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
+                      : "Advance selected ready items from Lamination"
+                  }
                 >
                   <Truck className="w-3.5 h-3.5" />
                   <span>
-                    Send Selected to Finished ({stageRows.filter((r) => selectedRowIds.includes(r.id)).length})
+                    Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
                   </span>
                 </Button>
               ) : (
@@ -3193,16 +3151,20 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   type="button"
                   size="sm"
                   onClick={handleSendAllToFinished}
-                  disabled={loading || displayedRows.length === 0}
+                  disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
                   className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs transition-all ${
-                    displayedRows.length === 0
+                    displayedRows.filter((r) => !r.isHolding).length === 0
                       ? "bg-slate-200 text-slate-400 cursor-not-allowed"
                       : "bg-blue-600 hover:bg-blue-700 text-white"
                   }`}
-                  title="Send all items in Lamination queue to Finished"
+                  title={
+                    displayedRows.filter((r) => !r.isHolding).length === 0
+                      ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
+                      : "Advance ready items from Lamination"
+                  }
                 >
                   <Truck className="w-3.5 h-3.5" />
-                  <span>Send All in Finished ({displayedRows.length})</span>
+                  <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
                 </Button>
               )
             )}
@@ -3331,6 +3293,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               </span>
                             </div>
                             <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+                              {group.items[0]?.piNumber && (
+                                <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-bold">
+                                  PI: {formatBatchNumber(group.items[0].piNumber)}
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
+                                Batch: {group.items[0]?.batchNo || group.items[0]?.sfoNo || group.sfoList.join(", ") || "—"}
+                              </span>
                               <span>SFO: <strong className="text-purple-700">{group.sfoList.join(", ")}</strong></span>
                               {group.obList.length > 0 && <span>(OB: {group.obList.join(", ")})</span>}
                               <span className="text-slate-300">•</span>
@@ -3384,6 +3354,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
                                 />
                               </th>
+                              <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
+                              <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
+                              <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
                               <th className="py-2.5 px-2">Sticker Serial</th>
                               <th className="py-2.5 px-2">Barcode</th>
                               <th className="py-2.5 px-2 text-center">QTY</th>
@@ -3415,6 +3388,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       onChange={() => toggleSelect(row.id)}
                                       className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
                                     />
+                                  </td>
+                                  {/* PI Number */}
+                                  <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
+                                      {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
+                                    </span>
+                                  </td>
+                                  {/* Batch Number */}
+                                  <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs">
+                                      {item.batchNo || item.sfoNo || (row as any).batchNo || (row as any).sfoNo || "—"}
+                                    </span>
+                                  </td>
+                                  {/* Pos Number */}
+                                  <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-extrabold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs min-w-[32px]">
+                                      {item.posNo || (row as any).posNo || "—"}
+                                    </span>
                                   </td>
                                   <td className="py-2.5 px-2 font-mono font-bold align-middle">
                                     <span className="text-purple-700">{row.displaySerial}</span>
@@ -3555,14 +3546,30 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           stage === "DGU"
                             ? displayedRows.filter((r) => r.dguPairReady).length > 0 &&
                               displayedRows.filter((r) => r.dguPairReady).every((r) => selectedRowIds.includes(r.id))
+                            : stage === "Lamination"
+                            ? displayedRows.filter((r) => !r.isHolding).length > 0 &&
+                              displayedRows.filter((r) => !r.isHolding).every((r) => selectedRowIds.includes(r.id))
                             : selectedRowIds.length === displayedRows.length && displayedRows.length > 0
                         }
-                        disabled={stage === "DGU" && displayedRows.filter((r) => r.dguPairReady).length === 0}
+                        disabled={
+                          (stage === "DGU" && displayedRows.filter((r) => r.dguPairReady).length === 0) ||
+                          (stage === "Lamination" && displayedRows.filter((r) => !r.isHolding).length === 0)
+                        }
                         onChange={toggleSelectAll}
                         className="w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={
+                          stage === "DGU" && displayedRows.filter((r) => r.dguPairReady).length === 0
+                            ? "Cannot select all: no DGU units have matching Clear glass cut yet"
+                            : stage === "Lamination" && displayedRows.filter((r) => !r.isHolding).length === 0
+                            ? "Cannot select all: all DLGU items are holding in staging awaiting Colour glass cutting"
+                            : "Select all"
+                        }
                       />
                     </th>
                   )}
+                  <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
+                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
+                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
                   <th className="py-2.5 px-2">
                     {stage === "DGU" ? "Outer Panel Serial" : stage === "Finished" ? "Unit / Sticker Serial" : "Sticker Serial"}
                   </th>
@@ -3581,7 +3588,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {displayedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={stage === "Finished" ? 9 : 10} className="text-center py-12 text-slate-500">
+                    <td colSpan={stage === "Finished" ? 12 : 13} className="text-center py-12 text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
                         <span className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center font-bold text-lg">
                           🪟
@@ -3616,21 +3623,44 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              disabled={stage === "DGU" && !row.dguPairReady}
+                              disabled={(stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
                               onChange={() => toggleSelect(row.id)}
                               className={`w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 ${
-                                stage === "DGU" && !row.dguPairReady
+                                (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
                                   ? "opacity-30 cursor-not-allowed"
                                   : "cursor-pointer"
                               }`}
                               title={
                                 stage === "DGU" && !row.dguPairReady
                                   ? "Cannot select: matching Clear glass has not been cut yet"
+                                  : stage === "Lamination" && row.isHolding
+                                  ? "Cannot select: DLGU glass is held in Lamination staging awaiting Colour glass cutting"
                                   : "Select row"
                               }
                             />
                           </td>
                         )}
+
+                        {/* PI Number */}
+                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
+                            {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
+                          </span>
+                        </td>
+
+                        {/* Batch Number */}
+                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs">
+                            {item.batchNo || item.sfoNo || (row as any).batchNo || (row as any).sfoNo || "—"}
+                          </span>
+                        </td>
+
+                        {/* Position Number */}
+                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-extrabold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs min-w-[32px]">
+                            {item.posNo || (row as any).posNo || "—"}
+                          </span>
+                        </td>
 
                         {/* Sticker Serial */}
                         <td className="py-2.5 px-2 font-mono font-bold align-middle">
@@ -3719,9 +3749,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           </div>
                           {stage === "Lamination" && (
                             isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                              <div className="text-[10px] text-purple-800 font-semibold flex items-center gap-1 mt-0.5">
-                                <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
-                                  DLGU Inner Lam • Next: DGU Assembly Line
+                              <div className="text-[10px] font-semibold flex flex-col gap-0.5 mt-0.5">
+                                <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold inline-block w-fit">
+                                  DLGU Inner Lam • Sub-Assembly Unit
+                                </span>
+                                <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded w-fit">
+                                  <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                  Ready to complete Lamination & advance to Pairing Buffer
                                 </span>
                               </div>
                             ) : (
@@ -3867,22 +3901,32 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             {!isFinished && (
                               <Button
                                 size="sm"
-                                disabled={loading || (stage === "DGU" && !row.dguPairReady)}
+                                disabled={loading || (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
                                 onClick={() => openScanModal(row)}
-                                className={`h-7 px-2.5 text-xs font-bold text-white rounded-lg shadow-2xs gap-1 ${
-                                  stage === "DGU" && !row.dguPairReady
-                                    ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                                    : "bg-teal-600 hover:bg-teal-700"
+                                className={`h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 ${
+                                  (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
+                                    ? "bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 cursor-not-allowed font-extrabold"
+                                    : "bg-teal-600 hover:bg-teal-700 text-white"
                                 }`}
                                 title={
                                   stage === "DGU" && !row.dguPairReady
                                     ? `Cannot assemble: waiting for matching ${row.dguWaitingFinish} glass`
+                                    : stage === "Lamination" && row.isHolding
+                                    ? "Held in Lamination Staging: Cannot advance until matching Colour glass is cut in Cutting Workstation"
                                     : stage === "DGU"
                                     ? "Scan Outer Panel Colour barcode to complete DGU Unit"
                                     : "Scan & verify"
                                 }
                               >
-                                <Play className="w-3 h-3 fill-current" /> {stage === "DGU" ? "Scan & Finish" : "Scan"}
+                                {stage === "Lamination" && row.isHolding ? (
+                                  <>
+                                    <Clock className="w-3 h-3 text-amber-600 animate-pulse" /> Holding (Cut Pending)
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-3 h-3 fill-current" /> {stage === "DGU" ? "Scan & Finish" : "Scan"}
+                                  </>
+                                )}
                               </Button>
                             )}
                             <button

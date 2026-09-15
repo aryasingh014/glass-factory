@@ -246,3 +246,20 @@ export interface PerformanceAnalyticsData {
   bottlenecks: BottleneckInfo[];
 }
 
+export interface SystemNotification {
+  id: string;
+  title: string;
+  message: string;
+  category?: "STAGE_ADVANCE" | "REJECTION" | "REWORK" | "BATCH_UPLOAD" | "PI_CREATED" | "PI_RELEASED" | "SYSTEM";
+  type: "info" | "success" | "warning" | "destructive";
+  stage?: string;
+  serialNumber?: string;
+  batchNumber?: string;
+  piNumber?: string;
+  operator?: string;
+  timestamp: string;
+  rawDate?: number;
+  read: boolean;
+  createdAt: string;
+}
+

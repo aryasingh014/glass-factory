@@ -56,7 +56,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage } from "@shared/api";
+import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage, SystemNotification } from "@shared/api";
 import { StickerUploaderModal } from "@/components/StickerUploaderModal";
 import { ManualPIModal } from "@/components/ManualPIModal";
 import { PIDocumentModal } from "@/components/PIDocumentModal";
@@ -70,16 +70,37 @@ import { ProductionOverviewView } from "@/components/ProductionOverviewView";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
-import { UniversalSearchResults } from "@/components/UniversalSearchResults";
+import { UniversalSearchResults } from "@/lib/UniversalSearchResults";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
 
 export default function Index() {
   const [searchParams] = useSearchParams();
   const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "reports", "analytics"] as const;
   type TabType = typeof validTabs[number];
-  const initialTab = validTabs.includes(searchParams.get("tab") as TabType) ? (searchParams.get("tab") as TabType) : "overview";
+  // ponytail: Preserve user's active module across hard refreshes and page reloads
+  const initialTab = validTabs.includes(searchParams.get("tab") as TabType)
+    ? (searchParams.get("tab") as TabType)
+    : (() => {
+        try {
+          const saved = localStorage.getItem("sejal_active_module") as TabType;
+          if (saved && validTabs.includes(saved)) return saved;
+        } catch {}
+        return "overview";
+      })();
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
-  const [reportsInitialTab, setReportsInitialTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">("pis");
+  const [reportsInitialTab, setReportsInitialTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(() => {
+    try {
+      const saved = localStorage.getItem("sejal_reports_active_tab") as any;
+      if (saved && ["pis", "items", "history", "rejects", "reworks"].includes(saved)) return saved;
+    } catch {}
+    return "pis";
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sejal_active_module", activeTab);
+    } catch {}
+  }, [activeTab]);
   const [userRole, setUserRole] = useState<UserRole>(() => {
     const saved = localStorage.getItem("user_role") as UserRole;
     return saved === "Admin" || saved === "Supervisor" || saved === "Operator" ? saved : "Admin";
@@ -124,14 +145,8 @@ export default function Index() {
   const notificationsRef = React.useRef<HTMLDivElement>(null);
   const userMenuRef = React.useRef<HTMLDivElement>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Array<{
-    id: string;
-    title: string;
-    message: string;
-    timestamp: string;
-    type: "info" | "success" | "warning" | "destructive";
-    read: boolean;
-  }>>([]);
+  const [notificationFilter, setNotificationFilter] = useState<"all" | "unread" | "alerts">("all");
+  const [notifications, setNotifications] = useState<SystemNotification[]>([]);
 
   const unreadNotifications = notifications.filter((n) => !n.read).length;
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -258,23 +273,29 @@ export default function Index() {
     isFetchingRef.current = true;
     if (!silent) setLoading(true);
     try {
-      const [statsRes, piRes, reportsRes] = await Promise.all([
+      const [dashRes, piRes, notifRes] = await Promise.all([
         fetch("/api/production/dashboard"),
         fetch("/api/pi"),
-        fetch("/api/reports"),
+        fetch("/api/notifications"),
       ]);
 
-      if (statsRes.ok) setStats(await statsRes.json());
-      if (piRes.ok) setPis(await piRes.json());
-      if (reportsRes.ok) {
-        const reportData = await reportsRes.json();
-        const freshItems: GlassItem[] = reportData.items || [];
+      if (dashRes.ok) {
+        const dashData = await dashRes.json();
+        const freshItems: GlassItem[] = dashData.items || [];
         setItems(freshItems);
+        setStats(dashData);
         if (selectedPI) {
           const updatedPIItems = freshItems.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber);
           if (updatedPIItems.length > 0) {
             setSelectedPIItems(updatedPIItems);
           }
+        }
+      }
+      if (piRes.ok) setPis(await piRes.json());
+      if (notifRes.ok) {
+        const serverNotifs = await notifRes.json();
+        if (Array.isArray(serverNotifs)) {
+          setNotifications(serverNotifs);
         }
       }
       setLastUpdated(new Date());
@@ -288,6 +309,64 @@ export default function Index() {
         pendingFetchRef.current = false;
         fetchData(true);
       }
+    }
+  };
+
+  const formatNotificationTime = (timestamp?: string) => {
+    if (!timestamp) return "Recently";
+    try {
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) return timestamp;
+      const diffSecs = Math.floor((Date.now() - date.getTime()) / 1000);
+      if (diffSecs < 10) return "Just now";
+      if (diffSecs < 60) return `${diffSecs}s ago`;
+      if (diffSecs < 3600) return `${Math.floor(diffSecs / 60)}m ago`;
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Dubai",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      }).format(date);
+    } catch {
+      return timestamp;
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      await fetch("/api/notifications/read-all", { method: "PATCH" });
+    } catch (err) {
+      console.error("Failed to mark all notifications read", err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (id: string) => {
+    try {
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+      await fetch(`/api/notifications/${id}/read`, { method: "PATCH" });
+    } catch (err) {
+      console.error("Failed to mark notification read", err);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      await fetch(`/api/notifications/${id}`, { method: "DELETE" });
+    } catch (err) {
+      console.error("Failed to delete notification", err);
+    }
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      setNotifications([]);
+      await fetch("/api/notifications", { method: "DELETE" });
+    } catch (err) {
+      console.error("Failed to clear notifications", err);
     }
   };
 
@@ -323,43 +402,46 @@ export default function Index() {
         }, 120);
       };
 
-      const addNotification = (title: string, message: string, type: "info" | "success" | "warning" | "destructive") => {
-        setNotifications((prev) => [
-          {
-            id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            title,
-            message,
-            timestamp: "Just now",
-            type,
-            read: false,
-          },
-          ...prev.slice(0, 19),
-        ]);
-      };
+      eventSource.addEventListener("system_notification", (e: any) => {
+        try {
+          const notif: SystemNotification = JSON.parse(e.data);
+          if (notif && notif.id) {
+            setNotifications((prev) => {
+              const exists = prev.some((n) => n.id === notif.id);
+              if (exists) return prev;
+              return [notif, ...prev.slice(0, 49)];
+            });
+            if (notif.type === "destructive") {
+              toast.error(`${notif.title}: ${notif.message}`);
+            } else if (notif.type === "warning") {
+              toast.warning(`${notif.title}: ${notif.message}`);
+            } else if (notif.type === "success") {
+              toast.success(`${notif.title}`);
+            }
+          }
+        } catch (err) {
+          console.error("Error receiving system notification:", err);
+        }
+      });
 
-      eventSource.addEventListener("stage_advanced", (e: any) => {
-        handleStreamUpdate();
+      eventSource.addEventListener("notifications_updated", () => {
+        fetch("/api/notifications")
+          .then((r) => (r.ok ? r.json() : null))
+          .then((notifs) => {
+            if (Array.isArray(notifs)) setNotifications(notifs);
+          })
+          .catch(() => {});
       });
-      eventSource.addEventListener("item_rejected", (e: any) => {
-        handleStreamUpdate();
-        const payload = e.data ? JSON.parse(e.data) : {};
-        addNotification("Glass Item Rejected", `Quality alert: Item ${payload.serialNumber || ""} marked as rejected`, "destructive");
-      });
-      eventSource.addEventListener("item_reworked", (e: any) => {
-        handleStreamUpdate();
-        const payload = e.data ? JSON.parse(e.data) : {};
-        addNotification("Item Sent to Rework", `Rework alert: Item ${payload.serialNumber || ""} dispatched back to workstation`, "warning");
-      });
-      eventSource.addEventListener("excel_uploaded", (e: any) => {
-        handleStreamUpdate();
-        const payload = e.data ? JSON.parse(e.data) : {};
-        addNotification("New PI Generated", `Uploaded Excel order for PI ${payload.piNumber || ""}`, "info");
-      });
-      eventSource.addEventListener("pi_released", (e: any) => {
-        handleStreamUpdate();
-        addNotification("PI Ready for Production", "Proforma Invoice order released to shop floor workstations", "success");
-      });
+
+      eventSource.addEventListener("stage_advanced", handleStreamUpdate);
+      eventSource.addEventListener("item_rejected", handleStreamUpdate);
+      eventSource.addEventListener("item_reworked", handleStreamUpdate);
+      eventSource.addEventListener("excel_uploaded", handleStreamUpdate);
+      eventSource.addEventListener("sticker_batch_uploaded", handleStreamUpdate);
+      eventSource.addEventListener("pi_released", handleStreamUpdate);
+      eventSource.addEventListener("pi_deleted", handleStreamUpdate);
       eventSource.addEventListener("database_cleared", handleStreamUpdate);
+
       eventSource.onmessage = handleStreamUpdate;
     } catch (err) {
       console.error("SSE connection error:", err);
@@ -519,10 +601,61 @@ export default function Index() {
         .filter((i) => i.status === "Completed" || i.currentStage === "Finished")
         .reduce((acc, curr) => acc + (curr.qty || 1), 0);
       const totalSqm = batchItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+
+      const inCutting = batchItems.filter((i) => i.currentStage === "Cutting" && !i.completedStages?.includes("Cutting")).length;
+      const inPairing = batchItems.filter((i) => i.currentStage === "Pairing").length;
+      const inLamination = batchItems.filter((i) => i.currentStage === "Lamination").length;
+      const inDgu = batchItems.filter((i) => i.currentStage === "DGU").length;
+      const inFinished = completedPieces;
+
       const isCompleted = totalPieces > 0 && completedPieces >= totalPieces;
       const isPending = completedPieces === 0 && batchItems.every((i) => i.currentStage === "Cutting" && !i.completedStages?.length);
       const status = isCompleted ? "Completed" : isPending ? (pi.status === "Pending" ? "Pending" : "In Production") : "In Production";
-      return { totalPieces, completedPieces, totalSqm, status };
+
+      // Calculate primary active stage
+      let activeStageName = "Cutting Workstation";
+      let activeStageTab: "cutting" | "pairing" | "lamination" | "dgu" | "finished" = "cutting";
+      let activeStageBadgeClass = "bg-purple-100 text-purple-800 border-purple-200";
+
+      if (inFinished > 0 && inFinished === totalPieces) {
+        activeStageName = "Finished Warehouse";
+        activeStageTab = "finished";
+        activeStageBadgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
+      } else if (inDgu > 0) {
+        activeStageName = `DLGU / IGU (${inDgu} pcs)`;
+        activeStageTab = "dgu";
+        activeStageBadgeClass = "bg-teal-100 text-teal-800 border-teal-200";
+      } else if (inLamination > 0) {
+        activeStageName = `Lamination (${inLamination} pcs)`;
+        activeStageTab = "lamination";
+        activeStageBadgeClass = "bg-amber-100 text-amber-800 border-amber-200";
+      } else if (inPairing > 0) {
+        activeStageName = `Pairing Buffer (${inPairing} pcs)`;
+        activeStageTab = "pairing";
+        activeStageBadgeClass = "bg-blue-100 text-blue-800 border-blue-200";
+      } else {
+        activeStageName = `Cutting (${inCutting || totalPieces} pcs)`;
+        activeStageTab = "cutting";
+        activeStageBadgeClass = "bg-purple-100 text-purple-800 border-purple-200";
+      }
+
+      const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
+
+      return {
+        totalPieces,
+        completedPieces,
+        totalSqm,
+        status,
+        inCutting,
+        inPairing,
+        inLamination,
+        inDgu,
+        inFinished,
+        activeStageName,
+        activeStageTab,
+        activeStageBadgeClass,
+        progressPct,
+      };
     }
 
     const isCompleted = (pi.completedItemsCount || 0) >= (pi.totalQty || pi.itemsCount || 1) && (pi.itemsCount || 0) > 0;
@@ -531,6 +664,15 @@ export default function Index() {
       completedPieces: pi.completedItemsCount || 0,
       totalSqm: pi.totalSqm || 0,
       status: isCompleted ? "Completed" : (pi.status || "Pending"),
+      inCutting: 0,
+      inPairing: 0,
+      inLamination: 0,
+      inDgu: 0,
+      inFinished: 0,
+      activeStageName: "Cutting Workstation",
+      activeStageTab: "cutting" as const,
+      activeStageBadgeClass: "bg-purple-100 text-purple-800 border-purple-200",
+      progressPct: 0,
     };
   };
 
@@ -570,6 +712,8 @@ export default function Index() {
   const [pipelineStageFilter, setPipelineStageFilter] = useState<"ALL" | "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
 
   const pipelineMetrics = React.useMemo(() => {
+    const isColour = (i: GlassItem) => getItemFinish(i) === "Colour";
+
     const cuttingItems = items.filter((i) => (i.currentStage?.toLowerCase() === "cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
     const pairingItems = items.filter((i) => i.currentStage?.toLowerCase() === "pairing" && i.status !== "Rejected");
     const dguItems = items.filter((i) => i.currentStage?.toLowerCase() === "dgu" && i.status !== "Rejected" && i.status !== "Completed");
@@ -580,7 +724,14 @@ export default function Index() {
 
     const totalItems = items.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const cuttingCount = cuttingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const pairingCount = pairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dlguPhase2ClearPairingCount = Math.ceil(
+      pairingItems.filter((i) => isDlguGlass(i) && !isColour(i) && (i.completedStages?.includes("Lamination") || i.dlguPhase === "DguPairing"))
+        .reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2
+    );
+    const otherPairingCount = pairingItems
+      .filter((i) => !(isDlguGlass(i) && !isColour(i) && (i.completedStages?.includes("Lamination") || i.dlguPhase === "DguPairing")))
+      .reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingCount = dlguPhase2ClearPairingCount + otherPairingCount;
     const dguCount = dguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const laminationCount = laminationItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const finishedCount = finishedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -596,8 +747,6 @@ export default function Index() {
 
     const distinctCuttingSheets = new Set(cuttingItems.map((i) => i.rackNo || "1")).size;
 
-    const isColour = (i: GlassItem) => getItemFinish(i) === "Colour";
-
     const cuttingColour = cuttingItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const cuttingClear = cuttingCount - cuttingColour;
 
@@ -609,7 +758,12 @@ export default function Index() {
     const pairingClear = dguPairingItems.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const dguPairingPairs = Math.min(pairingColour, pairingClear);
     const lamPairingPairs = Math.floor(lamPairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
-    const dlguPairingPairs = Math.floor(dlguPairingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const dlguPairingColour = dlguPairingItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dlguPairingClearUnits = Math.ceil(
+      dlguPairingItems.filter((i) => !isColour(i) && (i.completedStages?.includes("Lamination") || i.dlguPhase === "DguPairing"))
+        .reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2
+    );
+    const dlguPairingPairs = Math.min(dlguPairingColour, dlguPairingClearUnits);
     const pairingPairs = dguPairingPairs + lamPairingPairs + dlguPairingPairs;
 
     const dguColour = dguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -906,10 +1060,10 @@ export default function Index() {
               toast.success("Synchronizing shop floor & batch data...");
             }}
             disabled={loading}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-xl border-purple-200 text-purple-700 bg-purple-50/70 hover:bg-purple-100 hover:text-purple-900 font-extrabold text-xs shadow-2xs transition-all shrink-0"
+            className="flex items-center gap-1.5 h-8 px-3 rounded-xl border-blue-200 text-[#1a3a6b] bg-blue-50/70 hover:bg-blue-100 hover:text-blue-900 font-extrabold text-xs shadow-2xs transition-all shrink-0"
             title={`Last synced: ${getDubaiTimeStr(lastUpdated)} (Click to sync complete system data)`}
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-purple-600 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-[#1a3a6b] ${loading ? "animate-spin" : ""}`} />
             <span>Sync Now</span>
           </Button>
 
@@ -936,80 +1090,173 @@ export default function Index() {
               >
                 <Bell className="w-4 h-4" />
                 {unreadNotifications > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
+                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-[#e31e24] text-white text-[9px] font-bold flex items-center justify-center">
                     {unreadNotifications}
                   </span>
                 )}
               </button>
 
               {notificationsOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-2">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
-                    <div className="font-extrabold text-xs text-slate-900">System Notifications</div>
+                <div className="absolute right-0 mt-2 w-88 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl p-3.5 z-50 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="font-extrabold text-xs text-slate-900 tracking-tight">System Notifications</div>
+                      <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Live
+                      </span>
+                    </div>
                     <div className="flex items-center gap-2">
                       {unreadNotifications > 0 && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setNotifications((prev) => prev.map((n) => ({ ...n, read: true }))); }}
-                          className="text-[10px] text-purple-600 font-bold hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMarkAllNotificationsRead();
+                          }}
+                          className="text-[10.5px] text-blue-700 font-bold hover:text-blue-900 transition-colors"
                         >
                           Mark all read
                         </button>
                       )}
                       {notifications.length > 0 && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setNotifications([]); }}
-                          className="text-[10px] text-slate-400 font-bold hover:text-rose-500 hover:underline transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleClearAllNotifications();
+                          }}
+                          className="text-[10.5px] text-slate-400 font-bold hover:text-rose-500 transition-colors"
                         >
                           Clear all
                         </button>
                       )}
                     </div>
                   </div>
-                  <div className="space-y-2 text-xs max-h-72 overflow-y-auto">
-                    {notifications.length === 0 && (
-                      <div className="py-6 text-center text-[11px] text-slate-400 font-medium">
-                        No notifications
-                      </div>
-                    )}
-                    {notifications.map((n) => (
-                      <div
-                        key={n.id}
-                        className={`relative p-2 pr-6 rounded-lg border transition-colors ${n.type === "destructive"
-                            ? "bg-rose-50/80 border-rose-200"
-                            : n.type === "warning"
-                              ? "bg-amber-50/80 border-amber-200"
-                              : n.type === "success"
-                                ? "bg-emerald-50/80 border-emerald-200"
-                                : "bg-purple-50/80 border-purple-200"
-                          } ${!n.read ? "ring-1 ring-purple-400" : ""}`}
-                      >
-                        {/* X close button */}
-                        <button
-                          onClick={() => setNotifications((prev) => prev.filter((x) => x.id !== n.id))}
-                          className="absolute top-1.5 right-1.5 text-slate-300 hover:text-slate-600 transition-colors rounded p-0.5 hover:bg-white/60"
-                          title="Dismiss"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                        <div
-                          className={`font-bold text-[11px] ${n.type === "destructive"
-                              ? "text-rose-900"
-                              : n.type === "warning"
-                                ? "text-amber-900"
-                                : n.type === "success"
-                                  ? "text-emerald-900"
-                                  : "text-purple-900"
-                            }`}
-                        >
-                          {n.title}
-                        </div>
-                        <div className="text-[10px] text-slate-600 mt-0.5">{n.message}</div>
-                        <div className="text-[9px] text-slate-400 mt-1 font-mono">{n.timestamp}</div>
-                      </div>
-                    ))}
+
+                  {/* Filter chips */}
+                  <div className="flex items-center gap-1 mb-2.5 pb-2 border-b border-slate-100">
+                    <button
+                      onClick={() => setNotificationFilter("all")}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        notificationFilter === "all"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      All ({notifications.length})
+                    </button>
+                    <button
+                      onClick={() => setNotificationFilter("unread")}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        notificationFilter === "unread"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Unread ({unreadNotifications})
+                    </button>
+                    <button
+                      onClick={() => setNotificationFilter("alerts")}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        notificationFilter === "alerts"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Alerts ({notifications.filter((n) => n.type === "warning" || n.type === "destructive").length})
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 text-xs max-h-80 overflow-y-auto pr-0.5">
+                    {(() => {
+                      const filtered = notifications.filter((n) => {
+                        if (notificationFilter === "unread") return !n.read;
+                        if (notificationFilter === "alerts") return n.type === "warning" || n.type === "destructive";
+                        return true;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="py-8 text-center text-[11px] text-slate-400 font-medium flex flex-col items-center justify-center gap-1.5">
+                            <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-1">
+                              <Bell className="w-4 h-4" />
+                            </div>
+                            <span className="font-semibold text-slate-600">No {notificationFilter !== "all" ? `${notificationFilter} ` : ""}notifications</span>
+                            <span className="text-[10px] text-slate-400 max-w-[200px]">Live shop floor actions will appear here automatically in real time.</span>
+                          </div>
+                        );
+                      }
+
+                      return filtered.map((n) => {
+                        const isDestructive = n.type === "destructive";
+                        const isWarning = n.type === "warning";
+                        const isSuccess = n.type === "success";
+
+                        return (
+                          <div
+                            key={n.id}
+                            onClick={() => handleMarkNotificationRead(n.id)}
+                            className={`relative p-2.5 pl-3 pr-7 rounded-xl border transition-all cursor-pointer ${
+                              isDestructive
+                                ? "bg-rose-50/70 border-rose-200 hover:bg-rose-50"
+                                : isWarning
+                                ? "bg-amber-50/70 border-amber-200 hover:bg-amber-50"
+                                : isSuccess
+                                ? "bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50"
+                                : "bg-blue-50/70 border-blue-200 hover:bg-blue-50"
+                            } ${!n.read ? "ring-2 ring-blue-500/20 shadow-xs" : "opacity-85"}`}
+                          >
+                            {/* Dismiss button */}
+                            <button
+                              onClick={(e) => handleDeleteNotification(n.id, e)}
+                              className="absolute top-2 right-2 text-slate-400 hover:text-slate-700 transition-colors rounded p-0.5 hover:bg-white/80"
+                              title="Dismiss"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+
+                            <div className="flex items-start gap-2">
+                              <div className="mt-0.5 shrink-0">
+                                {isDestructive && <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />}
+                                {isWarning && <AlertCircle className="w-3.5 h-3.5 text-amber-600" />}
+                                {isSuccess && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                                {!isDestructive && !isWarning && !isSuccess && <Sparkles className="w-3.5 h-3.5 text-[#1a3a6b]" />}
+                              </div>
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <div
+                                    className={`font-bold text-[11px] truncate ${
+                                      isDestructive
+                                        ? "text-rose-950"
+                                        : isWarning
+                                        ? "text-amber-950"
+                                        : isSuccess
+                                        ? "text-emerald-950"
+                                        : "text-blue-950"
+                                    }`}
+                                  >
+                                    {n.title}
+                                  </div>
+                                  {!n.read && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#1a3a6b] shrink-0" />
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-600 mt-0.5 line-clamp-2 leading-relaxed">
+                                  {n.message}
+                                </div>
+                                <div className="text-[9px] text-slate-400 mt-1 font-mono flex items-center gap-1">
+                                  <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                  {formatNotificationTime(n.timestamp || n.createdAt)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               )}
@@ -1024,7 +1271,7 @@ export default function Index() {
                 }}
                 className="flex items-center gap-2 pl-2 border-l border-slate-200 hover:opacity-80 transition-opacity text-left"
               >
-                <div className="w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                <div className="w-8 h-8 rounded-full bg-[#1a3a6b] text-white font-bold text-xs flex items-center justify-center shadow-xs">
                   {userRole.charAt(0)}
                 </div>
                 <div className="hidden sm:block">
@@ -1043,7 +1290,7 @@ export default function Index() {
                     <div className="font-bold text-xs text-slate-900">{userRole} User</div>
                     <div className="text-[10px] text-slate-500">{userRole.toLowerCase()}@sejalglass.com</div>
                     <div className="mt-1">
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-700">
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-900">
                         Active Role: {userRole}
                       </span>
                     </div>
@@ -1057,13 +1304,13 @@ export default function Index() {
                           handleRoleChange(r);
                           setUserMenuOpen(false);
                         }}
-                        className={`w-full text-left px-3 py-1.5 rounded-lg font-medium flex items-center justify-between transition-all ${userRole === r ? "bg-purple-50 text-purple-700 font-bold" : "text-slate-700 hover:bg-slate-50"
+                        className={`w-full text-left px-3 py-1.5 rounded-lg font-medium flex items-center justify-between transition-all ${userRole === r ? "bg-blue-50 text-blue-900 font-bold" : "text-slate-700 hover:bg-slate-50"
                           }`}
                       >
                         <span className="flex items-center gap-2">
-                          <ShieldCheck className="w-3.5 h-3.5 text-purple-600" /> {r}
+                          <ShieldCheck className="w-3.5 h-3.5 text-[#1a3a6b]" /> {r}
                         </span>
-                        {userRole === r && <Check className="w-3.5 h-3.5 text-purple-600" />}
+                        {userRole === r && <Check className="w-3.5 h-3.5 text-[#1a3a6b]" />}
                       </button>
                     ))}
                     {userRole === "Admin" && (
@@ -1103,7 +1350,7 @@ export default function Index() {
               {/* Live Production Sync Active Banner */}
               <div className="flex items-center justify-between bg-white border border-slate-200/80 p-3 px-4 rounded-xl text-xs shadow-2xs">
                 <div className="flex items-center gap-2 text-slate-600 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                   <span className="font-bold text-slate-800">Live Production Sync Active</span>
                   <span className="text-slate-400">• Last synced: {getDubaiTimeStr(lastUpdated)}</span>
                 </div>
@@ -1114,7 +1361,7 @@ export default function Index() {
                 {/* Card 1: Total Batches Uploaded */}
                 <div
                   onClick={() => setActiveTab("pis")}
-                  className="bg-gradient-to-br from-white via-white to-purple-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-purple-300 transition-all duration-300 relative overflow-hidden group cursor-pointer"
+                  className="bg-gradient-to-br from-white via-white to-blue-50/40 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-blue-400 transition-all duration-300 relative overflow-hidden group cursor-pointer"
                   title="Click to open Sticker & Batch Status list"
                   role="button"
                   tabIndex={0}
@@ -1127,15 +1374,15 @@ export default function Index() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-purple-700 transition-colors">
-                        Total Batches Uploaded <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-purple-600" />
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-blue-800 transition-colors">
+                        Total Batches Uploaded <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-blue-600" />
                       </div>
                       <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.totalPI}</div>
-                      <div className="text-[11px] text-purple-700 font-semibold mt-1 flex items-center gap-1">
+                      <div className="text-[11px] text-blue-700 font-semibold mt-1 flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5" /> {effectiveStats.pendingPI} Pending Production
                       </div>
                     </div>
-                    <div className="w-11 h-11 rounded-2xl bg-purple-100/70 text-purple-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all duration-300 shadow-2xs">
+                    <div className="w-11 h-11 rounded-2xl bg-blue-100/70 text-blue-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-[#1a3a6b] group-hover:text-white transition-all duration-300 shadow-2xs">
                       <FileText className="w-5 h-5" />
                     </div>
                   </div>
@@ -1144,7 +1391,7 @@ export default function Index() {
                 {/* Card 2: Finished Glass Items */}
                 <div
                   onClick={() => setActiveTab("finished")}
-                  className="bg-gradient-to-br from-white via-white to-emerald-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-emerald-300 transition-all duration-300 group cursor-pointer"
+                  className="bg-gradient-to-br from-white via-white to-emerald-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-emerald-400 transition-all duration-300 group cursor-pointer"
                   title="Click to open Finished Items Warehouse & Dispatch queue"
                   role="button"
                   tabIndex={0}
@@ -1177,7 +1424,7 @@ export default function Index() {
                     setReportsInitialTab("rejects");
                     setActiveTab("reports");
                   }}
-                  className="bg-gradient-to-br from-white via-white to-red-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-red-300 transition-all duration-300 group cursor-pointer"
+                  className="bg-gradient-to-br from-white via-white to-red-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-red-400 transition-all duration-300 group cursor-pointer"
                   title="Click to open Quality Rejects log"
                   role="button"
                   tabIndex={0}
@@ -1211,7 +1458,7 @@ export default function Index() {
                     setReportsInitialTab("reworks");
                     setActiveTab("reports");
                   }}
-                  className="bg-gradient-to-br from-white via-white to-amber-50/30 border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-amber-300 transition-all duration-300 group cursor-pointer"
+                  className="bg-gradient-to-br from-white via-white to-amber-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-amber-400 transition-all duration-300 group cursor-pointer"
                   title="Click to open Rework log and tracking"
                   role="button"
                   tabIndex={0}
@@ -1241,14 +1488,14 @@ export default function Index() {
               </div>
 
               {/* LIVE STAGE PRODUCTION QUEUES Section */}
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 space-y-3.5 shadow-2xs">
+              <div className="bg-white border border-slate-300 rounded-2xl p-4 space-y-3.5 shadow-2xs">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-extrabold text-slate-900 tracking-wider uppercase">
                     LIVE STAGE PRODUCTION QUEUES
                   </div>
                   <button
                     onClick={() => setActiveTab("production-overview")}
-                    className="p-1 text-slate-400 hover:text-purple-600 transition-colors flex items-center gap-1 text-xs font-bold"
+                    className="p-1 text-slate-400 hover:text-[#1a3a6b] transition-colors flex items-center gap-1 text-xs font-bold"
                   >
                     <span>View All</span>
                     <ChevronRight className="w-4 h-4" />
@@ -1259,32 +1506,32 @@ export default function Index() {
                   {/* Cutting Queue */}
                   <div
                     onClick={() => setActiveTab("cutting")}
-                    className="bg-gradient-to-br from-purple-50/60 to-purple-100/40 border border-purple-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-purple-100/80 hover:border-purple-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                    className="bg-gradient-to-br from-indigo-50/60 to-indigo-100/40 border border-indigo-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-indigo-100/80 hover:border-indigo-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
                   >
                     <div>
-                      <div className="text-xs font-bold text-purple-900 uppercase tracking-wider">Cutting Queue</div>
+                      <div className="text-xs font-bold text-indigo-900 uppercase tracking-wider">Cutting Queue</div>
                       <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                        {effectiveStats.pendingCutting} <span className="text-xs font-semibold text-purple-700">Items</span>
+                        {stats?.pendingCutting ?? 0} <span className="text-xs font-semibold text-indigo-700">Items</span>
                       </div>
                     </div>
-                    <div className="w-10 h-10 rounded-xl bg-purple-200/60 text-purple-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <Box className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-indigo-200/60 text-indigo-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-200 shadow-2xs">
+                      <Scissors className="w-5 h-5" />
                     </div>
                   </div>
 
-                  {/* DGU Queue */}
+                  {/* DGU Assembly Line */}
                   <div
                     onClick={() => setActiveTab("dgu")}
                     className="bg-gradient-to-br from-teal-50/60 to-teal-100/40 border border-teal-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-teal-100/80 hover:border-teal-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
                   >
                     <div>
                       <div className="text-xs font-bold text-teal-900 uppercase tracking-wider">DGU Queue</div>
-                      <div className="text-xl font-extrabold text-slate-900 mt-1">
-                        {effectiveStats.pendingDGU} <span className="text-xs font-semibold text-teal-700">Units</span>
+                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                        {stats?.pendingDGU ?? 0} <span className="text-xs font-semibold text-teal-700">Units</span>
                       </div>
                     </div>
                     <div className="w-10 h-10 rounded-xl bg-teal-200/60 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-teal-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <ClipboardList className="w-5 h-5" />
+                      <Boxes className="w-5 h-5" />
                     </div>
                   </div>
 
@@ -1326,12 +1573,12 @@ export default function Index() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Active Proforma Invoices (PIs) Main Panel */}
                 <div className="lg:col-span-2 space-y-4">
-                  <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-sm font-extrabold text-slate-900">Active Sticker & Batch Status</h2>
                       <button
                         onClick={() => setActiveTab("pis")}
-                        className="text-xs font-bold text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                        className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1"
                       >
                         View All Batches <ChevronRight className="w-3.5 h-3.5" />
                       </button>
@@ -1352,8 +1599,11 @@ export default function Index() {
                               <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
                                 PROJECT / JOB ORDER {renderSortIcon("projectName")}
                               </th>
+                              <th className="py-2.5 px-2 whitespace-nowrap">
+                                CURRENT STAGE
+                              </th>
                               <th className="py-2.5 px-2 text-center whitespace-nowrap">
-                                COMPLETED
+                                FINISHED / TOTAL
                               </th>
                               <th className="py-2.5 px-2 text-right whitespace-nowrap">
                                 SQM
@@ -1376,10 +1626,10 @@ export default function Index() {
                                 <tr
                                   key={pi.id}
                                   onClick={() => openPIDetails(pi)}
-                                  className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+                                  className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
                                   title="Click to view Batch details"
                                 >
-                                  <td className="py-3 px-2.5 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
+                                  <td className="py-3 px-2.5 font-mono font-bold text-blue-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
                                   <td className="py-3 px-2.5 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
                                   <td className="py-3 px-2.5 text-slate-600 leading-snug">
                                     <div className="font-medium text-slate-900">{pi.projectName}</div>
@@ -1387,15 +1637,36 @@ export default function Index() {
                                       <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
                                     )}
                                   </td>
+                                  <td className="py-3 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveTab(metrics.activeStageTab)}
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
+                                      title={`Go to ${metrics.activeStageName}`}
+                                    >
+                                      <span>{metrics.activeStageName}</span>
+                                      <ChevronRight className="w-3 h-3 opacity-60" />
+                                    </button>
+                                  </td>
                                   <td className="py-3 px-2 text-center font-bold text-slate-700 whitespace-nowrap">
-                                    {metrics.completedPieces} / {metrics.totalPieces}
+                                    <div className="flex flex-col items-center gap-1">
+                                      <span className="text-xs font-mono font-bold text-slate-800">
+                                        {metrics.completedPieces} / {metrics.totalPieces} pcs
+                                      </span>
+                                      <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                                        <div
+                                          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                                          style={{ width: `${metrics.progressPct}%` }}
+                                        />
+                                      </div>
+                                    </div>
                                   </td>
                                   <td className="py-3 px-2 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
                                     {metrics.totalSqm.toFixed(2)} m²
                                   </td>
                                   <td className="py-3 px-2.5 whitespace-nowrap font-mono text-[11px]">
                                     <div className="flex items-center gap-1 font-bold text-slate-800">
-                                      <Calendar className="w-3 h-3 text-purple-600 shrink-0" />
+                                      <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
                                       {formatPlatformDate(pi.createdAt || pi.issueDate)}
                                     </div>
                                     <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium">
@@ -1475,7 +1746,7 @@ export default function Index() {
                 {/* Right Column Summary Widgets */}
                 <div className="space-y-4">
                   {/* Widget 2: PRODUCTION SUMMARY Donut Chart */}
-                  <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-3.5 relative overflow-hidden group">
+                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs space-y-3.5 relative overflow-hidden group">
                     {/* Header with Live Sync Status & Area Indicator */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1483,7 +1754,7 @@ export default function Index() {
                           PRODUCTION SUMMARY
                         </span>
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100/90 text-emerald-800 border border-emerald-300 shadow-2xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                           LIVE
                         </span>
                       </div>
@@ -1783,7 +2054,7 @@ export default function Index() {
                   </div>
 
                   {/* Widget 3: TODAY'S OVERVIEW Dynamic Real-Time Progress Bars */}
-                  <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs space-y-3.5">
+                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs space-y-3.5">
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-black text-slate-900 uppercase tracking-wider">
                         TODAY'S OVERVIEW
@@ -2020,6 +2291,9 @@ export default function Index() {
                           <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
                             PROJECT / JOB ORDER {renderSortIcon("projectName")}
                           </th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">
+                            CURRENT STAGE
+                          </th>
                           <th className="py-2.5 px-3 text-center whitespace-nowrap">
                             ITEMS
                           </th>
@@ -2041,8 +2315,13 @@ export default function Index() {
                         {paginatedPIs.map((pi) => {
                           const metrics = getBatchMetrics(pi);
                           return (
-                            <tr key={pi.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap">{formatBatchNumber(pi.piNumber)}</td>
+                            <tr
+                              key={pi.id}
+                              onClick={() => openPIDetails(pi)}
+                              className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                              title="Click to view Batch details"
+                            >
+                              <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
                               <td className="py-3 px-3 whitespace-nowrap">
                                 {pi.colorOrClear === "Colour" ? (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs">
@@ -2061,8 +2340,19 @@ export default function Index() {
                                   <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
                                 )}
                               </td>
+                              <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab(metrics.activeStageTab)}
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
+                                  title={`Go to ${metrics.activeStageName}`}
+                                >
+                                  <span>{metrics.activeStageName}</span>
+                                  <ChevronRight className="w-3 h-3 opacity-60" />
+                                </button>
+                              </td>
                               <td className="py-3 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
-                                {metrics.totalPieces}
+                                {metrics.completedPieces} / {metrics.totalPieces}
                               </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
                                 {metrics.totalSqm.toFixed(2)} m²
@@ -2080,12 +2370,27 @@ export default function Index() {
                               <td className="py-3 px-3 text-center whitespace-nowrap">
                                 <StatusBadge status={metrics.status || pi.status || "Pending"} />
                               </td>
-                              <td className="py-3 px-3 text-right whitespace-nowrap space-x-1">
+                              <td className="py-3 px-3 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPIDetails(pi);
+                                  }}
+                                  className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
+                                  title="View Details"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </Button>
                                 {userRole === "Admin" && (
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    onClick={() => handleDeletePI(pi.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeletePI(pi.id);
+                                    }}
                                     className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
                                     title="Delete Batch"
                                   >
@@ -2115,8 +2420,13 @@ export default function Index() {
           {/* TAB: REPORTS & AUDIT LOG */}
           {activeTab === "reports" && (
             <ReportsView
-              key={`${lastUpdated.getTime()}-${reportsInitialTab}`}
               initialTab={reportsInitialTab}
+              onTabChange={(tab) => {
+                setReportsInitialTab(tab);
+                try {
+                  localStorage.setItem("sejal_reports_active_tab", tab);
+                } catch {}
+              }}
               onPrintSticker={handleOpenSticker}
               onReject={handleOpenReject}
               onRework={handleOpenRework}
@@ -2124,7 +2434,7 @@ export default function Index() {
           )}
 
           {/* TAB: PERFORMANCE ANALYTICS */}
-          {activeTab === "analytics" && <PerformanceAnalyticsView key={lastUpdated.getTime()} />}
+          {activeTab === "analytics" && <PerformanceAnalyticsView />}
         </main>
       </div>
 

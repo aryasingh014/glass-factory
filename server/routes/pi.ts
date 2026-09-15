@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
 import fs from "fs";
 import path from "path";
-import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage } from "@shared/api";
+import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification } from "@shared/api";
 import { broadcastUpdate } from "./production";
 import { logger } from "../lib/logger";
 
@@ -14,6 +14,7 @@ export const glassItemsDatabase: GlassItem[] = [];
 export const productionHistoryDatabase: ProductionHistory[] = [];
 export const rejectDatabase: RejectRecord[] = [];
 export const reworkDatabase: ReworkRecord[] = [];
+export const notificationsDatabase: SystemNotification[] = [];
 
 interface PersistedData {
   piDatabase: PIMaster[];
@@ -21,6 +22,7 @@ interface PersistedData {
   productionHistoryDatabase: ProductionHistory[];
   rejectDatabase: RejectRecord[];
   reworkDatabase: ReworkRecord[];
+  notificationsDatabase?: SystemNotification[];
 }
 
 let isDbLoaded = false;
@@ -152,8 +154,16 @@ export function loadDatabaseFromDisk(force = false): void {
               }
             } else if (resolvedCat === "Lamination") {
               expectedRoute = ["Cutting", "Pairing", "Lamination", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
             } else {
               expectedRoute = ["Cutting", "Pairing", "DGU", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
             }
 
             if (JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
@@ -211,8 +221,16 @@ export function loadDatabaseFromDisk(force = false): void {
               }
             } else if (resolvedCat === "Lamination") {
               expectedRoute = ["Cutting", "Pairing", "Lamination", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
             } else {
               expectedRoute = ["Cutting", "Pairing", "DGU", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
             }
 
             if (JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
@@ -270,12 +288,45 @@ export function loadDatabaseFromDisk(force = false): void {
         productionHistoryDatabase.splice(0, productionHistoryDatabase.length, ...(Array.isArray(parsed.productionHistoryDatabase) ? parsed.productionHistoryDatabase : []));
         rejectDatabase.splice(0, rejectDatabase.length, ...(Array.isArray(parsed.rejectDatabase) ? parsed.rejectDatabase : []));
         reworkDatabase.splice(0, reworkDatabase.length, ...(Array.isArray(parsed.reworkDatabase) ? parsed.reworkDatabase : []));
+        notificationsDatabase.splice(0, notificationsDatabase.length, ...(Array.isArray(parsed.notificationsDatabase) ? parsed.notificationsDatabase : []));
+
+        // If no persisted notifications yet, seed from real historical production actions
+        if (notificationsDatabase.length === 0) {
+          productionHistoryDatabase.slice(0, 15).forEach((h, idx) => {
+            const rawDate = h.timestamp ? new Date(h.timestamp).getTime() : Date.now() - idx * 1000;
+            const isReject = h.action?.toLowerCase().includes("reject") || h.status === "Rejected";
+            const isRework = h.action?.toLowerCase().includes("rework") || h.status === "Reworking";
+            const isUpload = h.action?.toLowerCase().includes("upload") || h.action?.toLowerCase().includes("batch");
+
+            let type: "info" | "success" | "warning" | "destructive" = "success";
+            let category: any = "STAGE_ADVANCE";
+            if (isReject) { type = "destructive"; category = "REJECTION"; }
+            else if (isRework) { type = "warning"; category = "REWORK"; }
+            else if (isUpload) { type = "info"; category = "BATCH_UPLOAD"; }
+
+            notificationsDatabase.push({
+              id: `notif-${h.id || idx}-${rawDate}`,
+              title: h.action || `${h.stage} Stage Advanced`,
+              message: h.remarks || `Item ${h.serialNumber} processed at ${h.stage} by ${h.operator || "Operator"}.`,
+              category,
+              type,
+              stage: String(h.stage || ""),
+              serialNumber: h.serialNumber,
+              operator: h.operator,
+              timestamp: h.timestamp || new Date(rawDate).toISOString(),
+              rawDate,
+              read: false,
+              createdAt: h.timestamp || new Date(rawDate).toISOString(),
+            });
+          });
+        }
       } else {
         piDatabase.length = 0;
         glassItemsDatabase.length = 0;
         productionHistoryDatabase.length = 0;
         rejectDatabase.length = 0;
         reworkDatabase.length = 0;
+        notificationsDatabase.length = 0;
       }
     } else {
       piDatabase.length = 0;
@@ -283,6 +334,7 @@ export function loadDatabaseFromDisk(force = false): void {
       productionHistoryDatabase.length = 0;
       rejectDatabase.length = 0;
       reworkDatabase.length = 0;
+      notificationsDatabase.length = 0;
     }
     isDbLoaded = true;
   } catch (err: any) {
@@ -302,6 +354,7 @@ export function saveDatabaseToDisk(immediate = false): void {
         productionHistoryDatabase,
         rejectDatabase,
         reworkDatabase,
+        notificationsDatabase,
       };
       // Non-blocking async file write with compact JSON
       fs.writeFile(DATA_FILE, JSON.stringify(data), "utf-8", (err) => {
@@ -324,6 +377,45 @@ export function saveDatabaseToDisk(immediate = false): void {
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(executeSave, 100);
   }
+}
+
+export function createAndBroadcastNotification(params: {
+  title: string;
+  message: string;
+  category?: "STAGE_ADVANCE" | "REJECTION" | "REWORK" | "BATCH_UPLOAD" | "PI_CREATED" | "PI_RELEASED" | "SYSTEM";
+  type?: "info" | "success" | "warning" | "destructive";
+  stage?: string;
+  serialNumber?: string;
+  batchNumber?: string;
+  piNumber?: string;
+  operator?: string;
+}): SystemNotification {
+  const now = new Date();
+  const notif: SystemNotification = {
+    id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    title: params.title,
+    message: params.message,
+    category: params.category || "SYSTEM",
+    type: params.type || "info",
+    stage: params.stage,
+    serialNumber: params.serialNumber,
+    batchNumber: params.batchNumber,
+    piNumber: params.piNumber,
+    operator: params.operator || "System",
+    timestamp: now.toISOString(),
+    rawDate: now.getTime(),
+    read: false,
+    createdAt: now.toISOString(),
+  };
+
+  notificationsDatabase.unshift(notif);
+  if (notificationsDatabase.length > 100) {
+    notificationsDatabase.splice(100);
+  }
+
+  saveDatabaseToDisk();
+  broadcastUpdate("system_notification", notif);
+  return notif;
 }
 
 // Load persisted state on startup
@@ -387,13 +479,25 @@ export const handleGetPIs: RequestHandler = (req, res) => {
 };
 
 export const handleGetPIDetails: RequestHandler = (req, res) => {
-  const { id } = req.params;
-  const pi = piDatabase.find((p) => p.id === id || p.piNumber === id);
+  const idStr = String(req.params.id || "");
+  const cleanId = idStr.replace(/^STK-/i, "");
+  const pi = piDatabase.find((p) => p.id === idStr || p.piNumber === idStr || p.id === cleanId || p.piNumber === cleanId);
   if (!pi) {
     res.status(404).json({ message: "PI not found" });
     return;
   }
-  const items = glassItemsDatabase.filter((item) => item.piId === pi.id);
+  const cleanPiId = (pi.id || "").replace(/^STK-/i, "");
+  const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "");
+  const items = glassItemsDatabase.filter(
+    (item) =>
+      item.piId === pi.id ||
+      item.piNumber === pi.piNumber ||
+      item.piId === cleanPiId ||
+      item.piNumber === cleanPiNo ||
+      item.batchNo === cleanPiNo ||
+      item.batchNo === pi.piNumber ||
+      (item.sfoNo && (item.sfoNo === pi.piNumber || item.sfoNo === cleanPiNo))
+  );
   res.json({ pi, items });
 };
 
@@ -449,6 +553,14 @@ export const handleDeletePI: RequestHandler = (req, res) => {
   saveDatabaseToDisk();
   broadcastUpdate("pi_deleted", { piId: deletedPI.id });
   const cleanBatchNo = (deletedPI.piNumber || "").replace(/^B(?=\d)/i, "");
+  createAndBroadcastNotification({
+    title: `Batch #${cleanBatchNo} Deleted`,
+    message: `Batch ${cleanBatchNo} (${deletedPI.customerName || "Customer"}) removed from system`,
+    category: "SYSTEM",
+    type: "warning",
+    piNumber: deletedPI.piNumber,
+    operator: (req as any).user?.username || "Admin",
+  });
   res.json({ message: `Batch ${cleanBatchNo} deleted successfully`, deletedPI });
 };
 
@@ -475,6 +587,14 @@ export const handleReleasePI: RequestHandler = (req, res) => {
 
   saveDatabaseToDisk();
   broadcastUpdate("pi_released", { piId: pi.id });
+  createAndBroadcastNotification({
+    title: `PI #${pi.piNumber} Released`,
+    message: `Order for ${pi.customerName || "Customer"} (${items.length} items) released to shop floor workstations`,
+    category: "PI_RELEASED",
+    type: "success",
+    piNumber: pi.piNumber,
+    operator: (req as any).user?.username || "Supervisor",
+  });
   res.json({ message: `PI ${pi.piNumber} released to production successfully`, pi, items });
 };
 

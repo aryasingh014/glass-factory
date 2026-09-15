@@ -21,6 +21,10 @@ import {
   handleGetDashboardStats,
   handleGetReports,
   handleGetNotifications,
+  handleMarkAllNotificationsRead,
+  handleMarkNotificationRead,
+  handleDeleteNotification,
+  handleClearAllNotifications,
   handleClearDatabase,
   handleEventsStream,
   handleCleanupDatabase,
@@ -200,6 +204,10 @@ export function createServer() {
   apiV1.get("/production/dashboard", handleGetDashboardStats);
   apiV1.get("/reports", handleGetReports);
   apiV1.get("/notifications", handleGetNotifications);
+  apiV1.patch("/notifications/read-all", handleMarkAllNotificationsRead);
+  apiV1.patch("/notifications/:id/read", handleMarkNotificationRead);
+  apiV1.delete("/notifications/:id", handleDeleteNotification);
+  apiV1.delete("/notifications", handleClearAllNotifications);
   apiV1.get("/analytics/performance", handleGetPerformanceAnalytics);
   apiV1.get("/production/events", handleEventsStream);
   apiV1.post("/production/clear-db", requireRole(["Admin"]), handleClearDatabase);

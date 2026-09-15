@@ -43,6 +43,7 @@ import { ReportsResponse, PIMaster, GlassItem, ProductionHistory, RejectRecord, 
 
 interface ReportsViewProps {
   initialTab?: "pis" | "items" | "history" | "rejects" | "reworks";
+  onTabChange?: (tab: "pis" | "items" | "history" | "rejects" | "reworks") => void;
   onPrintSticker?: (item: GlassItem) => void;
   onReject?: (item: GlassItem) => void;
   onRework?: (item: GlassItem) => void;
@@ -50,12 +51,30 @@ interface ReportsViewProps {
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   initialTab = "pis",
+  onTabChange,
   onPrintSticker,
   onReject,
   onRework,
 }) => {
   const [reportData, setReportData] = useState<ReportsResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(initialTab);
+  // ponytail: Preserve user's active report tab across page refreshes and real-time auto-syncs
+  const [activeTab, setActiveTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(() => {
+    try {
+      const saved = localStorage.getItem("sejal_reports_active_tab") as "pis" | "items" | "history" | "rejects" | "reworks";
+      if (saved && ["pis", "items", "history", "rejects", "reworks"].includes(saved)) {
+        return saved;
+      }
+    } catch {}
+    return initialTab;
+  });
+
+  const handleTabSelect = (tab: "pis" | "items" | "history" | "rejects" | "reworks") => {
+    setActiveTab(tab);
+    try {
+      localStorage.setItem("sejal_reports_active_tab", tab);
+    } catch {}
+    onTabChange?.(tab);
+  };
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoSync, setAutoSync] = useState(true);
@@ -344,27 +363,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const data = filteredItems.map((item, idx) => {
         const eff = getDguEffectiveQtyAndSqm(item);
         const finish = getItemFinish(item);
-        const glassTypeCategory = isDlguGlass(item)
-          ? "DLGU Unit"
-          : isDguGlass(item)
-          ? "DGU / IGU Unit"
-          : isLaminatedGlass(item)
-          ? "Laminated Glass"
-          : "Single / Monolithic";
 
         return {
-          "Sr No": idx + 1,
-          "Batch No": formatBatchNumber(item.batchNo || item.piNumber) || item.batchNo || item.piNumber,
-          "Barcode": item.barcode,
-          "Serial Number": item.serialNumber,
-          "Glass Category": glassTypeCategory,
-          "Glass Finish": finish,
-          "Glass Description": item.glassType,
+          "SL No": idx + 1,
+          "PI": item.piNumber || item.orderNo || item.batchNo || "—",
+          "POS No": item.posNo || "—",
+          "Finish / Type": finish,
           "Width (mm)": item.width,
           "Height (mm)": item.height,
           "Quantity": eff.qty,
           "Unit": eff.unitLabel,
-          "Total SQM": eff.sqm,
+          "SQM": eff.sqm,
+          "Glass Code": item.glassCode || item.itemCode || "—",
+          "Glass Type / Spec": item.glassType,
+          "OB": item.obNo || "—",
+          "SFO": item.sfoNo || "—",
+          "Batch": item.batchNo || "—",
+          "Barcode": item.barcode,
           "Current Stage": item.currentStage,
           "Status": item.status || "Pending",
           "Last Updated": formatDubaiDateTime(item.updatedAt || item.createdAt),
@@ -372,18 +387,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       });
       const ws = XLSX.utils.json_to_sheet(data);
       ws["!cols"] = [
-        { wch: 6 },
+        { wch: 8 },
         { wch: 16 },
-        { wch: 20 },
+        { wch: 10 },
         { wch: 14 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 10 },
+        { wch: 10 },
+        { wch: 12 },
         { wch: 18 },
-        { wch: 12 },
-        { wch: 30 },
-        { wch: 12 },
-        { wch: 12 },
-        { wch: 10 },
+        { wch: 32 },
         { wch: 10 },
         { wch: 12 },
+        { wch: 10 },
+        { wch: 20 },
         { wch: 14 },
         { wch: 14 },
         { wch: 20 },
@@ -492,7 +510,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   if (loading) {
     return (
       <div className="py-20 flex flex-col items-center justify-center space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 animate-pulse shadow-sm">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shadow-sm">
           <Activity className="w-6 h-6 animate-spin" />
         </div>
         <div className="text-center">
@@ -522,7 +540,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               Live Production & Quality Reports
             </h2>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
               <span>Real-Time Sync Active</span>
             </div>
           </div>
@@ -774,7 +792,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {/* ── REPORT TABS ── */}
       <div className="flex border-b border-slate-200 space-x-2 overflow-x-auto no-scrollbar">
         <button
-          onClick={() => setActiveTab("pis")}
+          onClick={() => handleTabSelect("pis")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "pis"
               ? "border-indigo-600 text-indigo-600"
@@ -784,7 +802,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           Proforma Invoices / Batches ({filteredPis.length})
         </button>
         <button
-          onClick={() => setActiveTab("items")}
+          onClick={() => handleTabSelect("items")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "items"
               ? "border-indigo-600 text-indigo-600"
@@ -794,7 +812,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           Glass Units & Inventory ({filteredItems.length})
         </button>
         <button
-          onClick={() => setActiveTab("history")}
+          onClick={() => handleTabSelect("history")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "history"
               ? "border-indigo-600 text-indigo-600"
@@ -804,7 +822,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           Audit History Trail ({filteredHistory.length})
         </button>
         <button
-          onClick={() => setActiveTab("rejects")}
+          onClick={() => handleTabSelect("rejects")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "rejects"
               ? "border-indigo-600 text-indigo-600"
@@ -814,7 +832,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           Quality Rejects Log ({filteredRejects.length})
         </button>
         <button
-          onClick={() => setActiveTab("reworks")}
+          onClick={() => handleTabSelect("reworks")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "reworks"
               ? "border-indigo-600 text-indigo-600"
@@ -899,66 +917,136 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         {/* 2. GLASS ITEMS TAB */}
         {activeTab === "items" && (
           <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full text-left text-xs border-collapse min-w-[1350px]">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
-                  <th className="p-3">Barcode</th>
-                  <th className="p-3">Serial #</th>
-                  <th className="p-3">Batch / PI</th>
-                  <th className="p-3">Glass Description</th>
-                  <th className="p-3">Dimensions (mm)</th>
-                  <th className="p-3 text-center">Qty / Unit</th>
+                  <th className="p-3 text-center w-14">SL NO.</th>
+                  <th className="p-3">PI</th>
+                  <th className="p-3 text-center">POS NO.</th>
+                  <th className="p-3">FINISH / TYPE</th>
+                  <th className="p-3 text-center">WIDTH (MM)</th>
+                  <th className="p-3 text-center">HEIGHT (MM)</th>
+                  <th className="p-3 text-center">QTY</th>
                   <th className="p-3 text-right">SQM</th>
-                  <th className="p-3 text-center">Current Stage</th>
-                  <th className="p-3 text-center">Status</th>
-                  <th className="p-3 text-right">Actions</th>
+                  <th className="p-3">GLASS CODE</th>
+                  <th className="p-3 min-w-[200px]">GLASS TYPE / SPEC</th>
+                  <th className="p-3 text-center">OB</th>
+                  <th className="p-3 text-center">SFO</th>
+                  <th className="p-3 text-center">BATCH</th>
+                  <th className="p-3 min-w-[160px]">BARCODE</th>
+                  <th className="p-3 text-center">CURRENT STAGE</th>
+                  <th className="p-3 text-center">STATUS</th>
+                  <th className="p-3 text-right">ACTIONS</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-800">
+              <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
                 {filteredItems.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-slate-500 font-medium">
+                    <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
                       No glass item records found for the current search and filters.
                     </td>
                   </tr>
                 ) : (
-                  filteredItems.map((i: GlassItem) => {
+                  filteredItems.map((i: GlassItem, idx: number) => {
                     const itemStatus = i.status || "Pending";
                     const eff = getDguEffectiveQtyAndSqm(i);
                     const finish = getItemFinish(i);
 
                     return (
-                      <tr key={i.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-3 font-mono text-slate-500 whitespace-nowrap">{i.barcode}</td>
-                        <td className="p-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                          {i.serialNumber}
+                      <tr key={i.id} className="hover:bg-purple-50/40 transition-colors">
+                        {/* 1. SL NO. */}
+                        <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
+                          {i.srNo || idx + 1}
                         </td>
+
+                        {/* 2. PI */}
                         <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                          {formatBatchNumber(i.batchNo || i.piNumber)}
+                          {formatBatchNumber(i.piNumber || i.orderNo || i.batchNo)}
                         </td>
-                        <td className="p-3 text-slate-700">
-                          <div className="font-semibold text-slate-900 line-clamp-1">{i.glassType}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            Code: {i.glassCode || i.itemCode || "—"} • Finish: {finish}
-                          </div>
+
+                        {/* 3. POS NO. */}
+                        <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
+                          {i.posNo || "—"}
                         </td>
-                        <td className="p-3 font-mono text-slate-700 whitespace-nowrap">
-                          {i.width} × {i.height}
+
+                        {/* 4. FINISH / TYPE */}
+                        <td className="p-3 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border whitespace-nowrap ${
+                              finish === "Colour"
+                                ? "bg-purple-100 text-purple-800 border-purple-200"
+                                : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                            }`}
+                          >
+                            {finish}
+                          </span>
                         </td>
+
+                        {/* 5. WIDTH (MM) */}
+                        <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                          {i.width}
+                        </td>
+
+                        {/* 6. HEIGHT (MM) */}
+                        <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                          {i.height}
+                        </td>
+
+                        {/* 7. QTY */}
                         <td className="p-3 text-center font-mono font-bold text-blue-700 whitespace-nowrap">
                           {eff.qty} {eff.unitLabel}
                         </td>
+
+                        {/* 8. SQM */}
                         <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
-                          {formatAENumber(eff.sqm, 2)} SQM
+                          {formatAENumber(eff.sqm, 2)} m²
                         </td>
+
+                        {/* 9. GLASS CODE */}
+                        <td className="p-3 font-mono font-bold text-slate-800 whitespace-nowrap">
+                          {i.glassCode || i.itemCode || "—"}
+                        </td>
+
+                        {/* 10. GLASS TYPE / SPEC */}
+                        <td className="p-3 text-slate-700">
+                          <div className="font-semibold text-slate-900 line-clamp-1" title={i.glassType}>
+                            {i.glassType}
+                          </div>
+                        </td>
+
+                        {/* 11. OB */}
+                        <td className="p-3 font-mono text-center text-slate-700 whitespace-nowrap">
+                          {i.obNo || "—"}
+                        </td>
+
+                        {/* 12. SFO */}
+                        <td className="p-3 font-mono text-center text-purple-700 font-bold whitespace-nowrap">
+                          {i.sfoNo || "—"}
+                        </td>
+
+                        {/* 13. BATCH */}
+                        <td className="p-3 font-mono text-center text-purple-700 font-bold whitespace-nowrap">
+                          {i.batchNo || "—"}
+                        </td>
+
+                        {/* 14. BARCODE */}
+                        <td className="p-3 font-mono text-slate-600 font-medium whitespace-nowrap">
+                          {i.barcode}
+                        </td>
+
+                        {/* 15. CURRENT STAGE */}
                         <td className="p-3 text-center whitespace-nowrap">
                           <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
                             {i.currentStage}
                           </span>
                         </td>
+
+                        {/* 16. STATUS */}
                         <td className="p-3 text-center whitespace-nowrap">
                           <StatusBadge status={itemStatus} />
                         </td>
+
+                        {/* 17. ACTIONS */}
                         <td className="p-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {onPrintSticker && (

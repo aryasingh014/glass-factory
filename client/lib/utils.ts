@@ -179,8 +179,10 @@ export function getItemFinish(item: { colorOrClear?: string; category?: string; 
 export function isDlguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string } | null | undefined): boolean {
   if (!item) return false;
   if (item.glassCategory === "DLGU") return true;
+  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
   if (Array.isArray(item.processRoute)) {
     if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
   const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu");
@@ -324,8 +326,6 @@ export function isDguStickerPairMatch(col: any, clr: any): boolean {
       const clrPane = isColColour ? clr : col;
       const isClrReady =
         clrPane.dlguPhase === "DguPairing" ||
-        isColInLam ||
-        isClrInLam ||
         isColLamDone ||
         isClrLamDone ||
         (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));

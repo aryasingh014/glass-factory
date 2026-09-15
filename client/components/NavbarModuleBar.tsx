@@ -41,8 +41,9 @@ export const NavbarModuleBar: React.FC<NavbarModuleBarProps> = ({
       id: "overview",
       label: "Dashboard",
       icon: LayoutDashboard,
-      color: "text-purple-600",
-      activeBg: "bg-purple-600 text-white shadow-xs ring-1 ring-purple-400",
+      color: "text-[#1a3a6b]",
+      activeBg: "bg-[#1a3a6b] text-white shadow-xs ring-1 ring-blue-900",
+      indicatorBg: "bg-blue-50/90 border-blue-200 text-blue-950",
       badge: null,
     },
     {
@@ -51,6 +52,7 @@ export const NavbarModuleBar: React.FC<NavbarModuleBarProps> = ({
       icon: FileText,
       color: "text-blue-600",
       activeBg: "bg-blue-600 text-white shadow-xs ring-1 ring-blue-400",
+      indicatorBg: "bg-blue-50/90 border-blue-200 text-blue-900",
       badge: null,
     },
     {
@@ -59,52 +61,58 @@ export const NavbarModuleBar: React.FC<NavbarModuleBarProps> = ({
       icon: Layers,
       color: "text-indigo-600",
       activeBg: "bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-400",
+      indicatorBg: "bg-indigo-50/90 border-indigo-200 text-indigo-950",
       badge: null,
     },
     {
       id: "cutting",
       label: "Cutting Workstation",
       icon: Box,
-      color: "text-purple-500",
-      activeBg: "bg-purple-600 text-white shadow-xs ring-1 ring-purple-400",
+      color: "text-indigo-600",
+      activeBg: "bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-400",
+      indicatorBg: "bg-indigo-50/90 border-indigo-200 text-indigo-900",
       badge: stats?.pendingCutting ?? 0,
-      badgeBg: "bg-purple-100 text-purple-700 font-bold",
+      badgeBg: "bg-indigo-100 text-indigo-800 font-bold",
     },
     {
       id: "pairing",
       label: "Glass Pairing & Buffer",
       icon: Link2,
-      color: "text-indigo-500",
-      activeBg: "bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-400",
+      color: "text-sky-600",
+      activeBg: "bg-sky-600 text-white shadow-xs ring-1 ring-sky-400",
+      indicatorBg: "bg-sky-50/90 border-sky-200 text-sky-900",
       badge: stats?.pendingPairing ?? 0,
-      badgeBg: "bg-indigo-100 text-indigo-700 font-bold",
+      badgeBg: "bg-sky-100 text-sky-800 font-bold",
     },
     {
       id: "dgu",
       label: "DGU / IGU Workstation",
       icon: ClipboardList,
-      color: "text-teal-500",
+      color: "text-teal-600",
       activeBg: "bg-teal-600 text-white shadow-xs ring-1 ring-teal-400",
+      indicatorBg: "bg-teal-50/90 border-teal-200 text-teal-900",
       badge: stats?.pendingDGU ?? 0,
-      badgeBg: "bg-teal-100 text-teal-700 font-bold",
+      badgeBg: "bg-teal-100 text-teal-800 font-bold",
     },
     {
       id: "lamination",
       label: "Lamination Workstation",
       icon: Layers,
-      color: "text-amber-500",
+      color: "text-amber-600",
       activeBg: "bg-amber-600 text-white shadow-xs ring-1 ring-amber-400",
+      indicatorBg: "bg-amber-50/90 border-amber-200 text-amber-900",
       badge: stats?.pendingLamination ?? 0,
-      badgeBg: "bg-amber-100 text-amber-700 font-bold",
+      badgeBg: "bg-amber-100 text-amber-800 font-bold",
     },
     {
       id: "finished",
       label: "Dispatch",
       icon: CheckCircle,
-      color: "text-emerald-500",
+      color: "text-emerald-600",
       activeBg: "bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-400",
+      indicatorBg: "bg-emerald-50/90 border-emerald-200 text-emerald-900",
       badge: stats?.finishedItems ?? 0,
-      badgeBg: "bg-emerald-100 text-emerald-700 font-bold",
+      badgeBg: "bg-emerald-100 text-emerald-800 font-bold",
     },
     {
       id: "reports",
@@ -112,14 +120,16 @@ export const NavbarModuleBar: React.FC<NavbarModuleBarProps> = ({
       icon: ClipboardList,
       color: "text-slate-600",
       activeBg: "bg-slate-800 text-white shadow-xs ring-1 ring-slate-600",
+      indicatorBg: "bg-slate-100/90 border-slate-300 text-slate-900",
       badge: null,
     },
     {
       id: "analytics",
       label: "Performance Analytics",
       icon: BarChart3,
-      color: "text-purple-600",
-      activeBg: "bg-purple-600 text-white shadow-xs ring-1 ring-purple-400",
+      color: "text-[#1a3a6b]",
+      activeBg: "bg-[#1a3a6b] text-white shadow-xs ring-1 ring-blue-900",
+      indicatorBg: "bg-blue-50/90 border-blue-200 text-blue-950",
       badge: null,
     },
   ];
@@ -139,11 +149,11 @@ export const NavbarModuleBar: React.FC<NavbarModuleBarProps> = ({
     <div className="flex items-center gap-2 max-w-full">
       {/* Active Module Indicator (Always visible on Navbar when sidebar is hidden) */}
       {!sidebarOpen && (
-        <div className="hidden sm:flex items-center gap-2 bg-purple-50/80 px-2.5 py-1 rounded-lg border border-purple-200 shrink-0">
+        <div className={cn("hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-lg border shrink-0", activeModule.indicatorBg)}>
           {React.createElement(activeModule.icon, {
             className: cn("w-4 h-4", activeModule.color),
           })}
-          <span className="text-xs font-bold text-purple-900 tracking-tight">
+          <span className="text-xs font-bold tracking-tight">
             {activeModule.label}
           </span>
         </div>

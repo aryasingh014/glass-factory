@@ -108,6 +108,8 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
         <div className="space-y-4 my-2 text-xs">
           <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1 font-mono">
+            <div><span className="text-slate-500">PI Number:</span> <span className="font-bold text-purple-700">{item.piNumber}</span></div>
+            <div><span className="text-slate-500">Batch / Pos:</span> <span className="font-bold text-slate-900">{item.batchNo || item.sfoNo || "—"}</span> / <span className="text-indigo-700 font-bold">POS {item.posNo || "—"}</span></div>
             <div><span className="text-slate-500">Item:</span> <span className="font-bold text-slate-900">{item.itemCode}</span></div>
             <div><span className="text-slate-500">Serial / Barcode:</span> <span className="text-blue-600 font-bold">{item.serialNumber}</span> ({item.barcode})</div>
             <div><span className="text-slate-500">Current Stage:</span> <span className="text-amber-700 font-bold">{item.currentStage}</span></div>

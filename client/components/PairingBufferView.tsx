@@ -103,7 +103,9 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   const [selectedPIFilter, setSelectedPIFilter] = useState<string>("ALL");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [finishFilter, setFinishFilter] = useState<"ALL" | "COLOUR" | "CLEAR" | "READY" | "BUFFER" | "CUT" | "REMAINING" | "COMPLETED">("ALL");
-  const [categoryFilter, setCategoryFilter] = useState<"DGU" | "LAMINATION" | "DLGU">("DGU");
+  // ponytail: category filter supports unified cross-category ALL_PENDING alongside process queues
+  const [categoryFilter, setCategoryFilter] = useState<"ALL_PENDING" | "DGU" | "LAMINATION" | "DLGU">("DGU");
+  const [pendingSubFilter, setPendingSubFilter] = useState<"ALL" | "CUTTING" | "BUFFER" | "DGU" | "LAMINATION" | "DLGU">("ALL");
   const [sortColumn, setSortColumn] = useState<"posNo" | "cutQty" | "remainingQty" | "totalQty" | "inBufferQty" | "sqm" | "default">("default");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
@@ -217,10 +219,18 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       barcode: string;
     }>();
 
+    // Index PIs for instant O(1) lookup
+    const piMapById = new Map<string, (typeof pis)[0]>();
+    const piMapByNumber = new Map<string, (typeof pis)[0]>();
+    for (let p = 0; p < pis.length; p++) {
+      if (pis[p].id) piMapById.set(pis[p].id, pis[p]);
+      if (pis[p].piNumber) piMapByNumber.set(pis[p].piNumber, pis[p]);
+    }
+
     items.forEach((item) => {
       if (item.status === "Rejected") return;
 
-      const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
+      const parentPI = (item.piId ? piMapById.get(item.piId) : null) || (item.piNumber ? piMapByNumber.get(item.piNumber) : null);
       // The PI number displayed in the sticker upload table is item.orderNo (e.g. 2045, 2137, 2139)
       const cleanPiNumber = (item.orderNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
       const posKey = (item.posNo || String(item.srNo || "1")).trim();
@@ -230,11 +240,13 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       const glassCategory: "DGU" | "Lamination" | "DLGU" = isDlgu ? "DLGU" : (isLam ? "Lamination" : "DGU");
       // Differentiate lites by thickness or primary glass type (e.g. 12MM vs 10MM) so matching lites form separate rows to be paired
       const rawThickness = (item.thickness || item.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
-      const thicknessKey = rawThickness || (item.glassType?.split("/")[0]?.trim()) || finish;
+      const thicknessKey = isDlgu && finish === "Clear" ? "DLGU_CLEAR_LAM" : (rawThickness || (item.glassType?.split("/")[0]?.trim()) || finish);
+      const isDlguDoneLam = item.completedStages.includes("Lamination") || item.colorOrClear === "Colour" || !item.processRoute?.includes("Lamination");
       const dlguPhaseKey = isDlgu
-        ? (item.dlguPhase || (item.completedStages.includes("Lamination") || item.colorOrClear === "Colour" || !item.processRoute?.includes("Lamination") ? "DguPairing" : "LamPairing"))
+        ? (item.dlguPhase || (isDlguDoneLam ? "DguPairing" : "LamPairing"))
         : "default";
-      const groupKey = `${cleanPiNumber}_pos_${posKey}_${item.width}x${item.height}_${thicknessKey}_${finish}_${glassCategory}_${dlguPhaseKey}`;
+      const effectiveDlguPhase = isDlgu ? (isDlguDoneLam || finish === "Colour" ? "DguPairing" : dlguPhaseKey) : undefined;
+      const groupKey = `${cleanPiNumber}_pos_${posKey}_${item.width}x${item.height}_${thicknessKey}_${finish}_${glassCategory}_${effectiveDlguPhase || "default"}`;
 
       if (!positionMap.has(groupKey)) {
         positionMap.set(groupKey, {
@@ -245,14 +257,14 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "VAL_BY_KAS",
           posNo: posKey,
           glassCategory,
-          dlguPhase: isDlgu ? (dlguPhaseKey as "LamPairing" | "DguPairing") : undefined,
+          dlguPhase: effectiveDlguPhase,
           finish,
           width: item.width || 1000,
           height: item.height || 1000,
           rawItems: [],
           bufferItems: [],
           glassCode: item.glassCode || `GL ${posKey} SITE`,
-          glassType: item.glassType || item.itemCode || (finish === "Colour" ? "6MM COLOURED TEMPERED" : "6MM CLEAR TEMPERED"),
+          glassType: isDlgu && finish === "Clear" ? "13.52MM CLEAR LAMINATED (DLGU Sub-Assembly)" : (item.glassType || item.itemCode || (finish === "Colour" ? "6MM COLOURED TEMPERED" : "6MM CLEAR TEMPERED")),
           obNo: item.obNo || "3705",
           sfoNo: item.sfoNo || cleanPiNumber,
           batchNo: item.batchNo || "5442",
@@ -270,26 +282,34 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
     // Convert groups into Position Rows with exact Cut & Remaining computations
     const rows: ConsolidatedPositionRow[] = Array.from(positionMap.values()).map((g: any, idx) => {
+      // For DLGU Clear, 2 laminated raw panes form 1 composite unit (e.g. 96 panes = 48 units)
+      const isDlguClearUnit = g.glassCategory === "DLGU" && g.finish === "Clear";
+
       // Total pieces uploaded for this position
-      const totalPieces = g.rawItems.reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const rawTotalPieces = g.rawItems.reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const totalPieces = isDlguClearUnit ? Math.ceil(rawTotalPieces / 2) : rawTotalPieces;
 
       // Pieces cut (advanced from cutting)
-      const cutPieces = g.rawItems
+      const rawCutPieces = g.rawItems
         .filter((i: any) => i.currentStage?.toLowerCase() !== "cutting")
         .reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const cutPieces = isDlguClearUnit ? Math.ceil(rawCutPieces / 2) : rawCutPieces;
 
       // Pieces still remaining in cutting
-      const remainingPieces = g.rawItems
+      const rawRemainingPieces = g.rawItems
         .filter((i: any) => i.currentStage?.toLowerCase() === "cutting")
         .reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const remainingPieces = isDlguClearUnit ? Math.ceil(rawRemainingPieces / 2) : rawRemainingPieces;
 
       // Pieces currently waiting in buffer
-      const bufferPieces = g.bufferItems.reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const rawBufferPieces = g.bufferItems.reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const bufferPieces = isDlguClearUnit ? Math.ceil(rawBufferPieces / 2) : rawBufferPieces;
 
       // Pieces assembled and dispatched to Finished
-      const finishedPieces = g.rawItems
+      const rawFinishedPieces = g.rawItems
         .filter((i: any) => i.currentStage?.toLowerCase() === "finished" || i.status === "Completed")
         .reduce((acc: number, curr: any) => acc + (curr.qty || 1), 0);
+      const finishedPieces = isDlguClearUnit ? Math.ceil(rawFinishedPieces / 2) : rawFinishedPieces;
 
       const totalSqm = parseFloat(((g.width * g.height * totalPieces) / 1000000).toFixed(2));
       const cutSqm = parseFloat(((g.width * g.height * cutPieces) / 1000000).toFixed(2));
@@ -354,7 +374,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         // Ready pairs is the minimum of cut pieces in buffer / available in lamination for both sides
         const partnerAvailable =
           row.glassCategory === "DLGU" && row.finish === "Colour"
-            ? partner.rawItems.filter((i) => i.currentStage === "Lamination" || (i.currentStage === "Pairing" && i.completedStages?.includes("Lamination"))).reduce((a, b) => a + (b.qty || 1), 0)
+            ? (partner.dlguPhase === "DguPairing" ? partner.inBufferQty : Math.ceil(partner.rawItems.filter((i: any) => i.currentStage === "Lamination" || (i.currentStage === "Pairing" && i.completedStages?.includes("Lamination"))).reduce((a: number, b: any) => a + (b.qty || 1), 0) / 2))
             : partner.inBufferQty;
         row.readyPairsCount = Math.min(row.inBufferQty, partnerAvailable);
         row.waitingFinish = partner.finish !== row.finish
@@ -378,6 +398,10 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     return sortedRows;
   }, [items, pis]);
 
+  // ponytail: Cross-category pending status check (cutting remaining OR unpaired panes staged in buffer)
+  const isRowPending = (r: ConsolidatedPositionRow) =>
+    r.remainingQty > 0 || (r.inBufferQty > 0 && (!r.matchingPartnerRow || r.readyPairsCount < r.inBufferQty));
+
   // Filter rows based on Selected PI, Finish filter, and Search Query
   const filteredRows = useMemo(() => {
     return consolidatedRows
@@ -392,19 +416,30 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           if (!matchPI) return false;
         }
 
-        // Process Category Filter (DGU vs Lamination vs DLGU)
-        if (categoryFilter === "DGU" && row.glassCategory !== "DGU") return false;
-        if (categoryFilter === "LAMINATION" && row.glassCategory !== "Lamination") return false;
-        if (categoryFilter === "DLGU" && row.glassCategory !== "DLGU") return false;
+        // Process Category Filter (ALL_PENDING vs DGU vs Lamination vs DLGU)
+        if (categoryFilter === "ALL_PENDING") {
+          if (!isRowPending(row)) return false;
 
-        // Finish & Status Filters
-        if (finishFilter === "COLOUR" && row.finish !== "Colour") return false;
-        if (finishFilter === "CLEAR" && row.finish !== "Clear") return false;
-        if (finishFilter === "READY" && row.readyPairsCount === 0) return false;
-        if (finishFilter === "BUFFER" && row.inBufferQty === 0 && (!row.matchingPartnerRow || row.matchingPartnerRow.inBufferQty === 0)) return false;
-        if (finishFilter === "CUT" && row.cutQty === 0 && (!row.matchingPartnerRow || row.matchingPartnerRow.cutQty === 0)) return false;
-        if (finishFilter === "REMAINING" && row.remainingQty === 0) return false;
-        if (finishFilter === "COMPLETED" && row.remainingQty > 0) return false;
+          // Sub-filters inside Pending Glass tab
+          if (pendingSubFilter === "CUTTING" && row.remainingQty === 0) return false;
+          if (pendingSubFilter === "BUFFER" && (row.inBufferQty === 0 || (row.matchingPartnerRow && row.readyPairsCount >= row.inBufferQty))) return false;
+          if (pendingSubFilter === "DGU" && row.glassCategory !== "DGU") return false;
+          if (pendingSubFilter === "LAMINATION" && row.glassCategory !== "Lamination") return false;
+          if (pendingSubFilter === "DLGU" && row.glassCategory !== "DLGU") return false;
+        } else {
+          if (categoryFilter === "DGU" && row.glassCategory !== "DGU") return false;
+          if (categoryFilter === "LAMINATION" && row.glassCategory !== "Lamination") return false;
+          if (categoryFilter === "DLGU" && row.glassCategory !== "DLGU") return false;
+
+          // Finish & Status Filters
+          if (finishFilter === "COLOUR" && row.finish !== "Colour") return false;
+          if (finishFilter === "CLEAR" && row.finish !== "Clear") return false;
+          if (finishFilter === "READY" && row.readyPairsCount === 0) return false;
+          if (finishFilter === "BUFFER" && row.inBufferQty === 0 && (!row.matchingPartnerRow || row.matchingPartnerRow.inBufferQty === 0)) return false;
+          if (finishFilter === "CUT" && row.cutQty === 0 && (!row.matchingPartnerRow || row.matchingPartnerRow.cutQty === 0)) return false;
+          if (finishFilter === "REMAINING" && row.remainingQty === 0) return false;
+          if (finishFilter === "COMPLETED" && row.remainingQty > 0) return false;
+        }
 
         // Search Query
         const q = (searchTerm || externalSearchTerm || "").toLowerCase().trim();
@@ -448,8 +483,9 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         }
         return 0;
       });
-  }, [consolidatedRows, selectedPIFilter, categoryFilter, finishFilter, searchTerm, externalSearchTerm, sortColumn, sortDirection]);
+  }, [consolidatedRows, selectedPIFilter, categoryFilter, finishFilter, pendingSubFilter, searchTerm, externalSearchTerm, sortColumn, sortDirection]);
 
+  // Total counts across categories
   const dguStickerCount = consolidatedRows
     .filter((r) => r.glassCategory === "DGU")
     .reduce((sum, r) => sum + r.totalQty, 0);
@@ -460,8 +496,18 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     .filter((r) => r.glassCategory === "DLGU")
     .reduce((sum, r) => sum + r.totalQty, 0);
 
+  // Cross-category pending counts (All 3: DGU + Lamination + DLGU)
+  const pendingRows = useMemo(() => consolidatedRows.filter(isRowPending), [consolidatedRows]);
+  const pendingPiecesCount = useMemo(() => pendingRows.reduce((sum, r) => sum + r.remainingQty + Math.max(0, r.inBufferQty - r.readyPairsCount), 0), [pendingRows]);
+  const pendingCuttingPiecesCount = useMemo(() => pendingRows.filter((r) => r.remainingQty > 0).reduce((sum, r) => sum + r.remainingQty, 0), [pendingRows]);
+  const pendingBufferPiecesCount = useMemo(() => pendingRows.filter((r) => r.inBufferQty > 0).reduce((sum, r) => sum + Math.max(0, r.inBufferQty - r.readyPairsCount), 0), [pendingRows]);
+  const pendingDguPiecesCount = useMemo(() => pendingRows.filter((r) => r.glassCategory === "DGU").reduce((sum, r) => sum + r.remainingQty + Math.max(0, r.inBufferQty - r.readyPairsCount), 0), [pendingRows]);
+  const pendingLamPiecesCount = useMemo(() => pendingRows.filter((r) => r.glassCategory === "Lamination").reduce((sum, r) => sum + r.remainingQty + Math.max(0, r.inBufferQty - r.readyPairsCount), 0), [pendingRows]);
+  const pendingDlguPiecesCount = useMemo(() => pendingRows.filter((r) => r.glassCategory === "DLGU").reduce((sum, r) => sum + r.remainingQty + Math.max(0, r.inBufferQty - r.readyPairsCount), 0), [pendingRows]);
+
   // Auto-switch to whichever category has items if current category has 0
   useEffect(() => {
+    if (categoryFilter === "ALL_PENDING") return;
     if (categoryFilter === "DGU" && dguStickerCount === 0) {
       if (dlguStickerCount > 0) setCategoryFilter("DLGU");
       else if (lamStickerCount > 0) setCategoryFilter("LAMINATION");
@@ -479,6 +525,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       const matchPI = r.piNumber === selectedPIFilter || r.piId === selectedPIFilter || r.sfoNo === selectedPIFilter || r.batchNo === selectedPIFilter;
       if (!matchPI) return false;
     }
+    if (categoryFilter === "ALL_PENDING") return isRowPending(r);
     if (categoryFilter === "DGU") return r.glassCategory === "DGU";
     if (categoryFilter === "LAMINATION") return r.glassCategory === "Lamination";
     if (categoryFilter === "DLGU") return r.glassCategory === "DLGU";
@@ -860,17 +907,41 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
       {/* ── Action & Filter Control Bar ── */}
       <div className="bg-white p-2.5 sm:p-3 rounded-2xl border-2 border-slate-200/90 shadow-xs space-y-2.5">
-        {/* Row 1: Queue Switcher (DGU vs Lamination vs DLGU) & Primary Export */}
-        <div className="flex items-center justify-between gap-2">
-          {/* Category Filter (DGU vs Lamination vs DLGU) */}
-          <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80">
+        {/* Row 1: Queue Switcher (Pending Glass vs DGU vs Lamination vs DLGU) & Primary Export */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          {/* Category Filter: Pending Glass + DGU + Lamination + DLGU */}
+          <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap sm:flex-nowrap">
+            {/* Unified Cross-Category Pending Glass Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setCategoryFilter("ALL_PENDING");
+                setPendingSubFilter("ALL");
+              }}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                categoryFilter === "ALL_PENDING"
+                  ? "bg-rose-600 text-white shadow-xs"
+                  : "text-rose-800 hover:bg-rose-100/70"
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Pending Glass</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                categoryFilter === "ALL_PENDING" ? "bg-white/20 text-white" : "bg-rose-200 text-rose-900"
+              }`}>
+                {pendingPiecesCount}
+              </span>
+            </button>
+
+            <div className="h-4 w-px bg-slate-300 mx-0.5 hidden sm:block" />
+
             <button
               type="button"
               onClick={() => {
                 setCategoryFilter("DGU");
                 setFinishFilter("ALL");
               }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                 categoryFilter === "DGU"
                   ? "bg-teal-600 text-white shadow-xs"
                   : "text-teal-800 hover:bg-teal-100/60"
@@ -891,7 +962,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                 setCategoryFilter("LAMINATION");
                 setFinishFilter("ALL");
               }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                 categoryFilter === "LAMINATION"
                   ? "bg-amber-600 text-white shadow-xs"
                   : "text-amber-800 hover:bg-amber-100/60"
@@ -912,7 +983,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                 setCategoryFilter("DLGU");
                 setFinishFilter("ALL");
               }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                 categoryFilter === "DLGU"
                   ? "bg-purple-600 text-white shadow-xs"
                   : "text-purple-800 hover:bg-purple-100/60"
@@ -934,9 +1005,10 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
               size="sm"
               onClick={() => {
                 const exportItems = filteredRows.flatMap((r) => r.rawItems);
-                exportStageWipToExcel("Pairing", exportItems, "Pairing_Buffer_Queue");
+                const exportName = categoryFilter === "ALL_PENDING" ? "Pending_Glass_DGU_LAM_DLGU" : `Pairing_Buffer_${categoryFilter}`;
+                exportStageWipToExcel("Pairing", exportItems, exportName);
               }}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs font-extrabold gap-1.5 rounded-xl shrink-0 shadow-2xs px-3"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs font-extrabold gap-1.5 rounded-xl shrink-0 shadow-2xs px-3 cursor-pointer"
               title="Export Pairing & Buffer queue to Excel"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
@@ -944,15 +1016,106 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Sub-tabs (All / Colour / Clear) on Left + PI, Search, Refresh on Right */}
+        {/* Row 2: Sub-tabs (Pending Breakdown vs Colour/Clear) on Left + PI, Search, Refresh on Right */}
         <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-slate-100">
-          {/* Sub-tabs for Colour vs Clear Glass (Only shown when DGU or Lamination is selected) */}
-          {(categoryFilter === "DGU" || categoryFilter === "LAMINATION") ? (
+          {/* Sub-tabs when Pending Glass is selected */}
+          {categoryFilter === "ALL_PENDING" ? (
+            <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap animate-in fade-in zoom-in-95 duration-150">
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("ALL")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  pendingSubFilter === "ALL"
+                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                }`}
+              >
+                <span>All Pending</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800">
+                  {pendingPiecesCount} pcs
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("CUTTING")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  pendingSubFilter === "CUTTING"
+                    ? "bg-amber-600 text-white shadow-xs"
+                    : "text-amber-800 hover:bg-amber-100/60"
+                }`}
+              >
+                <Clock className="w-3 h-3" />
+                <span>Pending Cutting</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  pendingSubFilter === "CUTTING" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                }`}>
+                  {pendingCuttingPiecesCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("BUFFER")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  pendingSubFilter === "BUFFER"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "text-purple-800 hover:bg-purple-100/60"
+                }`}
+              >
+                <Layers className="w-3 h-3" />
+                <span>Waiting Partner (In Buffer)</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  pendingSubFilter === "BUFFER" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                }`}>
+                  {pendingBufferPiecesCount}
+                </span>
+              </button>
+
+              <div className="h-4 w-px bg-slate-300 mx-0.5" />
+
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("DGU")}
+                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                  pendingSubFilter === "DGU"
+                    ? "bg-teal-600 text-white shadow-xs"
+                    : "text-teal-700 hover:bg-teal-50"
+                }`}
+              >
+                <span>DGU ({pendingDguPiecesCount})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("LAMINATION")}
+                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                  pendingSubFilter === "LAMINATION"
+                    ? "bg-amber-600 text-white shadow-xs"
+                    : "text-amber-700 hover:bg-amber-50"
+                }`}
+              >
+                <span>Lam ({pendingLamPiecesCount})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPendingSubFilter("DLGU")}
+                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                  pendingSubFilter === "DLGU"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "text-purple-700 hover:bg-purple-50"
+                }`}
+              >
+                <span>DLGU ({pendingDlguPiecesCount})</span>
+              </button>
+            </div>
+          ) : (categoryFilter === "DGU" || categoryFilter === "LAMINATION") ? (
             <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 animate-in fade-in zoom-in-95 duration-150">
               <button
                 type="button"
                 onClick={() => setFinishFilter("ALL")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                   finishFilter === "ALL"
                     ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
                     : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
@@ -969,7 +1132,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
               <button
                 type="button"
                 onClick={() => setFinishFilter("COLOUR")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                   finishFilter === "COLOUR"
                     ? "bg-purple-600 text-white shadow-xs"
                     : "text-purple-800 hover:bg-purple-100/60"
@@ -986,7 +1149,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
               <button
                 type="button"
                 onClick={() => setFinishFilter("CLEAR")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                   finishFilter === "CLEAR"
                     ? "bg-cyan-600 text-white shadow-xs"
                     : "text-cyan-800 hover:bg-cyan-100/60"
@@ -1073,6 +1236,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
               <tr>
                 <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
                 <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
+                <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
                 <th
                   onClick={() => handleHeaderSort("posNo")}
                   className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
@@ -1153,7 +1317,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
             <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="text-center py-12 text-slate-400 whitespace-nowrap">
+                  <td colSpan={13} className="text-center py-12 text-slate-400 whitespace-nowrap">
                     No position records found matching the current PI or filters.
                   </td>
                 </tr>
@@ -1205,6 +1369,13 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                           </span>
                         </td>
 
+                        {/* BATCH # Pill Badge */}
+                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
+                          <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-xl font-mono font-black text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs whitespace-nowrap">
+                            {row.batchNo || row.sfoNo || row.rawItems[0]?.batchNo || "—"}
+                          </span>
+                        </td>
+
                         {/* POS NO. Pill Badge */}
                         <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
                           <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-300 shadow-2xs whitespace-nowrap min-w-[40px]">
@@ -1214,15 +1385,30 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
                         {/* FINISH / TYPE */}
                         <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                          {row.finish === "Colour" ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs whitespace-nowrap">
-                              Colour
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs whitespace-nowrap">
-                              Clear
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {categoryFilter === "ALL_PENDING" && (
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black shadow-2xs whitespace-nowrap uppercase tracking-wider ${
+                                  row.glassCategory === "DGU"
+                                    ? "bg-teal-600 text-white"
+                                    : row.glassCategory === "Lamination"
+                                    ? "bg-amber-600 text-white"
+                                    : "bg-purple-600 text-white"
+                                }`}
+                              >
+                                {row.glassCategory === "Lamination" ? "LAM" : row.glassCategory}
+                              </span>
+                            )}
+                            {row.finish === "Colour" ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs whitespace-nowrap">
+                                Colour
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs whitespace-nowrap">
+                                Clear
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* WIDTH (MM) Pill */}

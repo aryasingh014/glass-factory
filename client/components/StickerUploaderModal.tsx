@@ -1084,7 +1084,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           {loading && (
             <div className="p-4 bg-purple-50 border border-purple-200 rounded-2xl space-y-2 text-center">
               <div className="flex items-center justify-center gap-2 text-xs font-extrabold text-purple-900">
-                <span className="w-2.5 h-2.5 rounded-full bg-purple-600 animate-ping"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
                 <span>Parsing PDF Sticker Pages... {parsingProgress}%</span>
               </div>
               <div className="w-full bg-purple-200 h-2 rounded-full overflow-hidden">
