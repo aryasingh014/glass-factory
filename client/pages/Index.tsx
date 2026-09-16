@@ -52,6 +52,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Calendar,
+  Users,
+  FolderOpen,
+  Folder,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -701,6 +705,122 @@ export default function Index() {
 
   const totalPages = Math.ceil(sortedAndFilteredPIs.length / pageSize) || 1;
   const paginatedPIs = sortedAndFilteredPIs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  // Customer Grouped View States & Memoization
+  const [batchViewMode, setBatchViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
+  const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
+
+  const toggleCustomerExpanded = (customerName: string) => {
+    setExpandedCustomers((prev) => ({
+      ...prev,
+      [customerName]: !prev[customerName],
+    }));
+  };
+
+  const isCustomerExpanded = (customerName: string) => {
+    return Boolean(expandedCustomers[customerName]);
+  };
+
+  const setAllCustomersExpanded = (expand: boolean) => {
+    const newState: Record<string, boolean> = {};
+    groupedCustomerData.forEach((g) => {
+      newState[g.customerName] = expand;
+    });
+    setExpandedCustomers(newState);
+  };
+
+  const groupedCustomerData = React.useMemo(() => {
+    const map = new Map<string, PIMaster[]>();
+
+    sortedAndFilteredPIs.forEach((pi) => {
+      const cust = (pi.customerName || "Unassigned Customer").trim();
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push(pi);
+    });
+
+    const groups: Array<{
+      customerName: string;
+      batches: PIMaster[];
+      totalBatches: number;
+      totalPieces: number;
+      completedPieces: number;
+      totalSqm: number;
+      inCutting: number;
+      inPairing: number;
+      inLamination: number;
+      inDgu: number;
+      inFinished: number;
+      progressPct: number;
+      hasColour: boolean;
+      hasClear: boolean;
+      projects: string[];
+      status: "Completed" | "In Production" | "Pending";
+      earliestDate: string;
+      latestDate: string;
+    }> = [];
+
+    map.forEach((batches, customerName) => {
+      let totalPieces = 0;
+      let completedPieces = 0;
+      let totalSqm = 0;
+      let inCutting = 0;
+      let inPairing = 0;
+      let inLamination = 0;
+      let inDgu = 0;
+      let inFinished = 0;
+      let hasColour = false;
+      let hasClear = false;
+      const projectsSet = new Set<string>();
+
+      batches.forEach((pi) => {
+        const metrics = getBatchMetrics(pi);
+        totalPieces += metrics.totalPieces;
+        completedPieces += metrics.completedPieces;
+        totalSqm += metrics.totalSqm;
+        inCutting += metrics.inCutting;
+        inPairing += metrics.inPairing;
+        inLamination += metrics.inLamination;
+        inDgu += metrics.inDgu;
+        inFinished += metrics.inFinished;
+
+        if (pi.colorOrClear === "Colour") hasColour = true;
+        else hasClear = true;
+
+        if (pi.projectName) projectsSet.add(pi.projectName);
+        if (pi.jobOrderNumber) projectsSet.add(`JO: ${pi.jobOrderNumber}`);
+      });
+
+      const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
+      const isCompleted = totalPieces > 0 && completedPieces >= totalPieces;
+      const isPending = completedPieces === 0 && inCutting === totalPieces;
+      const status: "Completed" | "In Production" | "Pending" = isCompleted ? "Completed" : isPending ? "Pending" : "In Production";
+
+      groups.push({
+        customerName,
+        batches,
+        totalBatches: batches.length,
+        totalPieces,
+        completedPieces,
+        totalSqm,
+        inCutting,
+        inPairing,
+        inLamination,
+        inDgu,
+        inFinished,
+        progressPct,
+        hasColour,
+        hasClear,
+        projects: Array.from(projectsSet),
+        status,
+        earliestDate: batches[batches.length - 1]?.createdAt || batches[batches.length - 1]?.issueDate || "",
+        latestDate: batches[0]?.createdAt || batches[0]?.issueDate || "",
+      });
+    });
+
+    return groups;
+  }, [sortedAndFilteredPIs, items]);
 
   const renderSortIcon = (field: typeof sortField) => {
     if (sortField !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-40 inline" />;
@@ -2184,12 +2304,55 @@ export default function Index() {
           {/* TAB: STICKER & BATCH STATUS MANAGEMENT */}
           {activeTab === "pis" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
-                  <h2 className="text-lg font-extrabold text-slate-900">Sticker & Batch Status</h2>
-                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders.</p>
+                  <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
+                    <Boxes className="w-5 h-5 text-purple-600" />
+                    Sticker & Batch Status
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders grouped by customer or flat list.</p>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setBatchViewMode("CUSTOMER")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                        batchViewMode === "CUSTOMER"
+                          ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Group by Customer</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        {groupedCustomerData.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBatchViewMode("FLAT")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                        batchViewMode === "FLAT"
+                          ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <ClipboardList className="w-3.5 h-3.5" />
+                      <span>All Batches (Flat)</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        {sortedAndFilteredPIs.length}
+                      </span>
+                    </button>
+                  </div>
+
                   {userRole === "Admin" && (
                     <>
                       <Button
@@ -2212,208 +2375,629 @@ export default function Index() {
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-                {/* Search & Filters */}
-                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                  <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80">
-                    <button
-                      type="button"
-                      onClick={() => setPiFinishFilter("ALL")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "ALL"
-                          ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                        }`}
-                    >
-                      <span>All Batches</span>
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
-                        }`}>
-                        {pis.length}
-                      </span>
-                    </button>
+              {/* Filters & Search Toolbar */}
+              <div className="bg-white border border-slate-200/80 rounded-xl p-3 shadow-2xs flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setPiFinishFilter("ALL")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      piFinishFilter === "ALL"
+                        ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                    }`}
+                  >
+                    <span>All Glass</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      piFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                    }`}>
+                      {pis.length}
+                    </span>
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setPiFinishFilter("CLEAR")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "CLEAR"
-                          ? "bg-cyan-600 text-white shadow-xs"
-                          : "text-cyan-800 hover:bg-cyan-100/60"
-                        }`}
-                    >
-                      <span>Clear Glass</span>
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
-                        }`}>
-                        {clearBatchesCount}
-                      </span>
-                    </button>
+                  <button
+                    type="button"
+                    onClick={() => setPiFinishFilter("CLEAR")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      piFinishFilter === "CLEAR"
+                        ? "bg-cyan-600 text-white shadow-xs"
+                        : "text-cyan-800 hover:bg-cyan-100/60"
+                    }`}
+                  >
+                    <span>Clear Glass</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      piFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                    }`}>
+                      {clearBatchesCount}
+                    </span>
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setPiFinishFilter("COLOUR")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${piFinishFilter === "COLOUR"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-purple-800 hover:bg-purple-100/60"
-                        }`}
-                    >
-                      <span>Coloured Glass</span>
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${piFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
-                        }`}>
-                        {colourBatchesCount}
-                      </span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPiFinishFilter("COLOUR")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      piFinishFilter === "COLOUR"
+                        ? "bg-purple-600 text-white shadow-xs"
+                        : "text-purple-800 hover:bg-purple-100/60"
+                    }`}
+                  >
+                    <span>Coloured Glass</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      piFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                    }`}>
+                      {colourBatchesCount}
+                    </span>
+                  </button>
+                </div>
 
-                  <div className="relative w-72">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {batchViewMode === "CUSTOMER" && groupedCustomerData.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setAllCustomersExpanded(true)}
+                        className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                      >
+                        Expand All
+                      </Button>
+                      <span className="text-slate-300">|</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setAllCustomersExpanded(false)}
+                        className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                      >
+                        Collapse All
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="relative w-64 md:w-72">
                     <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <Input
-                      placeholder="Search batch, customer, project..."
+                      placeholder="Search customer, batch, project..."
                       value={piSearchTerm}
                       onChange={(e) => setPiSearchTerm(e.target.value)}
-                      className="pl-8 text-xs bg-slate-50 border-slate-200 rounded-lg"
+                      className="pl-8 text-xs bg-slate-50 border-slate-200 rounded-lg h-9"
                     />
                   </div>
                 </div>
+              </div>
 
-                {/* PI / Batch Table */}
-                {pis.length > 0 ? (
-                  <div className="no-scrollbar overflow-x-auto w-full">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
-                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
-                            BATCH NO {renderSortIcon("piNumber")}
-                          </th>
-                          <th className="py-2.5 px-3 whitespace-nowrap">
-                            FINISH
-                          </th>
-                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
-                            CUSTOMER {renderSortIcon("customerName")}
-                          </th>
-                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
-                            PROJECT / JOB ORDER {renderSortIcon("projectName")}
-                          </th>
-                          <th className="py-2.5 px-3 whitespace-nowrap">
-                            CURRENT STAGE
-                          </th>
-                          <th className="py-2.5 px-3 text-center whitespace-nowrap">
-                            ITEMS
-                          </th>
-                          <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                            TOTAL SQM
-                          </th>
-                          <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
-                            UPLOADED AT {renderSortIcon("createdAt")}
-                          </th>
-                          <th className="py-2.5 px-3 text-center whitespace-nowrap">
-                            STATUS
-                          </th>
-                          <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                            ACTIONS
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {paginatedPIs.map((pi) => {
-                          const metrics = getBatchMetrics(pi);
-                          return (
-                            <tr
-                              key={pi.id}
-                              onClick={() => openPIDetails(pi)}
-                              className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                              title="Click to view Batch details"
-                            >
-                              <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
-                              <td className="py-3 px-3 whitespace-nowrap">
-                                {pi.colorOrClear === "Colour" ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs">
-                                    Coloured Glass
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs">
-                                    Clear Glass
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 px-3 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
-                              <td className="py-3 px-3 text-slate-600 leading-snug">
-                                <div className="font-medium text-slate-900">{pi.projectName}</div>
-                                {pi.jobOrderNumber && (
-                                  <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
-                                )}
-                              </td>
-                              <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+              {/* VIEW 1: GROUP BY CUSTOMER */}
+              {batchViewMode === "CUSTOMER" && (
+                <div className="space-y-3">
+                  {groupedCustomerData.length > 0 ? (
+                    groupedCustomerData.map((customer) => {
+                      const isExpanded = isCustomerExpanded(customer.customerName);
+                      return (
+                        <div
+                          key={customer.customerName}
+                          className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-purple-300"
+                        >
+                          {/* Customer Summary Card Header */}
+                          <div
+                            onClick={() => toggleCustomerExpanded(customer.customerName)}
+                            className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30 transition-colors"
+                          >
+                            <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                              {/* Left: Customer Info & Badges */}
+                              <div className="flex items-start gap-3 flex-1 min-w-0">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                                  <Building2 className="w-5 h-5" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h3 className="text-base font-extrabold text-slate-900 truncate">
+                                      {customer.customerName}
+                                    </h3>
+                                    {customer.hasColour && (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                        Coloured
+                                      </span>
+                                    )}
+                                    {customer.hasClear && (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                        Clear
+                                      </span>
+                                    )}
+                                    <StatusBadge status={customer.status} />
+                                  </div>
+                                  <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                                    <span>
+                                      {customer.projects.length > 0
+                                        ? customer.projects.join(" • ")
+                                        : "General Shop Floor Production"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Center: Stage Flow Breakdown Pills */}
+                              <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   type="button"
-                                  onClick={() => setActiveTab(metrics.activeStageTab)}
-                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
-                                  title={`Go to ${metrics.activeStageName}`}
-                                >
-                                  <span>{metrics.activeStageName}</span>
-                                  <ChevronRight className="w-3 h-3 opacity-60" />
-                                </button>
-                              </td>
-                              <td className="py-3 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
-                                {metrics.completedPieces} / {metrics.totalPieces}
-                              </td>
-                              <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
-                                {metrics.totalSqm.toFixed(2)} m²
-                              </td>
-                              <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
-                                <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                                  <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                                  {formatPlatformDate(pi.createdAt || pi.issueDate)}
-                                </div>
-                                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
-                                  <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  {formatPlatformTime(pi.createdAt)}
-                                </div>
-                              </td>
-                              <td className="py-3 px-3 text-center whitespace-nowrap">
-                                <StatusBadge status={metrics.status || pi.status || "Pending"} />
-                              </td>
-                              <td className="py-3 px-3 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openPIDetails(pi);
+                                  onClick={() => {
+                                    setPiSearchTerm(customer.customerName);
+                                    setActiveTab("cutting");
                                   }}
-                                  className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
-                                  title="View Details"
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
+                                    customer.inCutting > 0
+                                      ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                  title="View Cutting items for this customer"
                                 >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </Button>
-                                {userRole === "Admin" && (
+                                  <Scissors className="w-3 h-3 text-purple-600" />
+                                  <span>Cutting: <strong>{customer.inCutting}</strong></span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPiSearchTerm(customer.customerName);
+                                    setActiveTab("pairing");
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
+                                    customer.inPairing > 0
+                                      ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                  title="View Pairing Buffer items for this customer"
+                                >
+                                  <RefreshCw className="w-3 h-3 text-blue-600" />
+                                  <span>Pairing: <strong>{customer.inPairing}</strong></span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPiSearchTerm(customer.customerName);
+                                    setActiveTab("lamination");
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
+                                    customer.inLamination > 0
+                                      ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                  title="View Lamination items for this customer"
+                                >
+                                  <Flame className="w-3 h-3 text-amber-600" />
+                                  <span>Lamination: <strong>{customer.inLamination}</strong></span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPiSearchTerm(customer.customerName);
+                                    setActiveTab("dgu");
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
+                                    customer.inDgu > 0
+                                      ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                  title="View DLGU / IGU items for this customer"
+                                >
+                                  <ShieldCheck className="w-3 h-3 text-teal-600" />
+                                  <span>DLGU: <strong>{customer.inDgu}</strong></span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPiSearchTerm(customer.customerName);
+                                    setActiveTab("finished");
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
+                                    customer.inFinished > 0
+                                      ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                  title="View Finished Warehouse items for this customer"
+                                >
+                                  <Truck className="w-3 h-3 text-emerald-600" />
+                                  <span>Finished: <strong>{customer.inFinished}</strong></span>
+                                </button>
+                              </div>
+
+                              {/* Right: Quantities, Progress & Accordion Trigger */}
+                              <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                                <div className="text-right">
+                                  <div className="font-mono text-xs font-black text-slate-900">
+                                    <span className="text-purple-700">{customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}</span>
+                                    <span className="text-slate-400 mx-1.5">•</span>
+                                    <span>{customer.completedPieces}/{customer.totalPieces} pcs</span>
+                                    <span className="text-slate-400 mx-1.5">•</span>
+                                    <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 justify-end mt-1">
+                                    <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                      <div
+                                        className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all"
+                                        style={{ width: `${customer.progressPct}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                                  </div>
+                                </div>
+
+                                <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 transition-colors">
+                                  {isExpanded ? (
+                                    <ChevronUp className="w-4 h-4" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4" />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Collapsible Customer Sub-Table & Quick Jump */}
+                          {isExpanded && (
+                            <div className="border-t border-slate-200 bg-slate-50/50 p-4 space-y-3">
+                              {/* Quick Jump Bar for this customer */}
+                              <div className="flex items-center justify-between flex-wrap gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                                  <Workflow className="w-3.5 h-3.5 text-purple-600" />
+                                  <span>Workstations with {customer.customerName} stickers:</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setPiSearchTerm(customer.customerName);
+                                      setActiveTab("cutting");
+                                    }}
+                                    className="h-7 text-[11px] font-bold border-purple-200 text-purple-700 hover:bg-purple-50 gap-1 rounded-lg"
+                                  >
+                                    <Scissors className="w-3 h-3" /> Cutting Station
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setPiSearchTerm(customer.customerName);
+                                      setActiveTab("pairing");
+                                    }}
+                                    className="h-7 text-[11px] font-bold border-blue-200 text-blue-700 hover:bg-blue-50 gap-1 rounded-lg"
+                                  >
+                                    <RefreshCw className="w-3 h-3" /> Pairing Buffer
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setPiSearchTerm(customer.customerName);
+                                      setActiveTab("lamination");
+                                    }}
+                                    className="h-7 text-[11px] font-bold border-amber-200 text-amber-700 hover:bg-amber-50 gap-1 rounded-lg"
+                                  >
+                                    <Flame className="w-3 h-3" /> Lamination
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setPiSearchTerm(customer.customerName);
+                                      setActiveTab("dgu");
+                                    }}
+                                    className="h-7 text-[11px] font-bold border-teal-200 text-teal-700 hover:bg-teal-50 gap-1 rounded-lg"
+                                  >
+                                    <ShieldCheck className="w-3 h-3" /> DLGU / IGU
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setPiSearchTerm(customer.customerName);
+                                      setActiveTab("finished");
+                                    }}
+                                    className="h-7 text-[11px] font-bold border-emerald-200 text-emerald-700 hover:bg-emerald-50 gap-1 rounded-lg"
+                                  >
+                                    <Truck className="w-3 h-3" /> Finished Warehouse
+                                  </Button>
+                                </div>
+                              </div>
+
+                              {/* Customer Batches Table */}
+                              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-2xs">
+                                <table className="w-full text-left text-xs border-collapse">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
+                                      <th className="py-2.5 px-3 whitespace-nowrap">BATCH NO</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">FINISH</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">PROJECT / JOB ORDER</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">CURRENT STAGE</th>
+                                      <th className="py-2.5 px-3 text-center whitespace-nowrap">PIECES</th>
+                                      <th className="py-2.5 px-3 text-right whitespace-nowrap">TOTAL SQM</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">UPLOADED AT</th>
+                                      <th className="py-2.5 px-3 text-center whitespace-nowrap">STATUS</th>
+                                      <th className="py-2.5 px-3 text-right whitespace-nowrap">ACTIONS</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {customer.batches.map((pi) => {
+                                      const metrics = getBatchMetrics(pi);
+                                      return (
+                                        <tr
+                                          key={pi.id}
+                                          onClick={() => openPIDetails(pi)}
+                                          className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+                                        >
+                                          <td className="py-2.5 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">
+                                            {formatBatchNumber(pi.piNumber)}
+                                          </td>
+                                          <td className="py-2.5 px-3 whitespace-nowrap">
+                                            {pi.colorOrClear === "Colour" ? (
+                                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                                Coloured Glass
+                                              </span>
+                                            ) : (
+                                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                                Clear Glass
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-slate-700">
+                                            <div className="font-semibold">{pi.projectName || "Standard Project"}</div>
+                                            {pi.jobOrderNumber && (
+                                              <span className="text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
+                                            )}
+                                          </td>
+                                          <td className="py-2.5 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveTab(metrics.activeStageTab)}
+                                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
+                                              title={`Go to ${metrics.activeStageName}`}
+                                            >
+                                              <span>{metrics.activeStageName}</span>
+                                              <ChevronRight className="w-3 h-3 opacity-60" />
+                                            </button>
+                                          </td>
+                                          <td className="py-2.5 px-3 text-center font-bold text-slate-800 whitespace-nowrap">
+                                            {metrics.completedPieces} / {metrics.totalPieces}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                                            {metrics.totalSqm.toFixed(2)} m²
+                                          </td>
+                                          <td className="py-2.5 px-3 whitespace-nowrap font-mono text-xs">
+                                            <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                              <Calendar className="w-3 h-3 text-purple-600" />
+                                              {formatPlatformDate(pi.createdAt || pi.issueDate)}
+                                            </div>
+                                          </td>
+                                          <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                            <StatusBadge status={metrics.status || pi.status || "Pending"} />
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                openPIDetails(pi);
+                                              }}
+                                              className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
+                                              title="View Details"
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                            </Button>
+                                            {userRole === "Admin" && (
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDeletePI(pi.id);
+                                                }}
+                                                className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
+                                                title="Delete Batch"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </Button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-white rounded-xl border border-dashed border-slate-200">
+                      <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3">
+                        <Users className="w-7 h-7" />
+                      </div>
+                      <h3 className="text-sm font-extrabold text-slate-900">No Matching Customers or Batches</h3>
+                      <p className="text-xs text-slate-500 mt-1">No batches found matching your search or filters. Clear your filters or upload a sticker batch.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* VIEW 2: ALL BATCHES FLAT TABLE */}
+              {batchViewMode === "FLAT" && (
+                <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                  {paginatedPIs.length > 0 ? (
+                    <div className="no-scrollbar overflow-x-auto w-full">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
+                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
+                              BATCH NO {renderSortIcon("piNumber")}
+                            </th>
+                            <th className="py-2.5 px-3 whitespace-nowrap">
+                              FINISH
+                            </th>
+                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
+                              CUSTOMER {renderSortIcon("customerName")}
+                            </th>
+                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
+                              PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                            </th>
+                            <th className="py-2.5 px-3 whitespace-nowrap">
+                              CURRENT STAGE
+                            </th>
+                            <th className="py-2.5 px-3 text-center whitespace-nowrap">
+                              ITEMS
+                            </th>
+                            <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                              TOTAL SQM
+                            </th>
+                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
+                              UPLOADED AT {renderSortIcon("createdAt")}
+                            </th>
+                            <th className="py-2.5 px-3 text-center whitespace-nowrap">
+                              STATUS
+                            </th>
+                            <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                              ACTIONS
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {paginatedPIs.map((pi) => {
+                            const metrics = getBatchMetrics(pi);
+                            return (
+                              <tr
+                                key={pi.id}
+                                onClick={() => openPIDetails(pi)}
+                                className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                                title="Click to view Batch details"
+                              >
+                                <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  {pi.colorOrClear === "Colour" ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs">
+                                      Coloured Glass
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs">
+                                      Clear Glass
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
+                                <td className="py-3 px-3 text-slate-600 leading-snug">
+                                  <div className="font-medium text-slate-900">{pi.projectName}</div>
+                                  {pi.jobOrderNumber && (
+                                    <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTab(metrics.activeStageTab)}
+                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
+                                    title={`Go to ${metrics.activeStageName}`}
+                                  >
+                                    <span>{metrics.activeStageName}</span>
+                                    <ChevronRight className="w-3 h-3 opacity-60" />
+                                  </button>
+                                </td>
+                                <td className="py-3 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
+                                  {metrics.completedPieces} / {metrics.totalPieces}
+                                </td>
+                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                                  {metrics.totalSqm.toFixed(2)} m²
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
+                                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                                    <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                    {formatPlatformDate(pi.createdAt || pi.issueDate)}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
+                                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    {formatPlatformTime(pi.createdAt)}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-3 text-center whitespace-nowrap">
+                                  <StatusBadge status={metrics.status || pi.status || "Pending"} />
+                                </td>
+                                <td className="py-3 px-3 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
                                   <Button
                                     size="sm"
                                     variant="ghost"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDeletePI(pi.id);
+                                      openPIDetails(pi);
                                     }}
-                                    className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
-                                    title="Delete Batch"
+                                    className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
+                                    title="View Details"
                                   >
-                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <Eye className="w-3.5 h-3.5" />
                                   </Button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                    <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3">
-                      <FileText className="w-7 h-7" />
+                                  {userRole === "Admin" && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeletePI(pi.id);
+                                      }}
+                                      className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
+                                      title="Delete Batch"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+
+                      {/* Pagination for flat view */}
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between border-t border-slate-200 pt-3 mt-3 text-xs text-slate-600">
+                          <div>
+                            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedAndFilteredPIs.length)} of {sortedAndFilteredPIs.length} batches
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                              disabled={currentPage === 1}
+                              className="h-7 px-2"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </Button>
+                            <span className="px-2 font-bold text-slate-800">Page {currentPage} of {totalPages}</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                              disabled={currentPage === totalPages}
+                              className="h-7 px-2"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
-                    <p className="text-xs text-slate-500 mt-1">Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.</p>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                      <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3">
+                        <FileText className="w-7 h-7" />
+                      </div>
+                      <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
+                      <p className="text-xs text-slate-500 mt-1">Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

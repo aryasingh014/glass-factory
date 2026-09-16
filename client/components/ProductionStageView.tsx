@@ -44,6 +44,11 @@ import {
   GripVertical,
   MousePointer,
   Truck,
+  Building2,
+  Users,
+  Grid,
+  ChevronUp,
+  ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -124,6 +129,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   // Sticker workspace filters & controls
   const [searchTerm, setSearchTerm] = useState("");
+  // Customer / Client Filter: "ALL" or specific customer name
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState<string>("ALL");
   const [finishFilter, setFinishFilter] = useState<"ALL" | "CLEAR" | "COLOUR" | "PAIRED" | "WAITING" | "DLGU" | "DGU" | "LAMINATION" | "GENERAL" | "DIRECT_LAM" | "DLGU_LAM">("ALL");
   const [groupBy, setGroupBy] = useState<"SHEET" | "SFO" | "NONE">("SHEET");
   const [selectedSheetRackNo, setSelectedSheetRackNo] = useState<string>("ALL");
@@ -389,6 +396,130 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       <ArrowDown className="w-3 h-3 ml-1 inline-block text-purple-600 font-bold" />
     );
   };
+
+  // Cutting Batch Selection - Customer Grouped View State (Default Closed)
+  const [batchViewMode, setBatchViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
+  const [expandedBatchCustomers, setExpandedBatchCustomers] = useState<Record<string, boolean>>({});
+
+  const toggleBatchCustomerExpanded = (customerName: string) => {
+    setExpandedBatchCustomers((prev) => ({
+      ...prev,
+      [customerName]: !prev[customerName],
+    }));
+  };
+
+  const isBatchCustomerExpanded = (customerName: string) => {
+    return Boolean(expandedBatchCustomers[customerName]); // Closed by default!
+  };
+
+  const setAllBatchCustomersExpanded = (expand: boolean) => {
+    const newState: Record<string, boolean> = {};
+    groupedCustomerBatches.forEach((g) => {
+      newState[g.customerName] = expand;
+    });
+    setExpandedBatchCustomers(newState);
+  };
+
+  // Non-Cutting Stages (DGU, Lamination, Finished) Customer Grouped View State (Default Closed)
+  const [stageViewMode, setStageViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
+  const [expandedStageCustomers, setExpandedStageCustomers] = useState<Record<string, boolean>>({});
+
+  const toggleStageCustomerExpanded = (customerName: string) => {
+    setExpandedStageCustomers((prev) => ({
+      ...prev,
+      [customerName]: !prev[customerName],
+    }));
+  };
+
+  const isStageCustomerExpanded = (customerName: string) => {
+    return Boolean(expandedStageCustomers[customerName]); // Closed by default!
+  };
+
+  const setAllStageCustomersExpanded = (expand: boolean) => {
+    const newState: Record<string, boolean> = {};
+    groupedStageCustomerRows.forEach((g) => {
+      newState[g.customerName] = expand;
+    });
+    setExpandedStageCustomers(newState);
+  };
+
+  const groupedCustomerBatches = useMemo(() => {
+    const map = new Map<string, typeof filteredBatches>();
+
+    filteredBatches.forEach((b) => {
+      const cust = (b.customerName || "BRIGHT PLUS FITOUT").trim();
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push(b);
+    });
+
+    const groups: Array<{
+      customerName: string;
+      batches: typeof filteredBatches;
+      totalBatches: number;
+      totalPieces: number;
+      completedPieces: number;
+      stageItemsCount: number;
+      totalSqm: number;
+      hasColour: boolean;
+      hasClear: boolean;
+      categories: Set<string>;
+      projects: string[];
+      isAllCompleted: boolean;
+      status: string;
+      progressPct: number;
+    }> = [];
+
+    map.forEach((batches, customerName) => {
+      let totalPieces = 0;
+      let completedPieces = 0;
+      let stageItemsCount = 0;
+      let totalSqm = 0;
+      let hasColour = false;
+      let hasClear = false;
+      const categories = new Set<string>();
+      const projectsSet = new Set<string>();
+
+      batches.forEach((b) => {
+        totalPieces += b.totalItems;
+        completedPieces += b.completedCount;
+        stageItemsCount += b.stageItemsCount;
+        totalSqm += b.totalSqm;
+        if (b.finish === "Colour") hasColour = true;
+        else hasClear = true;
+        categories.add(b.glassCategory);
+        if (b.projectName) projectsSet.add(b.projectName);
+        if (b.jobOrderNumber) projectsSet.add(`JO: ${b.jobOrderNumber}`);
+      });
+
+      const isAllCompleted =
+        (stageItemsCount === 0 && totalPieces > 0) ||
+        (completedPieces >= totalPieces && totalPieces > 0) ||
+        batches.every((b) => b.status === "Completed");
+
+      const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
+
+      groups.push({
+        customerName,
+        batches,
+        totalBatches: batches.length,
+        totalPieces,
+        completedPieces,
+        stageItemsCount,
+        totalSqm,
+        hasColour,
+        hasClear,
+        categories,
+        projects: Array.from(projectsSet),
+        isAllCompleted,
+        status: isAllCompleted ? "Completed" : "In Production",
+        progressPct,
+      });
+    });
+
+    return groups;
+  }, [filteredBatches]);
 
   // Close sheet dropdown when clicking outside
   useEffect(() => {
@@ -1080,11 +1211,32 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     [stageRows]
   );
 
+  // Available Customers extracted from current stage items & master PIs
+  const availableCustomers = useMemo(() => {
+    const map = new Map<string, { name: string; totalItems: number }>();
+    stageRows.forEach((r) => {
+      const parentPI = pis.find((p) => p.id === r.item.piId || p.piNumber === r.item.piNumber);
+      const cust = (parentPI?.customerName || (r.item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+      if (cust) {
+        if (!map.has(cust)) map.set(cust, { name: cust, totalItems: 0 });
+        map.get(cust)!.totalItems += r.isDguPair ? 1 : (r.item.qty || 1);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [stageRows, pis]);
+
   // Filtered Rows for display based on filters & search
   const filteredRows = useMemo(() => {
     return stageRows.filter((row) => {
       const item = row.item;
       const finish = getItemFinish(item);
+
+      // Customer / Client Filter
+      if (selectedCustomerFilter !== "ALL") {
+        const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
+        const cust = (parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+        if (cust !== selectedCustomerFilter) return false;
+      }
 
       if (stage === "DGU") {
         if (finishFilter === "DLGU" && row.glassCategory !== "DLGU") return false;
@@ -1135,7 +1287,104 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         partnerMatch
       );
     });
-  }, [stageRows, stage, finishFilter, searchTerm, externalSearchTerm]);
+  }, [stageRows, stage, finishFilter, selectedCustomerFilter, searchTerm, externalSearchTerm, pis]);
+
+  // Non-Cutting Customer Grouping (DGU, Lamination, Finished)
+  const groupedStageCustomerRows = useMemo(() => {
+    const map = new Map<string, StageRowItem[]>();
+
+    filteredRows.forEach((row) => {
+      const parentPI = pis.find(
+        (p) =>
+          p.id === row.item.piId ||
+          p.piNumber === row.item.piNumber ||
+          p.piNumber?.replace(/^STK-/i, "") === row.item.piNumber?.replace(/^STK-/i, "")
+      );
+      const cust = (
+        parentPI?.customerName ||
+        (row.item as any).customerName ||
+        (row.item as any).customer ||
+        "BRIGHT PLUS FITOUT"
+      ).trim();
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push(row);
+    });
+
+    const groups: Array<{
+      customerName: string;
+      rows: StageRowItem[];
+      totalUnits: number;
+      totalSqm: number;
+      projects: string[];
+      hasColour: boolean;
+      hasClear: boolean;
+      categories: Set<string>;
+      dguReadyUnits: number;
+      holdingUnits: number;
+      allRowIds: string[];
+      isAllSelected: boolean;
+      isSomeSelected: boolean;
+    }> = [];
+
+    map.forEach((cRows, customerName) => {
+      let totalUnits = 0;
+      let totalSqm = 0;
+      let hasColour = false;
+      let hasClear = false;
+      let dguReadyUnits = 0;
+      let holdingUnits = 0;
+      const projectsSet = new Set<string>();
+      const categories = new Set<string>();
+      const allRowIds = cRows.map((r) => r.id);
+
+      cRows.forEach((r) => {
+        const qty = r.item.qty || 1;
+        totalUnits += qty;
+        totalSqm += (r.effectiveSqm || r.item.sqm || 0);
+
+        const finish = getItemFinish(r.item);
+        if (finish === "Colour") hasColour = true;
+        else hasClear = true;
+
+        if (r.glassCategory) categories.add(r.glassCategory);
+        else if (isDlguGlass(r.item)) categories.add("DLGU");
+        else if (isDguGlass(r.item)) categories.add("DGU");
+        else if (isLaminatedGlass(r.item)) categories.add("Lamination");
+
+        const parentPI = pis.find((p) => p.id === r.item.piId || p.piNumber === r.item.piNumber);
+        const proj = parentPI?.projectName || r.item.sectionName;
+        if (proj) projectsSet.add(proj);
+        const jo = parentPI?.jobOrderNumber || r.item.orderNo || r.item.sfoNo;
+        if (jo) projectsSet.add(`JO: ${jo}`);
+
+        if (r.dguPairReady) dguReadyUnits += 1;
+        if (r.isHolding) holdingUnits += 1;
+      });
+
+      const isAllSelected = allRowIds.length > 0 && allRowIds.every((id) => selectedRowIds.includes(id));
+      const isSomeSelected = !isAllSelected && allRowIds.some((id) => selectedRowIds.includes(id));
+
+      groups.push({
+        customerName,
+        rows: cRows,
+        totalUnits,
+        totalSqm,
+        projects: Array.from(projectsSet),
+        hasColour,
+        hasClear,
+        categories,
+        dguReadyUnits,
+        holdingUnits,
+        allRowIds,
+        isAllSelected,
+        isSomeSelected,
+      });
+    });
+
+    return groups;
+  }, [filteredRows, pis, selectedRowIds]);
 
   // Group rows by Raw Sheet / Pattern (Rack #)
   const sheetGroups = useMemo(() => {
@@ -1733,27 +1982,92 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </button>
             </div>
 
-            {/* Search Input */}
-            <div className="relative flex-1 max-w-md w-full">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <Input
-                value={batchSearchTerm}
-                onChange={(e) => setBatchSearchTerm(e.target.value)}
-                placeholder="Search batch by SFO, Job Order, Customer, Project..."
-                className="pl-9 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white"
-              />
-              {batchSearchTerm && (
-                <button
-                  onClick={() => setBatchSearchTerm("")}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+            {/* View Mode Switcher Toggle */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setBatchViewMode("CUSTOMER")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  batchViewMode === "CUSTOMER"
+                    ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Group by Customer</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                  }`}
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+                  {groupedCustomerBatches.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBatchViewMode("FLAT")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  batchViewMode === "FLAT"
+                    ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>All Batches (Flat)</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {filteredBatches.length}
+                </span>
+              </button>
             </div>
 
-            {/* Export Batches Excel Button */}
-            <div className="flex items-center gap-2">
+            {/* Search Input & Controls */}
+            <div className="flex items-center gap-2 flex-1 max-w-xl w-full justify-end flex-wrap">
+              {batchViewMode === "CUSTOMER" && groupedCustomerBatches.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAllBatchCustomersExpanded(true)}
+                    className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                  >
+                    Expand All
+                  </Button>
+                  <span className="text-slate-300">|</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAllBatchCustomersExpanded(false)}
+                    className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                  >
+                    Collapse All
+                  </Button>
+                </div>
+              )}
+
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <Input
+                  value={batchSearchTerm}
+                  onChange={(e) => setBatchSearchTerm(e.target.value)}
+                  placeholder="Search batch by Customer, Job Order, Project..."
+                  className="pl-9 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white"
+                />
+                {batchSearchTerm && (
+                  <button
+                    onClick={() => setBatchSearchTerm("")}
+                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Export Batches Excel Button */}
               <Button
                 type="button"
                 size="sm"
@@ -1783,173 +2097,407 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           </div>
         </div>
 
-        {/* ── BATCH TABLE ── */}
-        <div className="bg-white border border-slate-300 rounded-2xl shadow-xs overflow-hidden">
-          {filteredBatches.length > 0 ? (
-            <div className="overflow-x-auto w-full">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
-                    <th
-                      className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                      onClick={() => handleBatchSort("piNumber")}
+        {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
+        {batchViewMode === "CUSTOMER" && (
+          <div className="space-y-3">
+            {groupedCustomerBatches.length > 0 ? (
+              groupedCustomerBatches.map((customer) => {
+                const isExpanded = isBatchCustomerExpanded(customer.customerName);
+                return (
+                  <div
+                    key={customer.customerName}
+                    className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-purple-300"
+                  >
+                    {/* Customer Header - Click to toggle */}
+                    <div
+                      onClick={() => toggleBatchCustomerExpanded(customer.customerName)}
+                      className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30 transition-colors"
                     >
-                      BATCH NO {renderSortIcon("piNumber")}
-                    </th>
-                    <th
-                      className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                      onClick={() => handleBatchSort("customerName")}
-                    >
-                      CUSTOMER {renderSortIcon("customerName")}
-                    </th>
-                    <th
-                      className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                      onClick={() => handleBatchSort("projectName")}
-                    >
-                      PROJECT / JOB ORDER {renderSortIcon("projectName")}
-                    </th>
-                    <th
-                      className="py-3 px-3 cursor-pointer whitespace-nowrap text-center"
-                      onClick={() => handleBatchSort("finish")}
-                    >
-                      FINISH {renderSortIcon("finish")}
-                    </th>
-                    <th
-                      className="py-3 px-3 cursor-pointer text-center whitespace-nowrap"
-                      onClick={() => handleBatchSort("completedCount")}
-                    >
-                      COMPLETED {renderSortIcon("completedCount")}
-                    </th>
-                    <th
-                      className="py-3 px-3 cursor-pointer text-right whitespace-nowrap"
-                      onClick={() => handleBatchSort("totalSqm")}
-                    >
-                      SQM {renderSortIcon("totalSqm")}
-                    </th>
-                    <th
-                      className="py-3 px-3 cursor-pointer whitespace-nowrap"
-                      onClick={() => handleBatchSort("createdAt")}
-                    >
-                      UPLOADED AT {renderSortIcon("createdAt")}
-                    </th>
-                    <th className="py-3 px-3 text-center whitespace-nowrap">
-                      STATUS
-                    </th>
-                    <th className="py-3 px-3.5 text-right whitespace-nowrap">
-                      ACTION
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredBatches.map((b) => {
-                    const isBatchCompleted =
-                      (b.stageItemsCount === 0 && b.totalItems > 0) ||
-                      (b.completedCount >= b.totalItems && b.totalItems > 0) ||
-                      b.status === "Completed";
+                      <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                        {/* Left: Customer Info & Badges */}
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                            <Building2 className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-base font-extrabold text-slate-900 truncate">
+                                {customer.customerName}
+                              </h3>
+                              {customer.hasColour && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                  Coloured
+                                </span>
+                              )}
+                              {customer.hasClear && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                  Clear
+                                </span>
+                              )}
+                              {Array.from(customer.categories).map((cat) => (
+                                <span
+                                  key={cat}
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black border ${
+                                    cat === "DLGU"
+                                      ? "bg-purple-100 text-purple-900 border-purple-200"
+                                      : cat === "DGU"
+                                      ? "bg-teal-100 text-teal-900 border-teal-200"
+                                      : "bg-amber-100 text-amber-900 border-amber-200"
+                                  }`}
+                                >
+                                  {cat} Queue
+                                </span>
+                              ))}
+                              <StatusBadge status={customer.status} />
+                            </div>
+                            <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                              {customer.projects.length > 0
+                                ? customer.projects.join(" • ")
+                                : "Standard Shop Floor Order"}
+                            </div>
+                          </div>
+                        </div>
 
-                    return (
-                      <tr
-                        key={b.id}
-                        onClick={() => {
-                          if (!isBatchCompleted) {
-                            setSelectedBatchId(b.id);
-                            setSelectedSheetRackNo("ALL");
-                            setExpandedSheets({});
-                          }
-                        }}
-                        className={`transition-colors ${
-                          isBatchCompleted
-                            ? "bg-slate-50/40 hover:bg-slate-50/70 cursor-default"
-                            : "hover:bg-purple-50/40 cursor-pointer group"
-                        }`}
-                      >
-                        <td className="py-3 px-3.5 font-bold font-mono text-purple-700">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span>{formatBatchNumber(b.piNumber)}</span>
-                            {b.glassCategory === "DLGU" ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
-                                <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
-                              </span>
-                            ) : b.glassCategory === "DGU" ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
-                                <Boxes className="w-3 h-3 text-teal-600" /> DGU
-                              </span>
+                        {/* Right: Quantities, Progress & Accordion Trigger */}
+                        <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                          <div className="text-right">
+                            <div className="font-mono text-xs font-black text-slate-900">
+                              <span className="text-purple-700">{customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}</span>
+                              <span className="text-slate-400 mx-1.5">•</span>
+                              <span>{customer.completedPieces}/{customer.totalPieces} pcs</span>
+                              <span className="text-slate-400 mx-1.5">•</span>
+                              <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
+                            </div>
+                            <div className="flex items-center gap-2 justify-end mt-1">
+                              <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all"
+                                  style={{ width: `${customer.progressPct}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                            </div>
+                          </div>
+
+                          <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 transition-colors">
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4" />
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs">
-                                <Layers className="w-3 h-3 text-amber-700" /> Lamination
-                              </span>
+                              <ChevronDown className="w-4 h-4" />
                             )}
                           </div>
-                        </td>
-                        <td className="py-3 px-3.5 font-medium text-slate-800">
-                          {b.customerName}
-                        </td>
-                        <td className="py-3 px-3.5 text-slate-600">
-                          <span className="font-semibold text-slate-800">{b.projectName}</span>
-                          {b.jobOrderNumber && (
-                            <span className="text-[11px] text-purple-600 font-mono block">
-                              JO: {b.jobOrderNumber}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Collapsible Customer Sub-Table */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
+                        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-2xs">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
+                                <th className="py-2.5 px-3.5 whitespace-nowrap">BATCH NO</th>
+                                <th className="py-2.5 px-3.5 whitespace-nowrap">PROJECT / JOB ORDER</th>
+                                <th className="py-2.5 px-3 text-center whitespace-nowrap">FINISH</th>
+                                <th className="py-2.5 px-3 text-center whitespace-nowrap">COMPLETED</th>
+                                <th className="py-2.5 px-3 text-right whitespace-nowrap">SQM</th>
+                                <th className="py-2.5 px-3 whitespace-nowrap">UPLOADED AT</th>
+                                <th className="py-2.5 px-3 text-center whitespace-nowrap">STATUS</th>
+                                <th className="py-2.5 px-3.5 text-right whitespace-nowrap">ACTION</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {customer.batches.map((b) => {
+                                const isBatchCompleted =
+                                  (b.stageItemsCount === 0 && b.totalItems > 0) ||
+                                  (b.completedCount >= b.totalItems && b.totalItems > 0) ||
+                                  b.status === "Completed";
+
+                                return (
+                                  <tr
+                                    key={b.id}
+                                    onClick={() => {
+                                      if (!isBatchCompleted) {
+                                        setSelectedBatchId(b.id);
+                                        setSelectedSheetRackNo("ALL");
+                                        setExpandedSheets({});
+                                      }
+                                    }}
+                                    className={`transition-colors ${
+                                      isBatchCompleted
+                                        ? "bg-slate-50/40 hover:bg-slate-50/70 cursor-default"
+                                        : "hover:bg-purple-50/40 cursor-pointer group"
+                                    }`}
+                                  >
+                                    <td className="py-2.5 px-3.5 font-bold font-mono text-purple-700">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span>{formatBatchNumber(b.piNumber)}</span>
+                                        {b.glassCategory === "DLGU" ? (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
+                                            <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
+                                          </span>
+                                        ) : b.glassCategory === "DGU" ? (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
+                                            <Boxes className="w-3 h-3 text-teal-600" /> DGU
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs">
+                                            <Layers className="w-3 h-3 text-amber-700" /> Lamination
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="py-2.5 px-3.5 text-slate-600">
+                                      <span className="font-semibold text-slate-800">{b.projectName}</span>
+                                      {b.jobOrderNumber && (
+                                        <span className="text-[11px] text-purple-600 font-mono block">
+                                          JO: {b.jobOrderNumber}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center">
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                          b.finish === "Colour"
+                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                            : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                        }`}
+                                      >
+                                        {b.finish === "Colour" ? "Colour" : "Clear"}
+                                      </span>
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center font-mono">
+                                      <span className="font-bold text-emerald-700">{b.completedCount}</span>
+                                      <span className="text-slate-400 text-[10px]"> / {b.totalItems}</span>
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">
+                                      {b.totalSqm.toFixed(2)} m²
+                                    </td>
+                                    <td className="py-2.5 px-3 whitespace-nowrap font-mono text-xs">
+                                      <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                                        <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                        {formatPlatformDate(b.createdAt || b.issueDate)}
+                                      </div>
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                      <StatusBadge status={isBatchCompleted ? "Completed" : "In Production"} />
+                                    </td>
+                                    <td className="py-2.5 px-3.5 text-right">
+                                      {isBatchCompleted ? (
+                                        <Button
+                                          size="sm"
+                                          disabled={true}
+                                          className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-bold gap-1 rounded-xl shadow-none h-7 px-3 cursor-not-allowed opacity-80"
+                                          title="All glass cut and completed for this batch"
+                                        >
+                                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                          <span>All Cut</span>
+                                        </Button>
+                                      ) : (
+                                        <Button
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedBatchId(b.id);
+                                            setSelectedSheetRackNo("ALL");
+                                            setExpandedSheets({});
+                                          }}
+                                          className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
+                                        >
+                                          <span>Open Floor</span>
+                                          <ChevronRight className="w-3.5 h-3.5" />
+                                        </Button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
+                <Users className="w-10 h-10 mx-auto mb-2 opacity-30 text-purple-600" />
+                <p className="text-sm font-semibold">No customer batches found matching the filters.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── VIEW 2: FLAT BATCH TABLE ── */}
+        {batchViewMode === "FLAT" && (
+          <div className="bg-white border border-slate-300 rounded-2xl shadow-xs overflow-hidden">
+            {filteredBatches.length > 0 ? (
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
+                      <th
+                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
+                        onClick={() => handleBatchSort("piNumber")}
+                      >
+                        BATCH NO {renderSortIcon("piNumber")}
+                      </th>
+                      <th
+                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
+                        onClick={() => handleBatchSort("customerName")}
+                      >
+                        CUSTOMER {renderSortIcon("customerName")}
+                      </th>
+                      <th
+                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
+                        onClick={() => handleBatchSort("projectName")}
+                      >
+                        PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                      </th>
+                      <th
+                        className="py-3 px-3 cursor-pointer whitespace-nowrap text-center"
+                        onClick={() => handleBatchSort("finish")}
+                      >
+                        FINISH {renderSortIcon("finish")}
+                      </th>
+                      <th
+                        className="py-3 px-3 cursor-pointer text-center whitespace-nowrap"
+                        onClick={() => handleBatchSort("completedCount")}
+                      >
+                        COMPLETED {renderSortIcon("completedCount")}
+                      </th>
+                      <th
+                        className="py-3 px-3 cursor-pointer text-right whitespace-nowrap"
+                        onClick={() => handleBatchSort("totalSqm")}
+                      >
+                        SQM {renderSortIcon("totalSqm")}
+                      </th>
+                      <th
+                        className="py-3 px-3 cursor-pointer whitespace-nowrap"
+                        onClick={() => handleBatchSort("createdAt")}
+                      >
+                        UPLOADED AT {renderSortIcon("createdAt")}
+                      </th>
+                      <th className="py-3 px-3 text-center whitespace-nowrap">
+                        STATUS
+                      </th>
+                      <th className="py-3 px-3.5 text-right whitespace-nowrap">
+                        ACTION
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredBatches.map((b) => {
+                      const isBatchCompleted =
+                        (b.stageItemsCount === 0 && b.totalItems > 0) ||
+                        (b.completedCount >= b.totalItems && b.totalItems > 0) ||
+                        b.status === "Completed";
+
+                      return (
+                        <tr
+                          key={b.id}
+                          onClick={() => {
+                            if (!isBatchCompleted) {
+                              setSelectedBatchId(b.id);
+                              setSelectedSheetRackNo("ALL");
+                              setExpandedSheets({});
+                            }
+                          }}
+                          className={`transition-colors ${
+                            isBatchCompleted
+                              ? "bg-slate-50/40 hover:bg-slate-50/70 cursor-default"
+                              : "hover:bg-purple-50/40 cursor-pointer group"
+                          }`}
+                        >
+                          <td className="py-3 px-3.5 font-bold font-mono text-purple-700">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{formatBatchNumber(b.piNumber)}</span>
+                              {b.glassCategory === "DLGU" ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
+                                  <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
+                                </span>
+                              ) : b.glassCategory === "DGU" ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
+                                  <Boxes className="w-3 h-3 text-teal-600" /> DGU
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs">
+                                  <Layers className="w-3 h-3 text-amber-700" /> Lamination
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3.5 font-medium text-slate-800">
+                            {b.customerName}
+                          </td>
+                          <td className="py-3 px-3.5 text-slate-600">
+                            <span className="font-semibold text-slate-800">{b.projectName}</span>
+                            {b.jobOrderNumber && (
+                              <span className="text-[11px] text-purple-600 font-mono block">
+                                JO: {b.jobOrderNumber}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                b.finish === "Colour"
+                                  ? "bg-purple-100 text-purple-800 border-purple-200"
+                                  : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                              }`}
+                            >
+                              {b.finish === "Colour" ? "Colour" : "Clear"}
                             </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
-                              b.finish === "Colour"
-                                ? "bg-purple-100 text-purple-800 border-purple-200"
-                                : "bg-cyan-100 text-cyan-800 border-cyan-200"
-                            }`}
-                          >
-                            {b.finish === "Colour" ? "Colour" : "Clear"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono">
-                          <span className="font-bold text-emerald-700">{b.completedCount}</span>
-                          <span className="text-slate-400 text-[10px]"> / {b.totalItems}</span>
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
-                          {b.totalSqm.toFixed(2)} m²
-                        </td>
-                        <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
-                          <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                            <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                            {formatPlatformDate(b.createdAt || b.issueDate)}
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
-                            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            {formatPlatformTime(b.createdAt)}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 text-center whitespace-nowrap">
-                          <StatusBadge status={isBatchCompleted ? "Completed" : "In Production"} />
-                        </td>
-                        <td className="py-3 px-3.5 text-right">
-                          {isBatchCompleted ? (
-                            <Button
-                              size="sm"
-                              disabled={true}
-                              className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-bold gap-1 rounded-xl shadow-none h-7 px-3 cursor-not-allowed opacity-80"
-                              title="All glass cut and completed for this batch"
-                            >
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>All Cut</span>
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedBatchId(b.id);
-                                setSelectedSheetRackNo("ALL");
-                                setExpandedSheets({});
-                              }}
-                              className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
-                            >
-                              <span>Open Floor</span>
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </td>
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono">
+                            <span className="font-bold text-emerald-700">{b.completedCount}</span>
+                            <span className="text-slate-400 text-[10px]"> / {b.totalItems}</span>
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
+                            {b.totalSqm.toFixed(2)} m²
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                              <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                              {formatPlatformDate(b.createdAt || b.issueDate)}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
+                              <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              {formatPlatformTime(b.createdAt)}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
+                            <StatusBadge status={isBatchCompleted ? "Completed" : "In Production"} />
+                          </td>
+                          <td className="py-3 px-3.5 text-right">
+                            {isBatchCompleted ? (
+                              <Button
+                                size="sm"
+                                disabled={true}
+                                className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-bold gap-1 rounded-xl shadow-none h-7 px-3 cursor-not-allowed opacity-80"
+                                title="All glass cut and completed for this batch"
+                              >
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>All Cut</span>
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedBatchId(b.id);
+                                  setSelectedSheetRackNo("ALL");
+                                  setExpandedSheets({});
+                                }}
+                                className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
+                              >
+                                <span>Open Floor</span>
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </td>
                       </tr>
                     );
                   })}
@@ -1962,7 +2510,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <p className="text-sm font-semibold">No batches found matching the filters.</p>
             </div>
           )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2513,9 +3062,33 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             )}
           </div>
 
-          {/* Center & Right: Search Input + Export Excel Dropdown */}
-          <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-xl justify-end">
-            <div className="relative flex-1">
+          {/* Center & Right: Client Filter + Search Input + Export Excel Dropdown */}
+          <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-2xl justify-end flex-wrap sm:flex-nowrap">
+            {availableCustomers.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Client:
+                </span>
+                <select
+                  value={selectedCustomerFilter}
+                  onChange={(e) => {
+                    setSelectedCustomerFilter(e.target.value);
+                    setSelectedRowIds([]);
+                  }}
+                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[140px] lg:w-[160px] truncate"
+                  title="Filter stage queue by Customer Name"
+                >
+                  <option value="ALL">All Clients ({availableCustomers.length})</option>
+                  {availableCustomers.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.totalItems} pcs)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="relative flex-1 min-w-[160px]">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
               <Input
                 value={searchTerm}
@@ -3052,6 +3625,61 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </Button>
               </div>
             )}
+
+            {stage !== "Cutting" && (
+              <div className="flex items-center gap-2 flex-wrap ml-2">
+                {/* View Switcher: Customer vs Flat */}
+                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setStageViewMode("CUSTOMER")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                      stageViewMode === "CUSTOMER"
+                        ? "bg-indigo-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Group by Customer</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStageViewMode("FLAT")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                      stageViewMode === "FLAT"
+                        ? "bg-indigo-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                    }`}
+                  >
+                    <Grid className="w-3.5 h-3.5" />
+                    <span>Flat Table</span>
+                  </button>
+                </div>
+
+                {stageViewMode === "CUSTOMER" && groupedStageCustomerRows.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setAllStageCustomersExpanded(true)}
+                      className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
+                    >
+                      Expand All
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setAllStageCustomersExpanded(false)}
+                      className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
+                    >
+                      Collapse All
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -3533,444 +4161,630 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             )}
           </div>
         ) : (
-          /* Regular Table for DGU / Pairing / Finished Stage */
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/60">
-                  {stage !== "Finished" && (
-                    <th className="py-2.5 px-3 w-8 text-center">
-                      <input
-                        type="checkbox"
-                        checked={
-                          stage === "DGU"
-                            ? displayedRows.filter((r) => r.dguPairReady).length > 0 &&
-                              displayedRows.filter((r) => r.dguPairReady).every((r) => selectedRowIds.includes(r.id))
-                            : stage === "Lamination"
-                            ? displayedRows.filter((r) => !r.isHolding).length > 0 &&
-                              displayedRows.filter((r) => !r.isHolding).every((r) => selectedRowIds.includes(r.id))
-                            : selectedRowIds.length === displayedRows.length && displayedRows.length > 0
-                        }
-                        disabled={
-                          (stage === "DGU" && displayedRows.filter((r) => r.dguPairReady).length === 0) ||
-                          (stage === "Lamination" && displayedRows.filter((r) => !r.isHolding).length === 0)
-                        }
-                        onChange={toggleSelectAll}
-                        className="w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                        title={
-                          stage === "DGU" && displayedRows.filter((r) => r.dguPairReady).length === 0
-                            ? "Cannot select all: no DGU units have matching Clear glass cut yet"
-                            : stage === "Lamination" && displayedRows.filter((r) => !r.isHolding).length === 0
-                            ? "Cannot select all: all DLGU items are holding in staging awaiting Colour glass cutting"
-                            : "Select all"
-                        }
-                      />
-                    </th>
-                  )}
-                  <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
-                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
-                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
-                  <th className="py-2.5 px-2">
-                    {stage === "DGU" ? "Outer Panel Serial" : stage === "Finished" ? "Unit / Sticker Serial" : "Sticker Serial"}
-                  </th>
-                  <th className="py-2.5 px-2">
-                    {stage === "DGU" ? "Outer Panel Barcode" : "Barcode"}
-                  </th>
-                  <th className="py-2.5 px-2 text-center">{stage === "DGU" ? "QTY (Units)" : stage === "Finished" ? "QTY (Units/Pcs)" : "QTY"}</th>
-                  <th className="py-2.5 px-2 text-right">SQM</th>
-                  <th className="py-2.5 px-2">Size (W × H)</th>
-                  <th className="py-2.5 px-2">{stage === "DGU" ? "Outer Panel Glass Spec" : "Glass Type / Specification"}</th>
-                  <th className="py-2.5 px-2">{stage === "Finished" ? "Product Type & Finish" : "Finish"}</th>
-                  <th className="py-2.5 px-2">Route Flow</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {displayedRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={stage === "Finished" ? 12 : 13} className="text-center py-12 text-slate-500">
-                      <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
-                        <span className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center font-bold text-lg">
-                          🪟
-                        </span>
-                        <div className="font-extrabold text-slate-800 text-sm">
-                          {stage === "DGU" ? "No DGU Units in Queue" : "No items found in this view"}
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          {stage === "DGU"
-                            ? "After cutting, Clear glass waits in the Glass Pairing & Buffer. When Colour glass is cut, both panes come together for pairing and then advance here to the DGU Assembly Line."
-                            : "No records match the selected filter or search criteria."}
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  displayedRows.map((row) => {
-                    const isSelected = selectedRowIds.includes(row.id);
-                    const item = row.item;
-                    const partner = row.partnerItem;
-                    const itemFinish = getItemFinish(item);
+          /* Non-Cutting Stage View (Customer-Grouped by default, or Flat Table) */
+          (() => {
+            const renderStageRowsTable = (rows: StageRowItem[]) => {
+              const selectableRows =
+                stage === "DGU"
+                  ? rows.filter((r) => r.dguPairReady)
+                  : stage === "Lamination"
+                  ? rows.filter((r) => !r.isHolding)
+                  : rows;
 
-                    return (
-                      <tr
-                        key={row.id}
-                        className={`hover:bg-teal-50/30 transition-colors ${
-                          isSelected ? "bg-teal-50/60" : ""
-                        }`}
-                      >
+              const allSelectableSelected =
+                selectableRows.length > 0 && selectableRows.every((r) => selectedRowIds.includes(r.id));
+
+              const handleToggleCustomerSelectAll = () => {
+                if (selectableRows.length === 0) return;
+                const ids = selectableRows.map((r) => r.id);
+                if (allSelectableSelected) {
+                  setSelectedRowIds((prev) => prev.filter((id) => !ids.includes(id)));
+                } else {
+                  setSelectedRowIds((prev) => Array.from(new Set([...prev, ...ids])));
+                }
+              };
+
+              return (
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/60">
                         {stage !== "Finished" && (
-                          <td className="py-2.5 px-3 text-center align-middle">
+                          <th className="py-2.5 px-3 w-8 text-center">
                             <input
                               type="checkbox"
-                              checked={isSelected}
-                              disabled={(stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
-                              onChange={() => toggleSelect(row.id)}
-                              className={`w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 ${
-                                (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
-                                  ? "opacity-30 cursor-not-allowed"
-                                  : "cursor-pointer"
-                              }`}
+                              checked={allSelectableSelected}
+                              disabled={selectableRows.length === 0}
+                              onChange={handleToggleCustomerSelectAll}
+                              className="w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                               title={
-                                stage === "DGU" && !row.dguPairReady
-                                  ? "Cannot select: matching Clear glass has not been cut yet"
-                                  : stage === "Lamination" && row.isHolding
-                                  ? "Cannot select: DLGU glass is held in Lamination staging awaiting Colour glass cutting"
-                                  : "Select row"
+                                stage === "DGU" && selectableRows.length === 0
+                                  ? "Cannot select all: no DGU units have matching Clear glass cut yet"
+                                  : stage === "Lamination" && selectableRows.length === 0
+                                  ? "Cannot select all: all DLGU items are holding in staging awaiting Colour glass cutting"
+                                  : "Select all"
                               }
                             />
-                          </td>
+                          </th>
                         )}
-
-                        {/* PI Number */}
-                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
-                            {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
-                          </span>
-                        </td>
-
-                        {/* Batch Number */}
-                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs">
-                            {item.batchNo || item.sfoNo || (row as any).batchNo || (row as any).sfoNo || "—"}
-                          </span>
-                        </td>
-
-                        {/* Position Number */}
-                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-extrabold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs min-w-[32px]">
-                            {item.posNo || (row as any).posNo || "—"}
-                          </span>
-                        </td>
-
-                        {/* Sticker Serial */}
-                        <td className="py-2.5 px-2 font-mono font-bold align-middle">
-                          <span className="text-purple-700">
-                            {row.displaySerial}
-                          </span>
-                          {stage === "Lamination" && (
-                            isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                              <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                DLGU Sub-Assembly
+                        <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
+                        <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
+                        <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
+                        <th className="py-2.5 px-2">
+                          {stage === "DGU" ? "Outer Panel Serial" : stage === "Finished" ? "Unit / Sticker Serial" : "Sticker Serial"}
+                        </th>
+                        <th className="py-2.5 px-2">
+                          {stage === "DGU" ? "Outer Panel Barcode" : "Barcode"}
+                        </th>
+                        <th className="py-2.5 px-2 text-center">{stage === "DGU" ? "QTY (Units)" : stage === "Finished" ? "QTY (Units/Pcs)" : "QTY"}</th>
+                        <th className="py-2.5 px-2 text-right">SQM</th>
+                        <th className="py-2.5 px-2">Size (W × H)</th>
+                        <th className="py-2.5 px-2">{stage === "DGU" ? "Outer Panel Glass Spec" : "Glass Type / Specification"}</th>
+                        <th className="py-2.5 px-2">{stage === "Finished" ? "Product Type & Finish" : "Finish"}</th>
+                        <th className="py-2.5 px-2">Route Flow</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={stage === "Finished" ? 12 : 13} className="text-center py-12 text-slate-500">
+                            <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                              <span className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center font-bold text-lg">
+                                🪟
                               </span>
-                            ) : (
-                              <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
-                                Direct Lamination
-                              </span>
-                            )
-                          )}
-                          {stage === "DGU" && (
-                            row.glassCategory === "DLGU" ? (
-                              <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                DLGU Unit (Outer Lite)
-                              </span>
-                            ) : (
-                              <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
-                                DGU Unit (Outer Lite)
-                              </span>
-                            )
-                          )}
-                          {stage === "Finished" && (
-                            row.glassCategory === "DLGU" ? (
-                              <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                DLGU Unit
-                              </span>
-                            ) : row.glassCategory === "DGU" || row.isDguPair ? (
-                              <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
-                                DGU / IGU Unit
-                              </span>
-                            ) : row.glassCategory === "Laminated" ? (
-                              <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
-                                Laminated Unit
-                              </span>
-                            ) : (
-                              <span className="text-[9.5px] text-indigo-700 font-extrabold block whitespace-nowrap">
-                                General Glass
-                              </span>
-                            )
-                          )}
-                        </td>
-
-                        {/* Barcode */}
-                        <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
-                          <div>{row.displayBarcode}</div>
-                          {stage === "DGU" && (
-                            <span className="text-[9.5px] text-purple-700 block font-mono font-bold">
-                              Scan Target (Colour)
-                            </span>
-                          )}
-                          {stage === "Finished" && row.isDguPair && partner && (
-                            <span className="text-[9.5px] text-teal-700 block font-mono font-semibold">
-                              + Inner: {partner.barcode}
-                            </span>
-                          )}
-                        </td>
-
-                        {/* QTY */}
-                        <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-200 shadow-2xs">
-                            {item.qty || 1} {stage === "DGU" || (stage === "Finished" && (row.isDguPair || row.glassCategory === "DGU" || row.glassCategory === "DLGU")) ? (item.qty === 1 ? "unit" : "units") : item.qty === 1 ? "pc" : "pcs"}
-                          </span>
-                        </td>
-
-                        {/* SQM */}
-                        <td className="py-2.5 px-2 text-right font-mono font-bold text-emerald-700 align-middle whitespace-nowrap text-xs">
-                          {(row.effectiveSqm || item.sqm || 0).toFixed(2)} m²
-                        </td>
-
-                        {/* Size */}
-                        <td className="py-2.5 px-2 font-bold text-slate-900 align-middle whitespace-nowrap">
-                          {item.width} × {item.height} mm
-                        </td>
-
-                        {/* Glass Type / Description */}
-                        <td className="py-2.5 px-2 text-slate-700 font-medium align-middle max-w-[280px]">
-                          <div className="truncate font-bold text-slate-900">
-                            {item.glassType || item.itemCode || item.glassCode || item.category || "Outer Panel Glass"}
-                          </div>
-                          {stage === "Lamination" && (
-                            isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                              <div className="text-[10px] font-semibold flex flex-col gap-0.5 mt-0.5">
-                                <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold inline-block w-fit">
-                                  DLGU Inner Lam • Sub-Assembly Unit
-                                </span>
-                                <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded w-fit">
-                                  <CheckCircle className="w-3 h-3 text-emerald-600" />
-                                  Ready to complete Lamination & advance to Pairing Buffer
-                                </span>
+                              <div className="font-extrabold text-slate-800 text-sm">
+                                {stage === "DGU" ? "No DGU Units in Queue" : "No items found in this view"}
                               </div>
-                            ) : (
-                              <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1 mt-0.5">
-                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 font-bold">
-                                  Direct Lamination • Next: Finished Warehouse
-                                </span>
-                              </div>
-                            )
-                          )}
-                          {stage === "DGU" && (
-                            row.glassCategory === "DLGU" ? (
-                              <>
-                                <div className="text-[10px] text-purple-800 font-extrabold flex items-center gap-1 mt-0.5">
-                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
-                                    DLGU Unit • Double Laminated IGU
-                                  </span>
-                                </div>
-                                {partner ? (
-                                  <div className="text-[10px] text-purple-900 font-semibold flex items-center gap-1 mt-0.5">
-                                    <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Laminated Clear Float"})</span>
-                                  </div>
-                                ) : (
-                                  <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
-                                    <span>⏳ Waiting for Laminated Clear Inner Pane</span>
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <div className="text-[10px] text-teal-800 font-extrabold flex items-center gap-1 mt-0.5">
-                                  <span className="px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 border border-teal-200 font-bold">
-                                    Standard DGU / IGU Unit
-                                  </span>
-                                </div>
-                                {partner ? (
-                                  <div className="text-[10px] text-teal-900 font-semibold flex items-center gap-1 mt-0.5">
-                                    <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Clear Float"})</span>
-                                  </div>
-                                ) : (
-                                  <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
-                                    <span>⏳ Waiting for Clear Float Inner Pane</span>
-                                  </div>
-                                )}
-                              </>
-                            )
-                          )}
-                          {stage === "Finished" && (
-                            row.glassCategory === "DLGU" ? (
-                              <div className="text-[10px] text-purple-800 font-semibold flex items-center gap-1 mt-0.5">
-                                <span>Double Laminated Glazed Unit (DLGU){partner ? ` • Inner: ${partner.serialNumber}` : ""}</span>
-                              </div>
-                            ) : row.glassCategory === "DGU" && row.isDguPair && partner ? (
-                              <div className="text-[10px] text-teal-800 font-semibold flex items-center gap-1 mt-0.5">
-                                <span>Paired DGU: Inner Lite {partner.serialNumber}</span>
-                              </div>
-                            ) : row.glassCategory === "Laminated" ? (
-                              <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1 mt-0.5">
-                                <span>Laminated Glass • Autoclaved</span>
-                              </div>
-                            ) : (
-                              <div className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mt-0.5">
-                                <span>General Monolithic / Single Pane</span>
-                              </div>
-                            )
-                          )}
-                        </td>
+                              <p className="text-xs text-slate-500">
+                                {stage === "DGU"
+                                  ? "After cutting, Clear glass waits in the Glass Pairing & Buffer. When Colour glass is cut, both panes come together for pairing and then advance here to the DGU Assembly Line."
+                                  : "No records match the selected filter or search criteria."}
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        rows.map((row) => {
+                          const isSelected = selectedRowIds.includes(row.id);
+                          const item = row.item;
+                          const partner = row.partnerItem;
+                          const itemFinish = getItemFinish(item);
 
-                        {/* Finish */}
-                        <td className="py-2.5 px-2 align-middle whitespace-nowrap">
-                          {stage === "Lamination" ? (
-                            isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                              <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                DLGU (To DGU)
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-amber-100 text-amber-800 border border-amber-200">
-                                Direct Lam
-                              </span>
-                            )
-                          ) : stage === "DGU" ? (
-                            row.glassCategory === "DLGU" ? (
-                              <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                DLGU Unit
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-teal-100 text-teal-800 border border-teal-200">
-                                DGU Unit
-                              </span>
-                            )
-                          ) : stage === "Finished" && row.glassCategory === "DLGU" ? (
-                            <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                              DLGU Unit
-                            </span>
-                          ) : stage === "Finished" && (row.glassCategory === "DGU" || row.isDguPair) ? (
-                            <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-teal-100 text-teal-800 border border-teal-200">
-                              DGU Unit
-                            </span>
-                          ) : (
-                            <span
-                              className={`px-1.5 py-0.2 rounded text-[9.5px] font-black border ${
-                                itemFinish === "Colour"
-                                  ? "bg-purple-100 text-purple-800 border-purple-200"
-                                  : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                          return (
+                            <tr
+                              key={row.id}
+                              className={`hover:bg-teal-50/30 transition-colors ${
+                                isSelected ? "bg-teal-50/60" : ""
                               }`}
                             >
-                              {itemFinish === "Colour" ? "Colour" : "Clear"}
-                            </span>
-                          )}
-                        </td>
+                              {stage !== "Finished" && (
+                                <td className="py-2.5 px-3 text-center align-middle">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    disabled={(stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
+                                    onChange={() => toggleSelect(row.id)}
+                                    className={`w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 ${
+                                      (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
+                                        ? "opacity-30 cursor-not-allowed"
+                                        : "cursor-pointer"
+                                    }`}
+                                    title={
+                                      stage === "DGU" && !row.dguPairReady
+                                        ? "Cannot select: matching Clear glass has not been cut yet"
+                                        : stage === "Lamination" && row.isHolding
+                                        ? "Cannot select: DLGU glass is held in Lamination staging awaiting Colour glass cutting"
+                                        : "Select row"
+                                    }
+                                  />
+                                </td>
+                              )}
 
-                        {/* Route Flow */}
-                        <td className="py-2.5 px-2 align-middle whitespace-nowrap">
-                          <div className="flex items-center gap-1">
-                            {item.processRoute.map((s, sIdx) => {
-                              const isCurrent = s === item.currentStage;
-                              const isDone = item.completedStages?.includes(s);
-                              return (
-                                <React.Fragment key={s}>
+                              {/* PI Number */}
+                              <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
+                                  {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
+                                </span>
+                              </td>
+
+                              {/* Batch Number */}
+                              <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs">
+                                  {item.batchNo || item.sfoNo || (row as any).batchNo || (row as any).sfoNo || "—"}
+                                </span>
+                              </td>
+
+                              {/* Position Number */}
+                              <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
+                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-extrabold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs min-w-[32px]">
+                                  {item.posNo || (row as any).posNo || "—"}
+                                </span>
+                              </td>
+
+                              {/* Sticker Serial */}
+                              <td className="py-2.5 px-2 font-mono font-bold align-middle">
+                                <span className="text-purple-700">
+                                  {row.displaySerial}
+                                </span>
+                                {stage === "Lamination" && (
+                                  isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
+                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
+                                      DLGU Sub-Assembly
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
+                                      Direct Lamination
+                                    </span>
+                                  )
+                                )}
+                                {stage === "DGU" && (
+                                  row.glassCategory === "DLGU" ? (
+                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
+                                      DLGU Unit (Outer Lite)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
+                                      DGU Unit (Outer Lite)
+                                    </span>
+                                  )
+                                )}
+                                {stage === "Finished" && (
+                                  row.glassCategory === "DLGU" ? (
+                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
+                                      DLGU Unit
+                                    </span>
+                                  ) : row.glassCategory === "DGU" || row.isDguPair ? (
+                                    <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
+                                      DGU / IGU Unit
+                                    </span>
+                                  ) : row.glassCategory === "Laminated" ? (
+                                    <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
+                                      Laminated Unit
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9.5px] text-indigo-700 font-extrabold block whitespace-nowrap">
+                                      General Glass
+                                    </span>
+                                  )
+                                )}
+                              </td>
+
+                              {/* Barcode */}
+                              <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
+                                <div>{row.displayBarcode}</div>
+                                {stage === "DGU" && (
+                                  <span className="text-[9.5px] text-purple-700 block font-mono font-bold">
+                                    Scan Target (Colour)
+                                  </span>
+                                )}
+                                {stage === "Finished" && row.isDguPair && partner && (
+                                  <span className="text-[9.5px] text-teal-700 block font-mono font-semibold">
+                                    + Inner: {partner.barcode}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* QTY */}
+                              <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
+                                <span className="px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-200 shadow-2xs">
+                                  {item.qty || 1} {stage === "DGU" || (stage === "Finished" && (row.isDguPair || row.glassCategory === "DGU" || row.glassCategory === "DLGU")) ? (item.qty === 1 ? "unit" : "units") : item.qty === 1 ? "pc" : "pcs"}
+                                </span>
+                              </td>
+
+                              {/* SQM */}
+                              <td className="py-2.5 px-2 text-right font-mono font-bold text-emerald-700 align-middle whitespace-nowrap text-xs">
+                                {(row.effectiveSqm || item.sqm || 0).toFixed(2)} m²
+                              </td>
+
+                              {/* Size */}
+                              <td className="py-2.5 px-2 font-bold text-slate-900 align-middle whitespace-nowrap">
+                                {item.width} × {item.height} mm
+                              </td>
+
+                              {/* Glass Type / Description */}
+                              <td className="py-2.5 px-2 text-slate-700 font-medium align-middle max-w-[280px]">
+                                <div className="truncate font-bold text-slate-900">
+                                  {item.glassType || item.itemCode || item.glassCode || item.category || "Outer Panel Glass"}
+                                </div>
+                                {stage === "Lamination" && (
+                                  isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
+                                    <div className="text-[10px] font-semibold flex flex-col gap-0.5 mt-0.5">
+                                      <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold inline-block w-fit">
+                                        DLGU Inner Lam • Sub-Assembly Unit
+                                      </span>
+                                      <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded w-fit">
+                                        <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                        Ready to complete Lamination & advance to Pairing Buffer
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1 mt-0.5">
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 font-bold">
+                                        Direct Lamination • Next: Finished Warehouse
+                                      </span>
+                                    </div>
+                                  )
+                                )}
+                                {stage === "DGU" && (
+                                  row.glassCategory === "DLGU" ? (
+                                    <>
+                                      <div className="text-[10px] text-purple-800 font-extrabold flex items-center gap-1 mt-0.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
+                                          DLGU Unit • Double Laminated IGU
+                                        </span>
+                                      </div>
+                                      {partner ? (
+                                        <div className="text-[10px] text-purple-900 font-semibold flex items-center gap-1 mt-0.5">
+                                          <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Laminated Clear Float"})</span>
+                                        </div>
+                                      ) : (
+                                        <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
+                                          <span>⏳ Waiting for Laminated Clear Inner Pane</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="text-[10px] text-teal-800 font-extrabold flex items-center gap-1 mt-0.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 border border-teal-200 font-bold">
+                                          Standard DGU / IGU Unit
+                                        </span>
+                                      </div>
+                                      {partner ? (
+                                        <div className="text-[10px] text-teal-900 font-semibold flex items-center gap-1 mt-0.5">
+                                          <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Clear Float"})</span>
+                                        </div>
+                                      ) : (
+                                        <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
+                                          <span>⏳ Waiting for Clear Float Inner Pane</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  )
+                                )}
+                                {stage === "Finished" && (
+                                  row.glassCategory === "DLGU" ? (
+                                    <div className="text-[10px] text-purple-800 font-semibold flex items-center gap-1 mt-0.5">
+                                      <span>Double Laminated Glazed Unit (DLGU){partner ? ` • Inner: ${partner.serialNumber}` : ""}</span>
+                                    </div>
+                                  ) : row.glassCategory === "DGU" && row.isDguPair && partner ? (
+                                    <div className="text-[10px] text-teal-800 font-semibold flex items-center gap-1 mt-0.5">
+                                      <span>Paired DGU: Inner Lite {partner.serialNumber}</span>
+                                    </div>
+                                  ) : row.glassCategory === "Laminated" ? (
+                                    <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1 mt-0.5">
+                                      <span>Laminated Glass • Autoclaved</span>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mt-0.5">
+                                      <span>General Monolithic / Single Pane</span>
+                                    </div>
+                                  )
+                                )}
+                              </td>
+
+                              {/* Finish */}
+                              <td className="py-2.5 px-2 align-middle whitespace-nowrap">
+                                {stage === "Lamination" ? (
+                                  isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                      DLGU (To DGU)
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+                                      Direct Lam
+                                    </span>
+                                  )
+                                ) : stage === "DGU" ? (
+                                  row.glassCategory === "DLGU" ? (
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                      DLGU Unit
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-teal-100 text-teal-800 border border-teal-200">
+                                      DGU Unit
+                                    </span>
+                                  )
+                                ) : stage === "Finished" && row.glassCategory === "DLGU" ? (
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                    DLGU Unit
+                                  </span>
+                                ) : stage === "Finished" && (row.glassCategory === "DGU" || row.isDguPair) ? (
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-teal-100 text-teal-800 border border-teal-200">
+                                    DGU Unit
+                                  </span>
+                                ) : (
                                   <span
-                                    className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
-                                      isCurrent
-                                        ? "bg-teal-600 text-white"
-                                        : isDone
-                                        ? "bg-emerald-100 text-emerald-700"
-                                        : "bg-slate-100 text-slate-400"
+                                    className={`px-1.5 py-0.2 rounded text-[9.5px] font-black border ${
+                                      itemFinish === "Colour"
+                                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                                        : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                     }`}
                                   >
-                                    {s}
+                                    {itemFinish === "Colour" ? "Colour" : "Clear"}
                                   </span>
-                                  {sIdx < item.processRoute.length - 1 && (
-                                    <ArrowRight className="w-2.5 h-2.5 text-slate-300 shrink-0" />
-                                  )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        </td>
-
-                        {/* Actions */}
-                        <td className="py-2.5 px-3 text-right align-middle whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {!isFinished && (
-                              <Button
-                                size="sm"
-                                disabled={loading || (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
-                                onClick={() => openScanModal(row)}
-                                className={`h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 ${
-                                  (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
-                                    ? "bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 cursor-not-allowed font-extrabold"
-                                    : "bg-teal-600 hover:bg-teal-700 text-white"
-                                }`}
-                                title={
-                                  stage === "DGU" && !row.dguPairReady
-                                    ? `Cannot assemble: waiting for matching ${row.dguWaitingFinish} glass`
-                                    : stage === "Lamination" && row.isHolding
-                                    ? "Held in Lamination Staging: Cannot advance until matching Colour glass is cut in Cutting Workstation"
-                                    : stage === "DGU"
-                                    ? "Scan Outer Panel Colour barcode to complete DGU Unit"
-                                    : "Scan & verify"
-                                }
-                              >
-                                {stage === "Lamination" && row.isHolding ? (
-                                  <>
-                                    <Clock className="w-3 h-3 text-amber-600 animate-pulse" /> Holding (Cut Pending)
-                                  </>
-                                ) : (
-                                  <>
-                                    <Play className="w-3 h-3 fill-current" /> {stage === "DGU" ? "Scan & Finish" : "Scan"}
-                                  </>
                                 )}
-                              </Button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onPrintSticker(item);
-                              }}
-                              className="w-7 h-7 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                              title="Print Barcode / QR Sticker"
-                            >
-                              <Tag className="w-3.5 h-3.5 text-slate-700" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onReject(item);
-                              }}
-                              className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                              title="Reject Item / Report Defect"
-                            >
-                              <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onRework(item);
-                              }}
-                              className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                              title="Send Item to Rework"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                            </button>
+                              </td>
+
+                              {/* Route Flow */}
+                              <td className="py-2.5 px-2 align-middle whitespace-nowrap">
+                                <div className="flex items-center gap-1">
+                                  {item.processRoute.map((s, sIdx) => {
+                                    const isCurrent = s === item.currentStage;
+                                    const isDone = item.completedStages?.includes(s);
+                                    return (
+                                      <React.Fragment key={s}>
+                                        <span
+                                          className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
+                                            isCurrent
+                                              ? "bg-teal-600 text-white"
+                                              : isDone
+                                              ? "bg-emerald-100 text-emerald-700"
+                                              : "bg-slate-100 text-slate-400"
+                                          }`}
+                                        >
+                                          {s}
+                                        </span>
+                                        {sIdx < item.processRoute.length - 1 && (
+                                          <ArrowRight className="w-2.5 h-2.5 text-slate-300 shrink-0" />
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-2.5 px-3 text-right align-middle whitespace-nowrap">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {!isFinished && (
+                                    <Button
+                                      size="sm"
+                                      disabled={loading || (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
+                                      onClick={() => openScanModal(row)}
+                                      className={`h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 ${
+                                        (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
+                                          ? "bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 cursor-not-allowed font-extrabold"
+                                          : "bg-teal-600 hover:bg-teal-700 text-white"
+                                      }`}
+                                      title={
+                                        stage === "DGU" && !row.dguPairReady
+                                          ? `Cannot assemble: waiting for matching ${row.dguWaitingFinish} glass`
+                                          : stage === "Lamination" && row.isHolding
+                                          ? "Held in Lamination Staging: Cannot advance until matching Colour glass is cut in Cutting Workstation"
+                                          : stage === "DGU"
+                                          ? "Scan Outer Panel Colour barcode to complete DGU Unit"
+                                          : "Scan & verify"
+                                      }
+                                    >
+                                      {stage === "Lamination" && row.isHolding ? (
+                                        <>
+                                          <Clock className="w-3 h-3 text-amber-600 animate-pulse" /> Holding (Cut Pending)
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="w-3 h-3 fill-current" /> {stage === "DGU" ? "Scan & Finish" : "Scan"}
+                                        </>
+                                      )}
+                                    </Button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onPrintSticker(item);
+                                    }}
+                                    className="w-7 h-7 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                    title="Print Barcode / QR Sticker"
+                                  >
+                                    <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onReject(item);
+                                    }}
+                                    className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                    title="Reject Item / Report Defect"
+                                  >
+                                    <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRework(item);
+                                    }}
+                                    className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                    title="Send Item to Rework"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            };
+
+            return stageViewMode === "CUSTOMER" ? (
+              <div className="space-y-3">
+                {groupedStageCustomerRows.length > 0 ? (
+                  groupedStageCustomerRows.map((customer) => {
+                    const isExpanded = isStageCustomerExpanded(customer.customerName);
+
+                    return (
+                      <div
+                        key={customer.customerName}
+                        className={`bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden ${
+                          stage === "DGU"
+                            ? "hover:border-teal-300"
+                            : stage === "Lamination"
+                            ? "hover:border-amber-300"
+                            : "hover:border-emerald-300"
+                        }`}
+                      >
+                        {/* Customer Summary Card Header (Click to Toggle - Closed by default) */}
+                        <div
+                          onClick={() => toggleStageCustomerExpanded(customer.customerName)}
+                          className={`p-4 cursor-pointer select-none transition-colors ${
+                            stage === "DGU"
+                              ? "bg-gradient-to-r from-slate-50/70 via-white to-teal-50/20 hover:from-teal-50/30"
+                              : stage === "Lamination"
+                              ? "bg-gradient-to-r from-slate-50/70 via-white to-amber-50/20 hover:from-amber-50/30"
+                              : "bg-gradient-to-r from-slate-50/70 via-white to-emerald-50/20 hover:from-emerald-50/30"
+                          }`}
+                        >
+                          <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                            {/* Left: Customer Info */}
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <div
+                                className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
+                                  stage === "DGU"
+                                    ? "bg-gradient-to-br from-teal-600 to-cyan-700"
+                                    : stage === "Lamination"
+                                    ? "bg-gradient-to-br from-amber-600 to-orange-700"
+                                    : "bg-gradient-to-br from-emerald-600 to-teal-700"
+                                }`}
+                              >
+                                <Building2 className="w-5 h-5" />
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-base font-extrabold text-slate-900 truncate">
+                                    {customer.customerName}
+                                  </h3>
+
+                                  {customer.hasColour && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                      Coloured
+                                    </span>
+                                  )}
+                                  {customer.hasClear && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                      Clear
+                                    </span>
+                                  )}
+
+                                  {Array.from(customer.categories).map((cat) => (
+                                    <span
+                                      key={cat}
+                                      className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black border ${
+                                        cat === "DLGU"
+                                          ? "bg-purple-100 text-purple-900 border-purple-200"
+                                          : cat === "DGU"
+                                          ? "bg-teal-100 text-teal-900 border-teal-200"
+                                          : cat === "Lamination" || cat === "Laminated"
+                                          ? "bg-amber-100 text-amber-900 border-amber-200"
+                                          : "bg-slate-100 text-slate-800 border-slate-200"
+                                      }`}
+                                    >
+                                      {cat}
+                                    </span>
+                                  ))}
+
+                                  {stage === "DGU" && customer.dguReadyUnits > 0 && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
+                                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                                      {customer.dguReadyUnits} Units Ready to Assemble
+                                    </span>
+                                  )}
+
+                                  {stage === "Lamination" && customer.holdingUnits > 0 && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
+                                      <Clock className="w-3 h-3 text-amber-600" />
+                                      {customer.holdingUnits} Holding (Colour Cut Pending)
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                                  {customer.projects.length > 0
+                                    ? customer.projects.join(" • ")
+                                    : "Standard Shop Floor Order"}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Right: Quantities & Chevron */}
+                            <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                              <div className="text-right">
+                                <div className="font-mono text-xs font-black text-slate-900">
+                                  <span
+                                    className={
+                                      stage === "DGU"
+                                        ? "text-teal-700"
+                                        : stage === "Lamination"
+                                        ? "text-amber-700"
+                                        : "text-emerald-700"
+                                    }
+                                  >
+                                    {customer.totalUnits}{" "}
+                                    {stage === "DGU" || stage === "Finished"
+                                      ? customer.totalUnits === 1
+                                        ? "Unit"
+                                        : "Units"
+                                      : customer.totalUnits === 1
+                                      ? "Piece"
+                                      : "Pieces"}
+                                  </span>
+                                  <span className="text-slate-400 mx-1.5">•</span>
+                                  <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
+                                </div>
+                              </div>
+
+                              <div
+                                className={`p-1.5 rounded-lg transition-colors ${
+                                  stage === "DGU"
+                                    ? "bg-slate-100 text-slate-600 hover:bg-teal-100 hover:text-teal-700"
+                                    : stage === "Lamination"
+                                    ? "bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-700"
+                                    : "bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700"
+                                }`}
+                              >
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4" />
+                                )}
+                              </div>
+                            </div>
                           </div>
-                        </td>
-                      </tr>
+                        </div>
+
+                        {/* Collapsible Sub-Table for Customer (Rendered only when expanded) */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
+                            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                              {renderStageRowsTable(customer.rows)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     );
                   })
+                ) : (
+                  <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
+                    <Users className="w-10 h-10 mx-auto mb-2 opacity-30 text-teal-600" />
+                    <p className="text-sm font-semibold">No customer records found matching the filters.</p>
+                  </div>
                 )}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            ) : (
+              /* Flat Table fallback */
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+                {renderStageRowsTable(displayedRows)}
+              </div>
+            );
+          })()
         )}
       </div>
     </div>

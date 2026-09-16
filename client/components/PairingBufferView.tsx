@@ -36,6 +36,9 @@ import {
   ArrowUp,
   ArrowDown,
   Truck,
+  Building2,
+  Users,
+  ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
@@ -101,6 +104,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 }) => {
   // PI / Batch Filter: "ALL" or specific PI ID / PI number
   const [selectedPIFilter, setSelectedPIFilter] = useState<string>("ALL");
+  // Customer / Client Filter: "ALL" or specific customer name
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState<string>("ALL");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [finishFilter, setFinishFilter] = useState<"ALL" | "COLOUR" | "CLEAR" | "READY" | "BUFFER" | "CUT" | "REMAINING" | "COMPLETED">("ALL");
   // ponytail: category filter supports unified cross-category ALL_PENDING alongside process queues
@@ -194,6 +199,33 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     });
 
     return Array.from(map.values());
+  }, [items, pis]);
+
+  // Available Customers extracted from uploaded stickers & master PIs
+  const availableCustomers = useMemo(() => {
+    const map = new Map<string, { name: string; totalItems: number; cutItems: number }>();
+    items.forEach((item) => {
+      const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
+      const cust = (parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+      if (cust) {
+        if (!map.has(cust)) {
+          map.set(cust, { name: cust, totalItems: 0, cutItems: 0 });
+        }
+        const entry = map.get(cust)!;
+        const pieceQty = item.qty || 1;
+        entry.totalItems += pieceQty;
+        if (item.currentStage?.toLowerCase() !== "cutting" && item.status !== "Rejected") {
+          entry.cutItems += pieceQty;
+        }
+      }
+    });
+    pis.forEach((p) => {
+      const cust = (p.customerName || "BRIGHT PLUS FITOUT").trim();
+      if (cust && !map.has(cust)) {
+        map.set(cust, { name: cust, totalItems: p.totalQty || p.itemsCount || 0, cutItems: p.completedItemsCount || 0 });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [items, pis]);
 
   // Aggregate and build consolidated position rows (matching exact Sticker Upload table layout)
@@ -416,6 +448,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           if (!matchPI) return false;
         }
 
+        // Customer / Client Filter
+        if (selectedCustomerFilter !== "ALL") {
+          const matchCust = (row.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+          if (!matchCust) return false;
+        }
+
         // Process Category Filter (ALL_PENDING vs DGU vs Lamination vs DLGU)
         if (categoryFilter === "ALL_PENDING") {
           if (!isRowPending(row)) return false;
@@ -485,6 +523,116 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       });
   }, [consolidatedRows, selectedPIFilter, categoryFilter, finishFilter, pendingSubFilter, searchTerm, externalSearchTerm, sortColumn, sortDirection]);
 
+  // Customer Grouped View State (Default Closed)
+  const [bufferViewMode, setBufferViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
+  const [expandedBufferCustomers, setExpandedBufferCustomers] = useState<Record<string, boolean>>({});
+
+  const toggleBufferCustomerExpanded = (customerName: string) => {
+    setExpandedBufferCustomers((prev) => ({
+      ...prev,
+      [customerName]: !prev[customerName],
+    }));
+  };
+
+  const isBufferCustomerExpanded = (customerName: string) => {
+    return Boolean(expandedBufferCustomers[customerName]); // Closed by default!
+  };
+
+  const setAllBufferCustomersExpanded = (expand: boolean) => {
+    const newState: Record<string, boolean> = {};
+    groupedCustomerRows.forEach((g) => {
+      newState[g.customerName] = expand;
+    });
+    setExpandedBufferCustomers(newState);
+  };
+
+  const groupedCustomerRows = useMemo(() => {
+    const map = new Map<string, typeof filteredRows>();
+
+    filteredRows.forEach((row) => {
+      const cust = (row.customerName || "BRIGHT PLUS FITOUT").trim();
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push(row);
+    });
+
+    const groups: Array<{
+      customerName: string;
+      rows: typeof filteredRows;
+      totalPositions: number;
+      totalPieces: number;
+      cutPieces: number;
+      remainingPieces: number;
+      inBufferPieces: number;
+      readyPairs: number;
+      totalSqm: number;
+      cutSqm: number;
+      remainingSqm: number;
+      projects: string[];
+      hasColour: boolean;
+      hasClear: boolean;
+      isFullyCut: boolean;
+      progressPct: number;
+    }> = [];
+
+    map.forEach((rows, customerName) => {
+      let totalPieces = 0;
+      let cutPieces = 0;
+      let remainingPieces = 0;
+      let inBufferPieces = 0;
+      let totalSqm = 0;
+      let cutSqm = 0;
+      let remainingSqm = 0;
+      let hasColour = false;
+      let hasClear = false;
+      const projectsSet = new Set<string>();
+
+      rows.forEach((r) => {
+        totalPieces += r.totalQty;
+        cutPieces += r.cutQty;
+        remainingPieces += r.remainingQty;
+        inBufferPieces += r.inBufferQty;
+        totalSqm += r.totalSqm;
+        cutSqm += r.cutSqm;
+        remainingSqm += r.remainingSqm;
+        if (r.finish === "Colour") hasColour = true;
+        else hasClear = true;
+        if (r.projectName) projectsSet.add(r.projectName);
+      });
+
+      const readyPairs = Math.floor(
+        rows
+          .filter((r) => r.matchingPartnerRow && r.readyPairsCount > 0)
+          .reduce((acc, r) => acc + r.readyPairsCount, 0) / 2
+      );
+
+      const isFullyCut = remainingPieces === 0 && totalPieces > 0;
+      const progressPct = totalPieces > 0 ? Math.round((cutPieces / totalPieces) * 100) : 0;
+
+      groups.push({
+        customerName,
+        rows,
+        totalPositions: rows.length,
+        totalPieces,
+        cutPieces,
+        remainingPieces,
+        inBufferPieces,
+        readyPairs,
+        totalSqm,
+        cutSqm,
+        remainingSqm,
+        projects: Array.from(projectsSet),
+        hasColour,
+        hasClear,
+        isFullyCut,
+        progressPct,
+      });
+    });
+
+    return groups;
+  }, [filteredRows]);
+
   // Total counts across categories
   const dguStickerCount = consolidatedRows
     .filter((r) => r.glassCategory === "DGU")
@@ -525,6 +673,10 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       const matchPI = r.piNumber === selectedPIFilter || r.piId === selectedPIFilter || r.sfoNo === selectedPIFilter || r.batchNo === selectedPIFilter;
       if (!matchPI) return false;
     }
+    if (selectedCustomerFilter !== "ALL") {
+      const matchCust = (r.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+      if (!matchCust) return false;
+    }
     if (categoryFilter === "ALL_PENDING") return isRowPending(r);
     if (categoryFilter === "DGU") return r.glassCategory === "DGU";
     if (categoryFilter === "LAMINATION") return r.glassCategory === "Lamination";
@@ -535,11 +687,19 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   const scopedColourStickerCount = scopedCategoryRows.filter((r) => r.finish === "Colour").reduce((sum, r) => sum + r.totalQty, 0);
   const scopedClearStickerCount = scopedCategoryRows.filter((r) => r.finish === "Clear").reduce((sum, r) => sum + r.totalQty, 0);
 
-  // Overall KPI metrics for the active view (selected PI or all PIs)
+  // Overall KPI metrics for the active view (selected PI, Customer, or all PIs)
   const activeViewMetrics = useMemo(() => {
-    const scopeRows = selectedPIFilter === "ALL"
-      ? consolidatedRows
-      : consolidatedRows.filter((r) => r.piNumber === selectedPIFilter || r.piId === selectedPIFilter);
+    const scopeRows = consolidatedRows.filter((r) => {
+      if (selectedPIFilter !== "ALL") {
+        const matchPI = r.piNumber === selectedPIFilter || r.piId === selectedPIFilter;
+        if (!matchPI) return false;
+      }
+      if (selectedCustomerFilter !== "ALL") {
+        const matchCust = (r.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+        if (!matchCust) return false;
+      }
+      return true;
+    });
 
     const totalPieces = scopeRows.reduce((a, b) => a + b.totalQty, 0);
     const cutPieces = scopeRows.reduce((a, b) => a + b.cutQty, 0);
@@ -1165,8 +1325,97 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
             </div>
           ) : <div />}
 
-          {/* Right PI Filter, Search Input & Refresh */}
+          {/* Right Customer Filter, PI Filter, Search Input & Refresh */}
           <div className="flex items-center gap-2 shrink-0 flex-nowrap ml-auto">
+            {/* View Mode Switcher Toggle */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
+              <button
+                type="button"
+                onClick={() => setBufferViewMode("CUSTOMER")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  bufferViewMode === "CUSTOMER"
+                    ? "bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-100"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Group by Customer</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    bufferViewMode === "CUSTOMER" ? "bg-indigo-100 text-indigo-800" : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {groupedCustomerRows.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBufferViewMode("FLAT")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  bufferViewMode === "FLAT"
+                    ? "bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-100"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>All Rows (Flat)</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    bufferViewMode === "FLAT" ? "bg-indigo-100 text-indigo-800" : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {filteredRows.length}
+                </span>
+              </button>
+            </div>
+
+            {bufferViewMode === "CUSTOMER" && groupedCustomerRows.length > 0 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAllBufferCustomersExpanded(true)}
+                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
+                >
+                  Expand All
+                </Button>
+                <span className="text-slate-300">|</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAllBufferCustomersExpanded(false)}
+                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
+                >
+                  Collapse All
+                </Button>
+              </div>
+            )}
+
+            {availableCustomers.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Client:
+                </span>
+                <select
+                  value={selectedCustomerFilter}
+                  onChange={(e) => {
+                    setSelectedCustomerFilter(e.target.value);
+                    setSelectedRowIds([]);
+                  }}
+                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[140px] lg:w-[160px] truncate"
+                  title="Filter by Customer / Client Name"
+                >
+                  <option value="ALL">All Clients ({availableCustomers.length})</option>
+                  {availableCustomers.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.totalItems} pcs)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
               <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
                 <FileText className="w-3.5 h-3.5 text-slate-400" /> PI:
@@ -1209,167 +1458,485 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         </div>
       </div>
 
-      {/* ── Exact Sticker Upload Layout: Batch Check & Correct Table with Cut & Remaining Columns ── */}
-      <div className="border-2 border-slate-200 rounded-2xl bg-white shadow-xs overflow-hidden">
-        {/* Table Title Bar */}
-        <div className="px-4 py-3 bg-slate-100 text-xs font-extrabold text-slate-700 border-b border-slate-200 flex justify-between items-center flex-wrap gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span>
-              {activeViewMetrics.cutPieces} of {activeViewMetrics.totalPieces} Pieces Cut •{" "}
-              <strong className="text-amber-700">{activeViewMetrics.remainingPieces} Remaining to Cut</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-slate-500 font-mono">
-              Total Area: <strong className="text-slate-900">{activeViewMetrics.totalSqm.toFixed(2)} m²</strong> (Cut:{" "}
-              <strong className="text-emerald-700">{activeViewMetrics.cutSqm.toFixed(2)} m²</strong> • Remaining:{" "}
-              <strong className="text-amber-700">{activeViewMetrics.remainingSqm.toFixed(2)} m²</strong>)
-            </span>
-          </div>
-        </div>
-
-        {/* The Table with exact columns */}
-        <div className="overflow-x-auto w-full max-h-[600px] overflow-y-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-full">
-            <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10 select-none">
-              <tr>
-                <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
-                <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
-                <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
-                <th
-                  onClick={() => handleHeaderSort("posNo")}
-                  className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                  title="Click to sort by POS NO."
+      {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
+      {bufferViewMode === "CUSTOMER" && (
+        <div className="space-y-3">
+          {groupedCustomerRows.length > 0 ? (
+            groupedCustomerRows.map((customer) => {
+              const isExpanded = isBufferCustomerExpanded(customer.customerName);
+              return (
+                <div
+                  key={customer.customerName}
+                  className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-indigo-300"
                 >
-                  <div className="inline-flex items-center gap-1">
-                    <span>POS NO.</span>
-                    {sortColumn === "posNo" ? (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                    )}
-                  </div>
-                </th>
-                <th className="px-3 py-2.5 w-36 min-w-[130px] whitespace-nowrap">FINISH / TYPE</th>
-                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">WIDTH (MM)</th>
-                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">HEIGHT (MM)</th>
-                <th
-                  onClick={() => handleHeaderSort("totalQty")}
-                  className="px-3 py-2.5 w-24 min-w-[85px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                  title="Click to sort by Total Qty"
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>TOTAL QTY</span>
-                    {sortColumn === "totalQty" ? (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleHeaderSort("cutQty")}
-                  className="px-3 py-2.5 w-32 min-w-[110px] text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200 cursor-pointer hover:bg-emerald-100/80 transition-colors"
-                  title="Click to sort by Glass Cut quantity"
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>GLASS CUT</span>
-                    {sortColumn === "cutQty" ? (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-800" /> : <ArrowDown className="w-3 h-3 text-emerald-800" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 text-emerald-500" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleHeaderSort("remainingQty")}
-                  className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200 cursor-pointer hover:bg-amber-100/80 transition-colors"
-                  title="Click to sort by Remaining quantity"
-                >
-                  <div className="inline-flex items-center gap-1">
-                    <span>REMAINING</span>
-                    {sortColumn === "remainingQty" ? (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-amber-800" /> : <ArrowDown className="w-3 h-3 text-amber-800" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 text-amber-500" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleHeaderSort("sqm")}
-                  className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                  title="Click to sort by Area SQM"
-                >
-                  <div className="inline-flex items-center justify-end gap-1 w-full">
-                    <span>SQM</span>
-                    {sortColumn === "sqm" ? (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                    )}
-                  </div>
-                </th>
-                <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
-                <th className="px-3 py-2.5 text-right w-32 min-w-[120px] whitespace-nowrap">ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
-              {filteredRows.length === 0 ? (
-                <tr>
-                  <td colSpan={13} className="text-center py-12 text-slate-400 whitespace-nowrap">
-                    No position records found matching the current PI or filters.
-                  </td>
-                </tr>
-              ) : (
-                filteredRows.map((row, idx) => {
-                  const isExpanded = expandedRowIds.includes(row.id);
-                  const isFullyCut = row.remainingQty === 0;
-                  const isPartiallyCut = row.cutQty > 0 && row.remainingQty > 0;
-                  const isNotCut = row.cutQty === 0;
-
-                  return (
-                    <React.Fragment key={row.id}>
-                      <tr
-                        className={`hover:bg-indigo-50/40 transition-colors ${
-                          isExpanded ? "bg-indigo-50/30" : ""
-                        }`}
-                      >
-                        {/* SL NO. with Expand Chevron Toggle */}
-                        <td className="px-3 py-2.5 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => toggleExpandRow(row.id)}
-                              className={`p-1 rounded-md transition-all cursor-pointer ${
-                                isExpanded
-                                  ? "bg-indigo-100 text-indigo-700 shadow-2xs"
-                                  : "text-slate-400 hover:text-indigo-700 hover:bg-slate-200/80"
-                              }`}
-                              title={
-                                isExpanded
-                                  ? "Collapse individual pieces"
-                                  : `Expand and view all ${row.totalQty} individual glass pieces`
-                              }
-                            >
-                              {isExpanded ? (
-                                <ChevronUp className="w-3.5 h-3.5" />
-                              ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                            <span>{idx + 1}</span>
+                  {/* Customer Summary Card Header */}
+                  <div
+                    onClick={() => toggleBufferCustomerExpanded(customer.customerName)}
+                    className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-indigo-50/20 hover:from-indigo-50/30 transition-colors"
+                  >
+                    <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                      {/* Left: Customer Info */}
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                          <Building2 className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-base font-extrabold text-slate-900 truncate">
+                              {customer.customerName}
+                            </h3>
+                            {customer.hasColour && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                Coloured
+                              </span>
+                            )}
+                            {customer.hasClear && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                Clear
+                              </span>
+                            )}
+                            {customer.readyPairs > 0 && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
+                                <Sparkles className="w-3 h-3 text-emerald-600" />
+                                {customer.readyPairs} Pairs Ready
+                              </span>
+                            )}
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                              customer.isFullyCut ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
+                            }`}>
+                              {customer.isFullyCut ? "Completed" : "In Production"}
+                            </span>
                           </div>
-                        </td>
+                          <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                            {customer.projects.length > 0 ? customer.projects.join(" • ") : "Standard Shop Floor Order"}
+                          </div>
+                        </div>
+                      </div>
 
-                        {/* PI # Pill Badge */}
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <span className="inline-flex items-center justify-center px-3 py-1 rounded-full font-mono font-black text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs whitespace-nowrap">
+                      {/* Right: Quantities, Progress & Accordion Trigger */}
+                      <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                        <div className="text-right">
+                          <div className="font-mono text-xs font-black text-slate-900">
+                            <span className="text-indigo-700">{customer.totalPositions} Positions</span>
+                            <span className="text-slate-400 mx-1.5">•</span>
+                            <span>{customer.cutPieces}/{customer.totalPieces} Cut</span>
+                            <span className="text-slate-400 mx-1.5">•</span>
+                            <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
+                          </div>
+                          <div className="flex items-center gap-2 justify-end mt-1">
+                            <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-indigo-500 to-purple-600 h-full rounded-full transition-all"
+                                style={{ width: `${customer.progressPct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                          </div>
+                        </div>
+
+                        <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors">
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Collapsible Customer Position Rows Table */}
+                  {isExpanded && (
+                    <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
+                      <div className="border border-slate-200 rounded-xl bg-white shadow-2xs overflow-hidden">
+                        <div className="overflow-x-auto w-full max-h-[500px] overflow-y-auto">
+                          <table className="w-full text-left text-xs border-collapse min-w-full">
+                            <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10 select-none">
+                              <tr>
+                                <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
+                                <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
+                                <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
+                                <th className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap">POS NO.</th>
+                                <th className="px-3 py-2.5 w-36 min-w-[130px] whitespace-nowrap">FINISH / TYPE</th>
+                                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">WIDTH (MM)</th>
+                                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">HEIGHT (MM)</th>
+                                <th className="px-3 py-2.5 w-24 min-w-[85px] text-center whitespace-nowrap">TOTAL QTY</th>
+                                <th className="px-3 py-2.5 w-32 min-w-[110px] text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200">GLASS CUT</th>
+                                <th className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200">REMAINING</th>
+                                <th className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap">SQM</th>
+                                <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
+                                <th className="px-3 py-2.5 text-right w-32 min-w-[120px] whitespace-nowrap">ACTIONS</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
+                              {customer.rows.map((row) => {
+                                const isRowExpanded = expandedRowIds.includes(row.id);
+                                const isFullyCut = row.remainingQty === 0;
+
+                                return (
+                                  <React.Fragment key={row.id}>
+                                    <tr className={`hover:bg-indigo-50/40 transition-colors ${isRowExpanded ? "bg-indigo-50/30" : ""}`}>
+                                      <td className="px-3 py-2.5 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
+                                        <div className="flex items-center justify-center gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleExpandRow(row.id)}
+                                            className={`p-1 rounded-md transition-all cursor-pointer ${
+                                              isRowExpanded
+                                                ? "bg-indigo-100 text-indigo-700 shadow-2xs"
+                                                : "text-slate-400 hover:text-indigo-700 hover:bg-slate-200/80"
+                                            }`}
+                                          >
+                                            {isRowExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                          </button>
+                                          <span>{row.slNo}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono font-bold text-purple-700 text-center whitespace-nowrap">
+                                        {formatBatchNumber(row.piNumber)}
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                        {formatBatchNumber(row.batchNo || row.piNumber)}
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono text-center font-black text-indigo-900 bg-indigo-50/60 border-x border-indigo-100 whitespace-nowrap">
+                                        #{row.posNo}
+                                      </td>
+                                      <td className="px-3 py-2.5 whitespace-nowrap">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                            row.finish === "Colour"
+                                              ? "bg-purple-100 text-purple-800 border-purple-200"
+                                              : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                          }`}>
+                                            {row.finish}
+                                          </span>
+                                          <span className="text-[11px] font-mono text-slate-600 truncate max-w-[130px]" title={row.glassType}>
+                                            {row.glassType}
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                        {row.width}
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                        {row.height}
+                                      </td>
+                                      <td className="px-3 py-2.5 font-mono text-center font-black text-slate-900 whitespace-nowrap">
+                                        {row.totalQty}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-center align-middle bg-emerald-50/50 border-x border-emerald-100 whitespace-nowrap font-mono font-black text-emerald-800">
+                                        {row.cutQty}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-center align-middle bg-amber-50/40 border-r border-amber-100 whitespace-nowrap font-mono font-black text-amber-800">
+                                        {row.remainingQty}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
+                                        {row.totalSqm.toFixed(2)} m²
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                        {row.readyPairsCount > 0 ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300">
+                                            <Sparkles className="w-3 h-3 text-indigo-600" />
+                                            <span>✨ {row.readyPairsCount} Pair(s) Ready</span>
+                                          </span>
+                                        ) : row.inBufferQty > 0 ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-950 border border-purple-300">
+                                            <Layers className="w-3 h-3 text-purple-700" />
+                                            <span>📦 Staged in Buffer ({row.inBufferQty} pcs)</span>
+                                          </span>
+                                        ) : isFullyCut ? (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                            <Check className="w-3 h-3 text-emerald-600" />
+                                            <span>Cut Complete</span>
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                            <Clock className="w-3 h-3 text-slate-400" />
+                                            <span>In Cutting</span>
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right align-middle whitespace-nowrap">
+                                        {row.inBufferQty > 0 && row.readyPairsCount > 0 ? (
+                                          <Button
+                                            size="sm"
+                                            onClick={() =>
+                                              row.glassCategory === "DLGU"
+                                                ? handlePairDlguDirect(row.posNo, row.piNumber)
+                                                : row.glassCategory === "DGU"
+                                                ? handlePairDguDirect(row.posNo, row.piNumber)
+                                                : handlePairLaminationDirect(row.posNo, row.piNumber)
+                                            }
+                                            disabled={loading}
+                                            className="h-6 px-2 text-[10px] font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-2xs gap-1"
+                                          >
+                                            <Zap className="w-2.5 h-2.5" /> Pair & Advance
+                                          </Button>
+                                        ) : row.inBufferQty > 0 ? (
+                                          <Button
+                                            size="sm"
+                                            onClick={() => openScanModal(row)}
+                                            className="h-6 px-2 text-[10px] font-bold bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-md gap-1"
+                                          >
+                                            <ScanLine className="w-2.5 h-2.5" /> Scan Verify
+                                          </Button>
+                                        ) : (
+                                          <span className="text-[10px] text-slate-400 italic">Waiting Cut</span>
+                                        )}
+                                      </td>
+                                    </tr>
+
+                                    {/* Expanded Individual Pieces Sub-Table */}
+                                    {isRowExpanded && (
+                                      <tr>
+                                        <td colSpan={13} className="bg-slate-50/80 p-3 border-b-2 border-slate-200">
+                                          <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs">
+                                            <div className="text-xs font-black text-slate-800 mb-2 flex items-center justify-between">
+                                              <span>POS #{row.posNo} — Individual Glass Panes ({row.rawItems.length} items)</span>
+                                              <span className="text-slate-500 font-normal text-[11px]">{row.customerName} • {row.projectName}</span>
+                                            </div>
+                                            <div className="overflow-x-auto">
+                                              <table className="w-full text-left text-xs">
+                                                <thead>
+                                                  <tr className="border-b text-[10px] font-black text-slate-500 uppercase bg-slate-50">
+                                                    <th className="py-1 px-2">SERIAL</th>
+                                                    <th className="py-1 px-2">BARCODE</th>
+                                                    <th className="py-1 px-2">FINISH</th>
+                                                    <th className="py-1 px-2">STAGE</th>
+                                                    <th className="py-1 px-2">STATUS</th>
+                                                    <th className="py-1 px-2 text-right">ACTION</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                  {row.rawItems.map((piece) => (
+                                                    <tr key={piece.id || piece.serialNumber} className="hover:bg-slate-50">
+                                                      <td className="py-1.5 px-2 font-mono font-bold text-slate-800">{piece.serialNumber}</td>
+                                                      <td className="py-1.5 px-2 font-mono text-slate-600">{piece.barcode}</td>
+                                                      <td className="py-1.5 px-2">
+                                                        <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold ${
+                                                          piece.colorOrClear === "Colour" ? "bg-purple-100 text-purple-800" : "bg-cyan-100 text-cyan-800"
+                                                        }`}>
+                                                          {piece.colorOrClear || row.finish}
+                                                        </span>
+                                                      </td>
+                                                      <td className="py-1.5 px-2 font-bold text-indigo-700">{piece.currentStage}</td>
+                                                      <td className="py-1.5 px-2">
+                                                        <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
+                                                          piece.status === "Completed" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                                                        }`}>
+                                                          {piece.status || "In Production"}
+                                                        </span>
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right space-x-1">
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => onPrintSticker(piece)}
+                                                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                                                          title="Print Sticker"
+                                                        >
+                                                          <Tag className="w-3 h-3 inline" />
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => onReject(piece)}
+                                                          className="p-1 rounded bg-red-50 hover:bg-red-100 text-red-600"
+                                                          title="Reject"
+                                                        >
+                                                          <AlertCircle className="w-3 h-3 inline" />
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => onRework(piece)}
+                                                          className="p-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-600"
+                                                          title="Rework"
+                                                        >
+                                                          <RotateCcw className="w-3 h-3 inline" />
+                                                        </button>
+                                                      </td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
+              <Users className="w-10 h-10 mx-auto mb-2 opacity-30 text-indigo-600" />
+              <p className="text-sm font-semibold">No customer buffer items found matching the filters.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── VIEW 2: FLAT POSITION ROWS TABLE ── */}
+      {bufferViewMode === "FLAT" && (
+        <div className="border-2 border-slate-200 rounded-2xl bg-white shadow-xs overflow-hidden">
+          {/* Table Title Bar */}
+          <div className="px-4 py-3 bg-slate-100 text-xs font-extrabold text-slate-700 border-b border-slate-200 flex justify-between items-center flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>
+                {activeViewMetrics.cutPieces} of {activeViewMetrics.totalPieces} Pieces Cut •{" "}
+                <strong className="text-amber-700">{activeViewMetrics.remainingPieces} Remaining to Cut</strong>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-slate-500 font-mono">
+                Total Area: <strong className="text-slate-900">{activeViewMetrics.totalSqm.toFixed(2)} m²</strong> (Cut:{" "}
+                <strong className="text-emerald-700">{activeViewMetrics.cutSqm.toFixed(2)} m²</strong> • Remaining:{" "}
+                <strong className="text-amber-700">{activeViewMetrics.remainingSqm.toFixed(2)} m²</strong>)
+              </span>
+            </div>
+          </div>
+
+          {/* The Table with exact columns */}
+          <div className="overflow-x-auto w-full max-h-[600px] overflow-y-auto">
+            <table className="w-full text-left text-xs border-collapse min-w-full">
+              <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10 select-none">
+                <tr>
+                  <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
+                  <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
+                  <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
+                  <th
+                    onClick={() => handleHeaderSort("posNo")}
+                    className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
+                    title="Click to sort by POS NO."
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>POS NO.</span>
+                      {sortColumn === "posNo" ? (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-3 py-2.5 w-36 min-w-[130px] whitespace-nowrap">FINISH / TYPE</th>
+                  <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">WIDTH (MM)</th>
+                  <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">HEIGHT (MM)</th>
+                  <th
+                    onClick={() => handleHeaderSort("totalQty")}
+                    className="px-3 py-2.5 w-24 min-w-[85px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
+                    title="Click to sort by Total Qty"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>TOTAL QTY</span>
+                      {sortColumn === "totalQty" ? (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleHeaderSort("cutQty")}
+                    className="px-3 py-2.5 w-32 min-w-[110px] text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200 cursor-pointer hover:bg-emerald-100/80 transition-colors"
+                    title="Click to sort by Glass Cut quantity"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>GLASS CUT</span>
+                      {sortColumn === "cutQty" ? (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-800" /> : <ArrowDown className="w-3 h-3 text-emerald-800" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-emerald-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleHeaderSort("remainingQty")}
+                    className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200 cursor-pointer hover:bg-amber-100/80 transition-colors"
+                    title="Click to sort by Remaining quantity"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>REMAINING</span>
+                      {sortColumn === "remainingQty" ? (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-amber-800" /> : <ArrowDown className="w-3 h-3 text-amber-800" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-amber-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleHeaderSort("sqm")}
+                    className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
+                    title="Click to sort by Area SQM"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1 w-full">
+                      <span>SQM</span>
+                      {sortColumn === "sqm" ? (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
+                  <th className="px-3 py-2.5 text-right w-32 min-w-[120px] whitespace-nowrap">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={13} className="text-center py-12 text-slate-400 whitespace-nowrap">
+                      No position records found matching the current PI or filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map((row) => {
+                    const isExpanded = expandedRowIds.includes(row.id);
+                    const isFullyCut = row.remainingQty === 0;
+                    const isPartiallyCut = row.cutQty > 0 && !isFullyCut;
+
+                    return (
+                      <React.Fragment key={row.id}>
+                        <tr
+                          className={`hover:bg-indigo-50/40 transition-colors ${
+                            isExpanded ? "bg-indigo-50/30" : ""
+                          }`}
+                        >
+                          <td className="px-3 py-2.5 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandRow(row.id)}
+                                className={`p-1 rounded-md transition-all cursor-pointer ${
+                                  isExpanded
+                                    ? "bg-indigo-100 text-indigo-700 shadow-2xs"
+                                    : "text-slate-400 hover:text-indigo-700 hover:bg-slate-200/80"
+                                }`}
+                                title={
+                                  isExpanded
+                                    ? "Collapse individual pieces"
+                                    : `Expand and view all ${row.totalQty} individual glass pieces`
+                                }
+                              >
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                              <span>{row.slNo}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono font-bold text-purple-700 text-center whitespace-nowrap">
                             {formatBatchNumber(row.piNumber)}
-                          </span>
-                        </td>
-
-                        {/* BATCH # Pill Badge */}
+                          </td>
                         <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
                           <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-xl font-mono font-black text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs whitespace-nowrap">
                             {row.batchNo || row.sfoNo || row.rawItems[0]?.batchNo || "—"}
@@ -1945,6 +2512,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Scan Verification Modal for Pairing Buffer ── */}
       {scanRow && (
