@@ -4,8 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PairingBufferView } from "@/components/PairingBufferView";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { getDguEffectiveQtyAndSqm, formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
 import {
+  Trash2,
   CheckCircle,
   AlertOctagon,
   AlertCircle,
@@ -245,8 +254,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         map.set(key, {
           id: key,
           piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
-          customerName: parentPI?.customerName || "BRIGHT PLUS FITOUT",
-          projectName: parentPI?.projectName || item.sectionName || "VAL_BY_KAS",
+          customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
+          projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
           sfoNo: item.sfoNo || parentPI?.sfoNo || "",
           items: [],
@@ -266,8 +275,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         map.set(p.id, {
           id: p.id,
           piNumber: (p.piNumber || "").replace(/^STK-/i, ""),
-          customerName: p.customerName || "BRIGHT PLUS FITOUT",
-          projectName: p.projectName || "VAL_BY_KAS",
+          customerName: p.customerName || "Customer",
+          projectName: p.projectName || "Project",
           jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
           sfoNo: p.sfoNo || "",
           items: [],
@@ -447,7 +456,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     const map = new Map<string, typeof filteredBatches>();
 
     filteredBatches.forEach((b) => {
-      const cust = (b.customerName || "BRIGHT PLUS FITOUT").trim();
+      const cust = (b.customerName || "Customer").trim();
       if (!map.has(cust)) {
         map.set(cust, []);
       }
@@ -490,7 +499,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         else hasClear = true;
         categories.add(b.glassCategory);
         if (b.projectName) projectsSet.add(b.projectName);
-        if (b.jobOrderNumber) projectsSet.add(`JO: ${b.jobOrderNumber}`);
       });
 
       const isAllCompleted =
@@ -553,6 +561,82 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     setFinishFilter("ALL");
     setExpandedSheets({});
   }, [stage]);
+
+  // Delete confirmation state (for piece-wise and sheet-wise delete in cutting)
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean;
+    type: "sheet" | "item";
+    title: string;
+    description: string;
+    serialNumbers: string[];
+    loading?: boolean;
+  }>({
+    open: false,
+    type: "item",
+    title: "",
+    description: "",
+    serialNumbers: [],
+    loading: false,
+  });
+
+  const handleDeleteSheet = (group: { rackNo: string; rows: Array<{ allSerials?: string[]; item: GlassItem }>; items: GlassItem[] }) => {
+    const serials = group.rows.flatMap((r) => r.allSerials && r.allSerials.length > 0 ? r.allSerials : [r.item.serialNumber]);
+    const uniqueSerials = Array.from(new Set(serials));
+    const totalPieces = group.rows.reduce((a, b) => a + (b.item.qty || 1), 0);
+
+    setDeleteDialog({
+      open: true,
+      type: "sheet",
+      title: `Delete Raw Sheet ${group.rackNo}`,
+      description: `Are you sure you want to permanently delete Raw Sheet ${group.rackNo} containing ${totalPieces} piece(s)? This will remove all associated glass stickers from the cutting queue.`,
+      serialNumbers: uniqueSerials,
+      loading: false,
+    });
+  };
+
+  const handleDeleteItem = (item: GlassItem) => {
+    setDeleteDialog({
+      open: true,
+      type: "item",
+      title: `Delete Glass Piece #${item.serialNumber}`,
+      description: `Are you sure you want to permanently delete sticker #${item.serialNumber} (POS ${item.posNo || "—"}, ${item.glassType || item.itemCode || "Glass Unit"})?`,
+      serialNumbers: [item.serialNumber],
+      loading: false,
+    });
+  };
+
+  const executeDelete = async () => {
+    if (deleteDialog.serialNumbers.length === 0) return;
+    setDeleteDialog((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch("/api/production/delete-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serialNumbers: deleteDialog.serialNumbers,
+          reason: deleteDialog.type === "sheet" ? "Deleted Raw Sheet" : "Deleted individual glass piece",
+          operator: operator || "Operator",
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Failed to delete item(s)");
+      }
+
+      toast.success(
+        deleteDialog.type === "sheet"
+          ? `${deleteDialog.title} deleted successfully (${deleteDialog.serialNumbers.length} stickers)`
+          : `Glass item #${deleteDialog.serialNumbers[0]} deleted successfully`
+      );
+
+      setDeleteDialog({ open: false, type: "item", title: "", description: "", serialNumbers: [], loading: false });
+      onRefresh();
+    } catch (err: any) {
+      toast.error(err.message || "Error deleting item(s)");
+      setDeleteDialog((prev) => ({ ...prev, loading: false }));
+    }
+  };
 
   // Selected Batch Information (Only relevant for Cutting stage drilldown)
   const selectedBatch = useMemo(() => {
@@ -1216,7 +1300,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     const map = new Map<string, { name: string; totalItems: number }>();
     stageRows.forEach((r) => {
       const parentPI = pis.find((p) => p.id === r.item.piId || p.piNumber === r.item.piNumber);
-      const cust = (parentPI?.customerName || (r.item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+      const cust = (parentPI?.customerName || (r.item as any).customerName || (r.item as any).clientName || "Customer").trim();
       if (cust) {
         if (!map.has(cust)) map.set(cust, { name: cust, totalItems: 0 });
         map.get(cust)!.totalItems += r.isDguPair ? 1 : (r.item.qty || 1);
@@ -1234,7 +1318,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       // Customer / Client Filter
       if (selectedCustomerFilter !== "ALL") {
         const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
-        const cust = (parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+        const cust = (parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer").trim();
         if (cust !== selectedCustomerFilter) return false;
       }
 
@@ -1304,7 +1388,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         parentPI?.customerName ||
         (row.item as any).customerName ||
         (row.item as any).customer ||
-        "BRIGHT PLUS FITOUT"
+        (row.item as any).clientName ||
+        "Customer"
       ).trim();
       if (!map.has(cust)) {
         map.set(cust, []);
@@ -1356,8 +1441,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         const parentPI = pis.find((p) => p.id === r.item.piId || p.piNumber === r.item.piNumber);
         const proj = parentPI?.projectName || r.item.sectionName;
         if (proj) projectsSet.add(proj);
-        const jo = parentPI?.jobOrderNumber || r.item.orderNo || r.item.sfoNo;
-        if (jo) projectsSet.add(`JO: ${jo}`);
 
         if (r.dguPairReady) dguReadyUnits += 1;
         if (r.isHolding) holdingUnits += 1;
@@ -1709,7 +1792,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         if (activeRackNo !== "ALL" && currentGroup) {
           const sheetSerials = currentGroup.rows.flatMap((r) => r.allSerials);
           toast.success(
-            `⚡ Sheet Auto-Scan: Scanned sticker (${targetItem.serialNumber})! Auto-advancing all ${sheetSerials.length} panel(s) on Sheet ${activeRackNo} to ${nextStage}.`
+            `Sheet Auto-Scan: Scanned sticker (${targetItem.serialNumber}). Auto-advancing all ${sheetSerials.length} panel(s) on Sheet ${activeRackNo} to ${nextStage}.`
           );
           await completeStage(sheetSerials, undefined, true);
           return;
@@ -1741,7 +1824,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           if (isFirst || isLast) {
             const batchSerials = piBatchItems.map((i) => i.serialNumber);
             toast.success(
-              `⚡ Entire Batch Auto-Scan: Scanned ${isFirst ? "First" : "Last"} sticker (${targetItem.serialNumber})! Auto-advancing all ${piBatchItems.length} stickers in entire batch to ${nextStage}.`
+              `Entire Batch Auto-Scan: Scanned ${isFirst ? "First" : "Last"} sticker (${targetItem.serialNumber}). Auto-advancing all ${piBatchItems.length} stickers in entire batch to ${nextStage}.`
             );
             await completeStage(batchSerials, undefined, true);
             return;
@@ -1753,14 +1836,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       if (stage === "DGU") {
         if (!scanRow.dguPairReady || !partnerItem) {
           toast.error(
-            `❌ Cannot assemble DGU: The matching ${scanRow.dguWaitingFinish || "Clear"} glass pane has NOT been cut yet.`
+            `Cannot assemble DGU: The matching ${scanRow.dguWaitingFinish || "Clear"} glass pane has NOT been cut yet.`
           );
           setScanInput("");
           return;
         }
 
         toast.success(
-          `⚡ DGU Unit Assembled & Verified (${targetItem.serialNumber} + ${partnerItem.serialNumber})! Advancing to ${nextStage}...`
+          `DGU Unit Assembled & Verified (${targetItem.serialNumber} + ${partnerItem.serialNumber}). Advancing to ${nextStage}...`
         );
         await completeStage(scanRow.allSerials, undefined, true);
         return;
@@ -1770,12 +1853,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const remainingPieces = (targetItem.qty || 1) - 1;
       toast.success(
         remainingPieces > 0
-          ? `⚡ Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo})! Count reduced by 1 (${remainingPieces} pcs remaining in ${stage}).`
-          : `⚡ Scanned & Completed final piece of ${targetItem.serialNumber}! Advancing to ${nextStage}...`
+          ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo}). Count reduced by 1 (${remainingPieces} pcs remaining in ${stage}).`
+          : `Scanned & Completed final piece of ${targetItem.serialNumber}. Advancing to ${nextStage}...`
       );
       await completeStage(scanRow.allSerials, 1, false);
     } else {
-      toast.error("❌ Barcode mismatch — please scan the correct sticker barcode.");
+      toast.error("Barcode mismatch — please scan the correct sticker barcode.");
       setScanInput("");
     }
   };
@@ -1820,7 +1903,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const unready = selectedRows.filter((r) => !r.dguPairReady);
       if (unready.length > 0) {
         toast.error(
-          `❌ Cannot advance: ${unready.length} selected pane(s) do not have their matching partner cut yet (1 Colour + 1 Clear required).`
+          `Cannot advance: ${unready.length} selected pane(s) do not have their matching partner cut yet (1 Colour + 1 Clear required).`
         );
         return;
       }
@@ -1829,7 +1912,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const holding = selectedRows.filter((r) => r.isHolding);
       if (holding.length > 0) {
         toast.error(
-          `❌ Cannot advance: ${holding.length} DLGU unit(s) must hold in Lamination staging until the matching Colour glass is cut in Cutting Workstation.`
+          `Cannot advance: ${holding.length} DLGU unit(s) must hold in Lamination staging until the matching Colour glass is cut in Cutting Workstation.`
         );
         return;
       }
@@ -1844,7 +1927,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     const readyRows = displayedRows.filter((r) => r.dguPairReady);
     if (readyRows.length === 0) {
       toast.error(
-        "❌ Cannot advance: No ready paired DGU units found (both Colour + Clear panels must be cut)."
+        "Cannot advance: No ready paired DGU units found (both Colour + Clear panels must be cut)."
       );
       return;
     }
@@ -1855,12 +1938,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   const handleSendAllToFinished = async () => {
     if (displayedRows.length === 0) {
-      toast.error("❌ Cannot advance: No items found in the queue.");
+      toast.error("Cannot advance: No items found in the queue.");
       return;
     }
     const readyRows = stage === "Lamination" ? displayedRows.filter((r) => !r.isHolding) : displayedRows;
     if (readyRows.length === 0) {
-      toast.error("❌ Cannot advance: All DLGU items are holding in Lamination staging awaiting Colour glass cutting.");
+      toast.error("Cannot advance: All DLGU items are holding in Lamination staging awaiting Colour glass cutting.");
       return;
     }
     const serialsToAdvance = Array.from(new Set(readyRows.flatMap((r) => r.allSerials)));
@@ -2103,25 +2186,52 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             {groupedCustomerBatches.length > 0 ? (
               groupedCustomerBatches.map((customer) => {
                 const isExpanded = isBatchCustomerExpanded(customer.customerName);
+                const isCompleted =
+                  customer.isAllCompleted ||
+                  customer.status === "Completed" ||
+                  (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces);
+
                 return (
                   <div
                     key={customer.customerName}
-                    className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-purple-300"
+                    className={`rounded-2xl transition-all overflow-hidden ${
+                      isCompleted
+                        ? "bg-emerald-50/25 border-2 border-emerald-400 shadow-xs hover:border-emerald-500 hover:shadow-md"
+                        : "bg-white border border-slate-200/90 shadow-2xs hover:border-purple-300"
+                    }`}
                   >
                     {/* Customer Header - Click to toggle */}
                     <div
                       onClick={() => toggleBatchCustomerExpanded(customer.customerName)}
-                      className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30 transition-colors"
+                      className={`p-4 cursor-pointer select-none transition-colors ${
+                        isCompleted
+                          ? "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-teal-50/20 hover:from-emerald-100/90"
+                          : "bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30"
+                      }`}
                     >
                       <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
                         {/* Left: Customer Info & Badges */}
                         <div className="flex items-start gap-3 flex-1 min-w-0">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
-                            <Building2 className="w-5 h-5" />
+                          <div
+                            className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
+                              isCompleted
+                                ? "bg-gradient-to-br from-emerald-600 to-teal-700 ring-2 ring-emerald-300 shadow-emerald-200/50"
+                                : "bg-gradient-to-br from-purple-600 to-indigo-700"
+                            }`}
+                          >
+                            {isCompleted ? (
+                              <CheckCircle className="w-5 h-5 text-emerald-50" />
+                            ) : (
+                              <Building2 className="w-5 h-5" />
+                            )}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <h3 className="text-base font-extrabold text-slate-900 truncate">
+                              <h3
+                                className={`text-base font-extrabold truncate ${
+                                  isCompleted ? "text-emerald-950" : "text-slate-900"
+                                }`}
+                              >
                                 {customer.customerName}
                               </h3>
                               {customer.hasColour && (
@@ -2148,7 +2258,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   {cat} Queue
                                 </span>
                               ))}
-                              <StatusBadge status={customer.status} />
+                              {isCompleted ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
+                                  <Check className="w-3 h-3 stroke-[3]" /> FULLY CUT
+                                </span>
+                              ) : (
+                                <StatusBadge status={customer.status} />
+                              )}
                             </div>
                             <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
                               {customer.projects.length > 0
@@ -2162,24 +2278,48 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
                           <div className="text-right">
                             <div className="font-mono text-xs font-black text-slate-900">
-                              <span className="text-purple-700">{customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}</span>
+                              <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-purple-700"}>
+                                {customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}
+                              </span>
                               <span className="text-slate-400 mx-1.5">•</span>
-                              <span>{customer.completedPieces}/{customer.totalPieces} pcs</span>
+                              <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
+                                {customer.completedPieces}/{customer.totalPieces} pcs
+                              </span>
                               <span className="text-slate-400 mx-1.5">•</span>
                               <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                             </div>
                             <div className="flex items-center gap-2 justify-end mt-1">
-                              <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className={`w-24 h-1.5 rounded-full overflow-hidden ${
+                                  isCompleted ? "bg-emerald-200" : "bg-slate-200"
+                                }`}
+                              >
                                 <div
-                                  className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all"
+                                  className={`h-full rounded-full transition-all ${
+                                    isCompleted
+                                      ? "bg-gradient-to-r from-emerald-500 to-teal-600"
+                                      : "bg-gradient-to-r from-purple-500 to-indigo-600"
+                                  }`}
                                   style={{ width: `${customer.progressPct}%` }}
                                 />
                               </div>
-                              <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                              <span
+                                className={`text-[10px] font-mono ${
+                                  isCompleted ? "text-emerald-700 font-extrabold" : "text-slate-500 font-bold"
+                                }`}
+                              >
+                                {customer.progressPct}%
+                              </span>
                             </div>
                           </div>
 
-                          <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 transition-colors">
+                          <div
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              isCompleted
+                                ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                                : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700"
+                            }`}
+                          >
                             {isExpanded ? (
                               <ChevronUp className="w-4 h-4" />
                             ) : (
@@ -2198,7 +2338,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             <thead>
                               <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
                                 <th className="py-2.5 px-3.5 whitespace-nowrap">BATCH NO</th>
-                                <th className="py-2.5 px-3.5 whitespace-nowrap">PROJECT / JOB ORDER</th>
+                                <th className="py-2.5 px-3.5 whitespace-nowrap">PROJECT</th>
                                 <th className="py-2.5 px-3 text-center whitespace-nowrap">FINISH</th>
                                 <th className="py-2.5 px-3 text-center whitespace-nowrap">COMPLETED</th>
                                 <th className="py-2.5 px-3 text-right whitespace-nowrap">SQM</th>
@@ -2249,12 +2389,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       </div>
                                     </td>
                                     <td className="py-2.5 px-3.5 text-slate-600">
-                                      <span className="font-semibold text-slate-800">{b.projectName}</span>
-                                      {b.jobOrderNumber && (
-                                        <span className="text-[11px] text-purple-600 font-mono block">
-                                          JO: {b.jobOrderNumber}
-                                        </span>
-                                      )}
+                                      <span className="font-semibold text-slate-800">{b.projectName || "—"}</span>
                                     </td>
                                     <td className="py-2.5 px-3 text-center">
                                       <span
@@ -2354,7 +2489,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
                         onClick={() => handleBatchSort("projectName")}
                       >
-                        PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                        PROJECT {renderSortIcon("projectName")}
                       </th>
                       <th
                         className="py-3 px-3 cursor-pointer whitespace-nowrap text-center"
@@ -2433,12 +2568,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             {b.customerName}
                           </td>
                           <td className="py-3 px-3.5 text-slate-600">
-                            <span className="font-semibold text-slate-800">{b.projectName}</span>
-                            {b.jobOrderNumber && (
-                              <span className="text-[11px] text-purple-600 font-mono block">
-                                JO: {b.jobOrderNumber}
-                              </span>
-                            )}
+                            <span className="font-semibold text-slate-800">{b.projectName || "—"}</span>
                           </td>
                           <td className="py-3 px-3 text-center">
                             <span
@@ -3941,7 +4071,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       </div>
 
                       {/* Right Action & Expand Trigger */}
-                      <div className="flex items-center gap-2.5 ml-auto">
+                      <div className="flex items-center gap-2 flex-wrap ml-auto">
                         <Button
                           type="button"
                           size="sm"
@@ -3953,6 +4083,21 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         >
                           <Sparkles className="w-3.5 h-3.5 text-purple-200" />
                           <span>Cut & Advance Sheet {group.rackNo} ({totalPieces} pcs)</span>
+                        </Button>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSheet(group);
+                          }}
+                          className="h-8 text-xs font-bold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:border-red-300 rounded-xl shadow-2xs gap-1.5 cursor-pointer shrink-0"
+                          title={`Delete Sheet ${group.rackNo} (${totalPieces} pcs)`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                          <span>Delete Sheet {group.rackNo}</span>
                         </Button>
 
                         <div className="flex items-center gap-1 text-xs font-bold text-purple-700 bg-white border border-purple-200 px-2.5 py-1.5 rounded-xl shadow-2xs">
@@ -4020,7 +4165,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   {/* PI Number */}
                                   <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
                                     <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
-                                      {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
+                                      {item.orderNo || item.piNumber || (row as any).piNumber || "—"}
                                     </span>
                                   </td>
                                   {/* Batch Number */}
@@ -4145,6 +4290,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         title="Send Item to Rework"
                                       >
                                         <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteItem(item);
+                                        }}
+                                        className="w-7 h-7 rounded-full border border-rose-300 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                        title={`Delete Piece #${item.serialNumber}`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 text-rose-600" />
                                       </button>
                                     </div>
                                   </td>
@@ -4284,7 +4440,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               {/* PI Number */}
                               <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
                                 <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
-                                  {formatBatchNumber(item.piNumber || (row as any).piNumber || "—")}
+                                  {item.orderNo || item.piNumber || (row as any).piNumber || "—"}
                                 </span>
                               </td>
 
@@ -4584,7 +4740,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onReject(item);
+                                      onReject({
+                                        ...item,
+                                        partnerItem: row.partnerItem,
+                                        allSerials: row.allSerials,
+                                        isDguPair: row.isDguPair,
+                                        glassCategory: row.glassCategory,
+                                      } as any);
                                     }}
                                     className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
                                     title="Reject Item / Report Defect"
@@ -4595,7 +4757,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onRework(item);
+                                      onRework({
+                                        ...item,
+                                        partnerItem: row.partnerItem,
+                                        allSerials: row.allSerials,
+                                        isDguPair: row.isDguPair,
+                                        glassCategory: row.glassCategory,
+                                      } as any);
                                     }}
                                     className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
                                     title="Send Item to Rework"
@@ -4787,6 +4955,59 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           })()
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => {
+          if (!open && !deleteDialog.loading) {
+            setDeleteDialog((prev) => ({ ...prev, open: false }));
+          }
+        }}
+      >
+        <DialogContent className="max-w-md bg-white text-slate-900 border-slate-200 shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5 text-red-600" />
+              <span>{deleteDialog.title}</span>
+            </DialogTitle>
+            <DialogDescription className="text-slate-600 text-xs mt-1 leading-relaxed">
+              {deleteDialog.description}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-red-50/70 border border-red-200 rounded-xl p-3 text-xs text-red-900 flex items-start gap-2.5 my-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-red-950">Permanent Action</div>
+              <div className="text-[11px] text-red-800 mt-0.5">
+                This item will be deleted from the active cutting queue and database. This action cannot be undone.
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deleteDialog.loading}
+              onClick={() => setDeleteDialog((prev) => ({ ...prev, open: false }))}
+              className="text-xs font-bold text-slate-700"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={deleteDialog.loading}
+              onClick={executeDelete}
+              className="text-xs font-bold bg-red-600 hover:bg-red-700 text-white gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{deleteDialog.loading ? "Deleting..." : "Delete Permanently"}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

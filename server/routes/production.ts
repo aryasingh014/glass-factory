@@ -1054,146 +1054,377 @@ export const handleAdvanceDlguLamination: RequestHandler = (req, res) => {
   });
 };
 
-// Reject item with reason
+// Reject item with reason (supports single item or paired DLGU / Lamination / DGU assembly)
+// Reject item with reason (supports single piece before pairing, or strictly 1 paired unit after pairing)
 export const handleRejectItem: RequestHandler = (req, res) => {
-  const { serialNumber, piNumber, reason, operator = "Operator" } = req.body;
+  const { serialNumber, serialNumbers, piNumber, reason, defectivePane, defectiveSerialNumber, operator = "Operator" } = req.body;
   const cleanReason = sanitizeString(reason, 500);
   const cleanOperator = sanitizeString(operator || "Operator", 100);
 
-  if (!serialNumber || !cleanReason) {
+  if ((!serialNumber && (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0)) || !cleanReason) {
     res.status(400).json({ message: "serialNumber and reason are required" });
     return;
   }
 
-  const item = glassItemsDatabase.find((g) => g.serialNumber === serialNumber || g.barcode === serialNumber);
-  if (!item) {
-    res.status(404).json({ message: "Glass item not found" });
+  // 1. Collect requested serials
+  const requestedSerials = new Set<string>();
+  const isExplicitList = Array.isArray(serialNumbers) && serialNumbers.length > 0;
+  if (isExplicitList) {
+    serialNumbers.forEach((s) => requestedSerials.add(String(s).trim()));
+  } else if (serialNumber) {
+    requestedSerials.add(String(serialNumber).trim());
+  }
+
+  // 2. Identify initial target items
+  const targetItems: GlassItem[] = [];
+  glassItemsDatabase.forEach((g) => {
+    if (requestedSerials.has(g.serialNumber) || requestedSerials.has(g.barcode)) {
+      if (!targetItems.some((t) => t.id === g.id || t.serialNumber === g.serialNumber)) {
+        targetItems.push(g);
+      }
+    }
+  });
+
+  if (targetItems.length === 0) {
+    res.status(404).json({ message: "Glass item(s) not found" });
     return;
   }
 
-  item.status = "Rejected";
-  item.updatedAt = new Date().toISOString();
+  // 3. Partner Detection Rules:
+  // RULE A: Before Pairing (at Cutting stage or unpaired buffer item) -> NEVER pair-reject. Reject ONLY the single piece.
+  // RULE B: After Pairing (in Lamination or DGU) -> Reject ONLY the 1 matching partner of this specific pair (Max 1 pair = 2 panes total).
+  const partnerItems: GlassItem[] = [];
 
-  const finalPiNumber = sanitizeString(piNumber || item.piNumber, 100);
+  // If explicit serial list was provided (e.g. from the UI modal which already contains the exact 2 serials of the pair), use them directly without searching.
+  if (!isExplicitList || targetItems.length === 1) {
+    targetItems.forEach((item) => {
+      // Before pairing (Cutting stage): strictly single piece only!
+      if (item.currentStage === "Cutting") {
+        return;
+      }
 
-  const rejectEntry: RejectRecord = {
-    id: `rej-${Date.now()}`,
-    serialNumber: item.serialNumber,
-    barcode: item.barcode,
-    piNumber: finalPiNumber,
-    stage: item.currentStage,
-    reason: cleanReason,
-    date: new Date().toISOString(),
-    operator: cleanOperator,
-  };
+      const itemLamPairId = (item as any).lamPairId;
+      const itemDguPairId = (item as any).dguPairId;
 
-  rejectDatabase.unshift(rejectEntry);
+      // 1. Matched by unique lamPairId (stamped during pairing)
+      if (itemLamPairId) {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            (other as any).lamPairId === itemLamPairId &&
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      }
+      // 2. Matched by unique dguPairId
+      else if (itemDguPairId) {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            (other as any).dguPairId === itemDguPairId &&
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      }
+      // 3. Fallback for Lamination stage (find ONLY 1 matching partner pane)
+      else if (item.currentStage === "Lamination") {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            other.currentStage === "Lamination" &&
+            (isDlguItem(item)
+              ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
+              : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      }
+      // 4. Fallback for DGU stage (find ONLY 1 matching partner pane)
+      else if (item.currentStage === "DGU") {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            other.currentStage === "DGU" &&
+            isStickerPairMatch(item, other) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      }
+    });
+  }
 
-  productionHistoryDatabase.unshift({
-    id: `hist-${Date.now()}`,
-    serialNumber: item.serialNumber,
-    barcode: item.barcode,
-    piNumber: finalPiNumber,
-    itemOrBatch: item.serialNumber,
-    action: "Item Rejected",
-    prevStatus: item.currentStage,
-    newStatus: "Rejected",
-    stage: item.currentStage,
-    status: "Rejected",
-    operator: cleanOperator,
-    user: cleanOperator,
-    timestamp: new Date().toISOString(),
-    remarks: `Quality rejection at ${item.currentStage}: ${cleanReason}`,
+  const allItemsToReject = [...targetItems, ...partnerItems];
+  const rejectEntries: RejectRecord[] = [];
+
+  allItemsToReject.forEach((targetItem) => {
+    targetItem.status = "Rejected";
+    targetItem.updatedAt = new Date().toISOString();
+
+    const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
+
+    const rejectEntry: RejectRecord = {
+      id: `rej-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: targetItem.serialNumber,
+      barcode: targetItem.barcode,
+      piNumber: finalPiNumber,
+      stage: targetItem.currentStage,
+      reason: cleanReason,
+      defectivePane: defectivePane ? String(defectivePane) : undefined,
+      defectiveSerialNumber: defectiveSerialNumber ? String(defectiveSerialNumber) : undefined,
+      partnerSerialNumber: allItemsToReject.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
+      date: new Date().toISOString(),
+      operator: cleanOperator,
+    };
+
+    rejectDatabase.unshift(rejectEntry);
+    rejectEntries.push(rejectEntry);
+
+    const isPairedUnit = allItemsToReject.length > 1;
+    const partnerSerialNames = allItemsToReject.map((t) => `#${t.serialNumber}`).join(" + ");
+
+    productionHistoryDatabase.unshift({
+      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: targetItem.serialNumber,
+      barcode: targetItem.barcode,
+      piNumber: finalPiNumber,
+      itemOrBatch: targetItem.serialNumber,
+      action: isPairedUnit ? "Paired Unit Rejected" : "Item Rejected",
+      prevStatus: targetItem.currentStage,
+      newStatus: "Rejected",
+      stage: targetItem.currentStage,
+      status: "Rejected",
+      operator: cleanOperator,
+      user: cleanOperator,
+      timestamp: new Date().toISOString(),
+      remarks: isPairedUnit
+        ? `Quality rejection for paired assembly (${partnerSerialNames}) at ${targetItem.currentStage}: ${cleanReason}`
+        : `Quality rejection at ${targetItem.currentStage}: ${cleanReason}`,
+    });
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("item_rejected", { serialNumber: item.serialNumber, stage: item.currentStage, reason: cleanReason });
+  broadcastUpdate("item_rejected", {
+    serialNumber: allItemsToReject[0].serialNumber,
+    serialNumbers: allItemsToReject.map((t) => t.serialNumber),
+    count: allItemsToReject.length,
+    stage: allItemsToReject[0].currentStage,
+    reason: cleanReason,
+  });
+
+  const isPair = allItemsToReject.length > 1;
+  const serialList = allItemsToReject.map((t) => `#${t.serialNumber}`).join(", ");
   createAndBroadcastNotification({
-    title: `Quality Reject: Item #${item.serialNumber}`,
-    message: `Rejected at ${item.currentStage} by ${cleanOperator}. Reason: ${cleanReason}`,
+    title: isPair ? `Quality Reject: Paired Unit (${serialList})` : `Quality Reject: Item #${allItemsToReject[0].serialNumber}`,
+    message: isPair
+      ? `DLGU / Paired unit (${serialList}) marked as REJECTED at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`
+      : `Rejected at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`,
     category: "REJECTION",
     type: "destructive",
-    stage: item.currentStage,
-    serialNumber: item.serialNumber,
-    piNumber: item.piNumber,
+    stage: allItemsToReject[0].currentStage,
+    serialNumber: allItemsToReject[0].serialNumber,
+    piNumber: allItemsToReject[0].piNumber,
     operator: cleanOperator,
   });
 
-  res.json({ message: "Item marked as rejected", rejectEntry, item });
+  res.json({
+    message: isPair
+      ? `Paired unit (${serialList}) marked as rejected`
+      : `Item ${allItemsToReject[0].serialNumber} marked as rejected`,
+    rejectEntries,
+    items: allItemsToReject,
+  });
 };
 
-// Send item to rework
+// Send item to rework (supports single piece before pairing, or strictly 1 paired unit after pairing)
 export const handleReworkItem: RequestHandler = (req, res) => {
-  const { serialNumber, piNumber, targetStage, reason, operator = "Operator" } = req.body;
+  const { serialNumber, serialNumbers, piNumber, targetStage, reason, defectivePane, defectiveSerialNumber, operator = "Operator" } = req.body;
   const cleanReason = sanitizeString(reason, 500);
   const cleanOperator = sanitizeString(operator || "Operator", 100);
 
-  if (!serialNumber || !targetStage || !cleanReason) {
+  if ((!serialNumber && (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0)) || !targetStage || !cleanReason) {
     res.status(400).json({ message: "serialNumber, targetStage, and reason are required" });
     return;
   }
 
-  const item = glassItemsDatabase.find((g) => g.serialNumber === serialNumber || g.barcode === serialNumber);
-  if (!item) {
-    res.status(404).json({ message: "Glass item not found" });
+  // 1. Collect requested serials
+  const requestedSerials = new Set<string>();
+  const isExplicitList = Array.isArray(serialNumbers) && serialNumbers.length > 0;
+  if (isExplicitList) {
+    serialNumbers.forEach((s) => requestedSerials.add(String(s).trim()));
+  } else if (serialNumber) {
+    requestedSerials.add(String(serialNumber).trim());
+  }
+
+  // 2. Identify initial target items
+  const targetItems: GlassItem[] = [];
+  glassItemsDatabase.forEach((g) => {
+    if (requestedSerials.has(g.serialNumber) || requestedSerials.has(g.barcode)) {
+      if (!targetItems.some((t) => t.id === g.id || t.serialNumber === g.serialNumber)) {
+        targetItems.push(g);
+      }
+    }
+  });
+
+  if (targetItems.length === 0) {
+    res.status(404).json({ message: "Glass item(s) not found" });
     return;
   }
 
-  const prevStage = item.currentStage;
-  if (!item.completedStages.includes(prevStage)) {
-    item.completedStages.push(prevStage);
+  // 3. Partner Detection Rules:
+  // RULE A: Before Pairing (at Cutting stage or unpaired buffer item) -> NEVER pair-rework. Rework ONLY the single piece.
+  // RULE B: After Pairing (in Lamination or DGU) -> Rework ONLY the 1 matching partner of this specific pair (Max 1 pair = 2 panes total).
+  const partnerItems: GlassItem[] = [];
+
+  if (!isExplicitList || targetItems.length === 1) {
+    targetItems.forEach((item) => {
+      if (item.currentStage === "Cutting") {
+        return;
+      }
+
+      const itemLamPairId = (item as any).lamPairId;
+      const itemDguPairId = (item as any).dguPairId;
+
+      if (itemLamPairId) {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            (other as any).lamPairId === itemLamPairId &&
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      } else if (itemDguPairId) {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            (other as any).dguPairId === itemDguPairId &&
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      } else if (item.currentStage === "Lamination") {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            other.currentStage === "Lamination" &&
+            (isDlguItem(item)
+              ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
+              : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      } else if (item.currentStage === "DGU") {
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            other.id !== item.id &&
+            other.status !== "Rejected" &&
+            other.currentStage === "DGU" &&
+            isStickerPairMatch(item, other) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !partnerItems.some((p) => p.id === other.id)
+        );
+        if (partner) partnerItems.push(partner);
+      }
+    });
   }
-  item.currentStage = targetStage as ProductionStage;
-  item.status = "Reworking";
-  item.updatedAt = new Date().toISOString();
 
-  const finalPiNumber = sanitizeString(piNumber || item.piNumber, 100);
+  const allItemsToRework = [...targetItems, ...partnerItems];
+  const reworkEntries: ReworkRecord[] = [];
 
-  const reworkEntry: ReworkRecord = {
-    id: `rew-${Date.now()}`,
-    serialNumber: item.serialNumber,
-    barcode: item.barcode,
-    piNumber: finalPiNumber,
-    fromStage: prevStage,
-    targetStage: targetStage as ProductionStage,
-    reason: cleanReason,
-    date: new Date().toISOString(),
-    operator: cleanOperator,
-  };
+  allItemsToRework.forEach((targetItem) => {
+    const prevStage = targetItem.currentStage;
+    if (!targetItem.completedStages.includes(prevStage)) {
+      targetItem.completedStages.push(prevStage);
+    }
+    targetItem.currentStage = targetStage as ProductionStage;
+    targetItem.status = "Reworking";
+    targetItem.updatedAt = new Date().toISOString();
 
-  reworkDatabase.unshift(reworkEntry);
+    const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
 
-  productionHistoryDatabase.unshift({
-    id: `hist-${Date.now()}`,
-    serialNumber: item.serialNumber,
-    barcode: item.barcode,
-    piNumber: finalPiNumber,
-    itemOrBatch: item.serialNumber,
-    action: `Item Sent to Rework (${targetStage})`,
-    prevStatus: prevStage,
-    newStatus: "Reworking",
-    stage: targetStage,
-    status: "Reworking",
-    operator: cleanOperator,
-    user: cleanOperator,
-    timestamp: new Date().toISOString(),
-    remarks: `Rework routed from ${prevStage} to ${targetStage}: ${cleanReason}`,
+    const reworkEntry: ReworkRecord = {
+      id: `rew-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: targetItem.serialNumber,
+      barcode: targetItem.barcode,
+      piNumber: finalPiNumber,
+      fromStage: prevStage,
+      targetStage: targetStage as ProductionStage,
+      reason: cleanReason,
+      defectivePane: defectivePane ? String(defectivePane) : undefined,
+      defectiveSerialNumber: defectiveSerialNumber ? String(defectiveSerialNumber) : undefined,
+      partnerSerialNumber: allItemsToRework.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
+      date: new Date().toISOString(),
+      operator: cleanOperator,
+    };
+
+    reworkDatabase.unshift(reworkEntry);
+    reworkEntries.push(reworkEntry);
+
+    const isPairedUnit = allItemsToRework.length > 1;
+    const partnerSerialNames = allItemsToRework.map((t) => `#${t.serialNumber}`).join(" + ");
+
+    productionHistoryDatabase.unshift({
+      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: targetItem.serialNumber,
+      barcode: targetItem.barcode,
+      piNumber: finalPiNumber,
+      itemOrBatch: targetItem.serialNumber,
+      action: isPairedUnit ? `Paired Unit Sent to Rework (${targetStage})` : `Item Sent to Rework (${targetStage})`,
+      prevStatus: prevStage,
+      newStatus: "Reworking",
+      stage: targetStage,
+      status: "Reworking",
+      operator: cleanOperator,
+      user: cleanOperator,
+      timestamp: new Date().toISOString(),
+      remarks: isPairedUnit
+        ? `Rework routed for paired assembly (${partnerSerialNames}) from ${prevStage} to ${targetStage}: ${cleanReason}`
+        : `Rework routed from ${prevStage} to ${targetStage}: ${cleanReason}`,
+    });
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("item_reworked", { serialNumber: item.serialNumber, targetStage, reason: cleanReason });
+  broadcastUpdate("item_reworked", {
+    serialNumber: allItemsToRework[0].serialNumber,
+    serialNumbers: allItemsToRework.map((t) => t.serialNumber),
+    targetStage,
+    reason: cleanReason,
+  });
+
+  const isPair = allItemsToRework.length > 1;
+  const serialList = allItemsToRework.map((t) => `#${t.serialNumber}`).join(", ");
   createAndBroadcastNotification({
-    title: `Rework Dispatched: Item #${item.serialNumber}`,
-    message: `Routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`,
+    title: isPair ? `Rework Dispatched: Paired Unit (${serialList})` : `Rework Dispatched: Item #${allItemsToRework[0].serialNumber}`,
+    message: isPair
+      ? `DLGU / Paired unit (${serialList}) routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`
+      : `Routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`,
     category: "REWORK",
     type: "warning",
     stage: targetStage,
-    serialNumber: item.serialNumber,
-    piNumber: item.piNumber,
+    serialNumber: allItemsToRework[0].serialNumber,
+    piNumber: allItemsToRework[0].piNumber,
     operator: cleanOperator,
   });
 
-  res.json({ message: "Item sent to rework", reworkEntry, item });
+  res.json({
+    message: isPair
+      ? `Paired unit (${serialList}) sent to rework at ${targetStage}`
+      : `Item ${allItemsToRework[0].serialNumber} sent to rework at ${targetStage}`,
+    reworkEntries,
+    items: allItemsToRework,
+  });
 };
 
 // Excel Upload API Endpoint
@@ -1402,10 +1633,17 @@ export const handleCheckStickerDuplicates: RequestHandler = (req, res) => {
     return false;
   });
 
-  // 2. Check if the barcodes belong to an already uploaded batch in glassItemsDatabase
+  // 2. Check if the exact same barcodes AND same batch number belong to an already uploaded batch
   if (!matchedBatch && Array.isArray(barcodes) && barcodes.length > 0) {
     const candidateSet = new Set(barcodes.map((b: any) => String(b).trim().toLowerCase()).filter(Boolean));
-    const existingItem = glassItemsDatabase.find((g) => g.barcode && candidateSet.has(g.barcode.trim().toLowerCase()));
+    const cleanBatch = String(batchNo || "").trim().toLowerCase();
+    const existingItem = glassItemsDatabase.find((g) => {
+      if (!g.barcode || !candidateSet.has(g.barcode.trim().toLowerCase())) return false;
+      if (cleanBatch && g.batchNo) {
+        return g.batchNo.trim().toLowerCase() === cleanBatch;
+      }
+      return false;
+    });
     if (existingItem) {
       matchedBatch = piDatabase.find((p) => p.id === existingItem.piId || p.piNumber === existingItem.piNumber);
     }
@@ -1586,10 +1824,10 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
       serialNumber,
       barcode,
       qrId: `QR-${barcode}`,
-      orderNo: raw.orderNo || "2045",
-      obNo: raw.obNo || obNo || "3705",
-      sfoNo: raw.sfoNo || sfoNo || "201765",
-      batchNo: raw.batchNo || batchNo || "5442",
+      orderNo: raw.orderNo || raw.obNo || obNo || batchIdentifier,
+      obNo: raw.obNo || obNo || "",
+      sfoNo: raw.sfoNo || sfoNo || "",
+      batchNo: raw.batchNo || batchNo || "1",
       posNo: raw.posNo || String(idx + 1),
       srNo: idx + 1,
       itemCode: raw.glassCode || `GL-${String(idx + 1).padStart(2, "0")}`,
@@ -1623,24 +1861,29 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
     };
   });
 
+  const finalCustomer = (customerName || items[0]?.customerName || "Customer").trim();
+  const finalProject = (projectName || items[0]?.projectName || "Project").trim();
+  const finalDelDate = deliveryDate || items[0]?.delDate || new Date().toLocaleDateString("en-GB");
+  const finalOptDate = optDate || items[0]?.optDate || new Date().toLocaleDateString("en-GB");
+
   const batchRecord: PIMaster = {
     id: batchId,
     piNumber: batchIdentifier,
     fileName: fileName || `${batchIdentifier}.pdf`,
-    customerName: customerName || "BRIGHT PLUS FITOUT",
-    jobOrderNumber: sfoNo || "201765",
-    projectName: projectName || "PROJECT; VAL_BY_KAS",
-    issueDate: optDate || new Date().toISOString().slice(0, 10),
-    sfoNo: sfoNo || "201765",
-    sfoDate: optDate || new Date().toISOString().slice(0, 10),
-    deliveryDate: deliveryDate || "18/08/2026",
+    customerName: finalCustomer,
+    jobOrderNumber: sfoNo || obNo || batchIdentifier,
+    projectName: finalProject,
+    issueDate: finalOptDate,
+    sfoNo: sfoNo || "",
+    sfoDate: finalOptDate,
+    deliveryDate: finalDelDate,
     proformaInvNo: batchIdentifier,
-    soNoDate: `Batch #${batchNo || "5442"} / ${optDate || new Date().toISOString().slice(0, 10)}`,
+    soNoDate: `Batch #${batchNo || "1"} / ${finalOptDate}`,
     refContact: "",
     dispatchType: "FACTORY",
-    invoiceTo: customerName || "BRIGHT PLUS FITOUT",
-    dispatchTo: customerName || "BRIGHT PLUS FITOUT",
-    obNo: obNo || "3705",
+    invoiceTo: finalCustomer,
+    dispatchTo: finalCustomer,
+    obNo: obNo || "",
     purchaseOrderNo: "",
     version: "1.00",
     totalQty: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0),
@@ -1997,3 +2240,103 @@ setTimeout(() => {
     logger.error("Startup cleanup failed", { error: String(e) });
   }
 }, 1000);
+
+// Delete individual or multiple glass items (piece-wise or sheet-wise)
+export const handleDeleteItems: RequestHandler = (req, res) => {
+  const { serialNumbers, serialNumber, reason = "Deleted from cutting queue", operator = "Operator" } = req.body;
+  const cleanOperator = sanitizeString(operator || "Operator", 100);
+  const cleanReason = sanitizeString(reason || "Deleted by operator", 250);
+
+  const rawList: string[] = Array.isArray(serialNumbers)
+    ? serialNumbers
+    : serialNumber
+    ? [serialNumber]
+    : [];
+
+  if (rawList.length === 0) {
+    res.status(400).json({ message: "serialNumbers or serialNumber is required" });
+    return;
+  }
+
+  const targetSerials = new Set(rawList.map((s) => String(s).trim().toLowerCase()));
+  const deletedItems: GlassItem[] = [];
+  const deletedIdentifiers = new Set<string>();
+  const affectedPiIds = new Set<string>();
+
+  for (let i = glassItemsDatabase.length - 1; i >= 0; i--) {
+    const item = glassItemsDatabase[i];
+    const match =
+      targetSerials.has(item.serialNumber.toLowerCase()) ||
+      targetSerials.has(item.id.toLowerCase()) ||
+      (item.barcode && targetSerials.has(item.barcode.toLowerCase())) ||
+      (item.qrId && targetSerials.has(item.qrId.toLowerCase()));
+
+    if (match) {
+      deletedItems.push(item);
+      deletedIdentifiers.add(item.serialNumber);
+      if (item.barcode) deletedIdentifiers.add(item.barcode);
+      if (item.id) deletedIdentifiers.add(item.id);
+      if (item.piId) affectedPiIds.add(item.piId);
+      if (item.piNumber) affectedPiIds.add(item.piNumber);
+      glassItemsDatabase.splice(i, 1);
+    }
+  }
+
+  if (deletedItems.length === 0) {
+    res.status(404).json({ message: "No matching glass items found to delete" });
+    return;
+  }
+
+  // Clean up associated history records
+  for (let i = productionHistoryDatabase.length - 1; i >= 0; i--) {
+    const h = productionHistoryDatabase[i];
+    if (deletedIdentifiers.has(h.serialNumber) || (h.barcode && deletedIdentifiers.has(h.barcode)) || (h.itemId && deletedIdentifiers.has(h.itemId))) {
+      productionHistoryDatabase.splice(i, 1);
+    }
+  }
+
+  // Clean up associated reject records
+  for (let i = rejectDatabase.length - 1; i >= 0; i--) {
+    const r = rejectDatabase[i];
+    if (deletedIdentifiers.has(r.serialNumber) || (r.barcode && deletedIdentifiers.has(r.barcode)) || (r.itemId && deletedIdentifiers.has(r.itemId))) {
+      rejectDatabase.splice(i, 1);
+    }
+  }
+
+  // Clean up associated rework records
+  for (let i = reworkDatabase.length - 1; i >= 0; i--) {
+    const rw = reworkDatabase[i];
+    if (deletedIdentifiers.has(rw.serialNumber) || (rw.barcode && deletedIdentifiers.has(rw.barcode)) || (rw.itemId && deletedIdentifiers.has(rw.itemId))) {
+      reworkDatabase.splice(i, 1);
+    }
+  }
+
+  // Update affected PIs counts
+  for (const piRef of affectedPiIds) {
+    const pi = piDatabase.find((p) => p.id === piRef || p.piNumber === piRef);
+    if (pi) {
+      const remainingItems = glassItemsDatabase.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
+      pi.itemsCount = remainingItems.length;
+      pi.completedItemsCount = remainingItems.filter((i) => i.currentStage === "Finished" || i.status === "Completed").length;
+    }
+  }
+
+  saveDatabaseToDisk();
+  broadcastUpdate("stage_advanced", { count: deletedItems.length, action: "delete" });
+  broadcastUpdate("item_deleted", { deletedCount: deletedItems.length });
+
+  createAndBroadcastNotification({
+    title: deletedItems.length === 1 ? `Sticker #${deletedItems[0].serialNumber} Deleted` : `${deletedItems.length} Stickers Deleted`,
+    message: `${deletedItems.length} glass sticker(s) removed from production queue (${cleanReason})`,
+    category: "SYSTEM",
+    type: "warning",
+    piNumber: deletedItems[0]?.piNumber,
+    operator: cleanOperator,
+  });
+
+  res.json({
+    message: `${deletedItems.length} glass item(s) deleted successfully`,
+    deletedCount: deletedItems.length,
+    deletedItems,
+  });
+};

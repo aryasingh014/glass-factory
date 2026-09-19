@@ -174,6 +174,68 @@ export function getItemFinish(item: { colorOrClear?: string; category?: string; 
 }
 
 /**
+ * Determines whether a glass item is OP (Outer Pane) or IP (Inner Pane).
+ */
+export function getGlassPaneRole(item: {
+  finish?: string;
+  colorOrClear?: string;
+  glassType?: string;
+  category?: string;
+  layer?: string;
+  paneRole?: string;
+  paneType?: string;
+} | null | undefined): {
+  code: "OP" | "IP";
+  name: string;
+  badgeLabel: string;
+  colorClass: string;
+} {
+  if (!item) {
+    return {
+      code: "OP",
+      name: "Outer Pane",
+      badgeLabel: "OP (Outer Pane)",
+      colorClass: "bg-purple-100 text-purple-800 border-purple-300",
+    };
+  }
+
+  const layer = String(item.layer || (item as any).paneRole || (item as any).paneType || "").toUpperCase();
+  if (layer.includes("OP") || layer.includes("OUTER") || layer.includes("LAYER1") || layer.includes("PANE1") || layer.includes("FACE1")) {
+    return {
+      code: "OP",
+      name: "Outer Pane",
+      badgeLabel: "OP (Outer Pane)",
+      colorClass: "bg-purple-100 text-purple-800 border-purple-300",
+    };
+  }
+  if (layer.includes("IP") || layer.includes("INNER") || layer.includes("LAYER2") || layer.includes("PANE2") || layer.includes("FACE2")) {
+    return {
+      code: "IP",
+      name: "Inner Pane",
+      badgeLabel: "IP (Inner Pane)",
+      colorClass: "bg-cyan-100 text-cyan-800 border-cyan-300",
+    };
+  }
+
+  const finish = getItemFinish(item);
+  if (finish === "Colour") {
+    return {
+      code: "OP",
+      name: "Outer Pane",
+      badgeLabel: "OP (Outer Pane)",
+      colorClass: "bg-purple-100 text-purple-800 border-purple-300",
+    };
+  }
+
+  return {
+    code: "IP",
+    name: "Inner Pane",
+    badgeLabel: "IP (Inner Pane)",
+    colorClass: "bg-cyan-100 text-cyan-800 border-cyan-300",
+  };
+}
+
+/**
  * Checks if a glass item is a DLGU (Double Laminated Glazed Unit).
  */
 export function isDlguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string } | null | undefined): boolean {

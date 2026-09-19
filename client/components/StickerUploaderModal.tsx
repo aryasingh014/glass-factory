@@ -29,8 +29,8 @@ import { formatPlatformDateTime, formatBatchNumber } from "@/lib/utils";
 import * as pdfjsLib from "pdfjs-dist";
 import { formatSejalBarcode } from "@/lib/barcode";
 
-// Set pdf.js worker URL to fallback CDN for Vite build compatibility
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+// Set pdf.js worker URL to local public asset for fast offline/local compatibility
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 
 interface StickerUploaderModalProps {
   open: boolean;
@@ -253,20 +253,24 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           }))
           .filter((b) => b.text.length > 0);
 
-        // 1. Extract 14-18 digit or 10126270... barcode
+        const fullPageText = textBlocks.map((b) => b.text).join(" ");
+        fullCorpusText += " " + fullPageText;
+
+        // 1. Dynamic Barcode Extraction
         const barcodeBlock = textBlocks.find((b) => {
           const clean = b.text.replace(/[\s-]/g, "");
-          return /^\d{14,18}$/.test(clean) || /^10126270\d+$/.test(clean);
+          return /^\d{10,24}$/.test(clean) || /^[A-Z0-9]{10,24}$/i.test(clean);
         });
 
-        // 2. Locate Header Row dynamically & Extract Header Row numbers
-        const orderHeader = textBlocks.find((b) => /order\s*(#|no)/i.test(b.text));
+        // 2. Locate Header Row dynamically (looking for Order / OB / SFO / Batch / POS / Qty / Width / Height)
+        const orderHeader = textBlocks.find((b) => /order\s*(#|no)?/i.test(b.text));
         const headerY = orderHeader ? orderHeader.y : 148;
 
+        // Extract value row blocks sitting directly below header
         const valBlocks = textBlocks.filter((b) => {
-          const isBelow = b.y >= headerY - 24 && b.y <= headerY - 10;
-          const isExcluded = /del\.?\s*date|aluminium|fitout|glass\s+l\.?l\.?c|project|opt\.?date/i.test(b.text);
-          return isBelow && !isExcluded && b.x < 265;
+          const isBelow = b.y >= headerY - 26 && b.y <= headerY - 6;
+          const isExcluded = /del\.?\s*date|project|opt\.?\s*date|customer|glass/i.test(b.text);
+          return isBelow && !isExcluded && b.x < 280;
         });
 
         let orderNo = "";
@@ -275,77 +279,132 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         let batchNoVal = "";
         let posNoVal = "";
         let lineQtyVal = 1;
-        let widthVal = 1000;
-        let heightVal = 1000;
+        let widthVal = 0;
+        let heightVal = 0;
 
+        // Position-based or coordinate-based extraction from value row
         valBlocks.forEach((b) => {
-          if (b.x < 35) orderNo = b.text;
-          else if (b.x < 70) obNoVal = b.text;
-          else if (b.x < 105) sfoNoVal = b.text;
-          else if (b.x < 140) batchNoVal = b.text;
-          else if (b.x < 172) posNoVal = b.text;
-          else if (b.x < 205) lineQtyVal = parseInt(b.text, 10) || 1;
-          else if (b.x < 235) widthVal = parseFloat(b.text) || 1000;
-          else if (b.x >= 235 && b.x < 265) heightVal = parseFloat(b.text) || 1000;
+          if (b.x < 38) orderNo = b.text;
+          else if (b.x < 72) obNoVal = b.text;
+          else if (b.x < 108) sfoNoVal = b.text;
+          else if (b.x < 144) batchNoVal = b.text;
+          else if (b.x < 176) posNoVal = b.text;
+          else if (b.x < 208) lineQtyVal = parseInt(b.text, 10) || 1;
+          else if (b.x < 238) widthVal = parseFloat(b.text) || 0;
+          else if (b.x >= 238 && b.x < 275) heightVal = parseFloat(b.text) || 0;
         });
 
-        // Strict guard: PI / Order No should never be customer name / company entity
-        if (/aluminium|glass|fitout|l\.?l\.?c|damac|project/i.test(orderNo)) {
-          orderNo = "";
+        // Guard against header labels captured as values
+        if (/order|ob|sfo|batch|pos|qty|width|height|project|del|opt/i.test(orderNo)) orderNo = "";
+        if (/order|ob|sfo|batch|pos|qty|width|height/i.test(obNoVal)) obNoVal = "";
+        if (/order|ob|sfo|batch|pos|qty|width|height/i.test(sfoNoVal)) sfoNoVal = "";
+        if (/order|ob|sfo|batch|pos|qty|width|height/i.test(batchNoVal)) batchNoVal = "";
+
+        // Dynamic Pattern Matching Fallbacks across entire page text
+        if (!orderNo) {
+          const m = fullPageText.match(/Order\s*(?:#|No)?[:\s]*([A-Za-z0-9\-\/]+)/i);
+          if (m && !/order|ob|sfo/i.test(m[1])) orderNo = m[1];
+        }
+        if (!obNoVal) {
+          const m = fullPageText.match(/OB\s*(?:#|No)?[:\s]*([A-Za-z0-9\-\/]+)/i);
+          if (m && !/order|ob|sfo/i.test(m[1])) obNoVal = m[1];
+        }
+        if (!sfoNoVal) {
+          const m = fullPageText.match(/SFO\s*(?:#|No)?[:\s]*([A-Za-z0-9\-\/]+)/i);
+          if (m && !/order|ob|sfo/i.test(m[1])) sfoNoVal = m[1];
+        }
+        if (!batchNoVal) {
+          const m = fullPageText.match(/Batch\s*(?:#|No)?[:\s]*([A-Za-z0-9\-\/]+)/i);
+          if (m && !/order|ob|sfo/i.test(m[1])) batchNoVal = m[1];
+        }
+        if (!posNoVal) {
+          const m = fullPageText.match(/POS\s*(?:#|No)?[:\s]*(\d+)/i);
+          if (m) posNoVal = m[1];
         }
 
-        // Fallbacks if regex on full page text is needed
-        const fullPageText = textBlocks.map((b) => b.text).join(" ");
-        fullCorpusText += " " + fullPageText;
-
-        if (!orderNo || !sfoNoVal) {
-          const orderMatch = fullPageText.match(/Order\s*(?:#|No)[^\d]*(\d+)/i) || fullPageText.match(/\b(1870|2045|2137|2041|2138|2139)\b/);
-          if (orderMatch) orderNo = orderMatch[1];
-
-          const obMatch = fullPageText.match(/OB\s*#?[^\d]*(\d+)/i) || fullPageText.match(/\b(3419|3705|3888|3891|3701|3890)\b/);
-          if (obMatch) obNoVal = obMatch[1];
-
-          const sfoMatch = fullPageText.match(/SFO\s*#?[^\d]*(\d+)/i) || fullPageText.match(/\b(9000|1522|20176\d)\b/);
-          if (sfoMatch) sfoNoVal = sfoMatch[1];
-
-          const batchMatch = fullPageText.match(/Batch\s*#?[^\d]*(\d+)/i) || fullPageText.match(/\b(1620|5301|5442)\b/);
-          if (batchMatch) batchNoVal = batchMatch[1];
+        // Dynamic dimension extraction if coordinates were offset
+        if (!widthVal || !heightVal) {
+          const dimMatch = fullPageText.match(/\b(\d{2,4})\s*[xX*]\s*(\d{2,4})\b/);
+          if (dimMatch) {
+            widthVal = parseFloat(dimMatch[1]) || 1000;
+            heightVal = parseFloat(dimMatch[2]) || 1000;
+          }
         }
+        if (!widthVal) widthVal = 1000;
+        if (!heightVal) heightVal = 1000;
 
-        // Deterministic barcode fallback using factory standard Sejal barcode formula
+        // Deterministic barcode fallback based on sticker page / position
         const cleanExtractedBarcode = barcodeBlock ? barcodeBlock.text.replace(/[\s-]/g, "") : "";
-        const finalBarcode = cleanExtractedBarcode || formatSejalBarcode(sfoNoVal || detectedSFO || orderNo || "1344", posNoVal || pageNum);
+        const finalBarcode = cleanExtractedBarcode || formatSejalBarcode(sfoNoVal || detectedSFO || orderNo || `SFO${pageNum}`, posNoVal || pageNum);
 
-        // 3. Extract Customer Name (dynamically located below value row, above project)
-        const custBlock = textBlocks.find((b) => {
-          const inZone = b.y >= headerY - 45 && b.y <= headerY - 24;
-          return inZone && !/project|glass\s*code|cut\/|opt/i.test(b.text) && b.text.length > 3;
-        }) || textBlocks.find((b) => /aluminium|fitout|l\.?l\.?c/i.test(b.text));
-        const custName = custBlock ? custBlock.text : "ASHBILIA ALUMINIUM & GLASS L.L.C";
+        // 3. Dynamic Customer Name Extraction
+        const custCandidates = textBlocks.filter((b) => {
+          const text = b.text.trim();
+          if (text.length < 3) return false;
+          if (/order|sfo|batch|ob|width|height|qty|pos|opt\.?date|del\.?date|project|glass\s*code|cut\//i.test(text)) return false;
+          if (/^\d+([xX*]\d+)?$/.test(text)) return false;
+          // Look for company keywords or location in the upper middle area below header
+          const hasCompanyTerm = /\b(l\.?l\.?c|llc|ltd|limited|inc|corp|co\.|aluminium|aluminum|glass|industries|fitout|contracting|fabrication|facades|metals|cladding|systems|architecture|trading)\b/i.test(text);
+          const inCustomerZone = b.y >= headerY - 50 && b.y <= headerY - 20;
+          return hasCompanyTerm || inCustomerZone;
+        });
+
+        let custName = "";
+        if (custCandidates.length > 0) {
+          // Prioritize one with company term
+          const priorityCust = custCandidates.find((b) =>
+            /\b(l\.?l\.?c|llc|ltd|limited|inc|corp|aluminium|aluminum|glass|industries|fitout|contracting|fabrication|facades|metals)\b/i.test(b.text)
+          );
+          custName = (priorityCust || custCandidates[0]).text.trim();
+        }
         if (!detectedCustomer && custName) detectedCustomer = custName;
 
-        // 4. Extract Project Name
+        // 4. Dynamic Project Name Extraction
         const projHeader = textBlocks.find((b) => /project/i.test(b.text));
-        const projBlock = projHeader
-          ? textBlocks.find((b) => Math.abs(b.y - projHeader.y) <= 4 && b.x > 30 && !/project/i.test(b.text))
-          : textBlocks.find((b) => b.y >= headerY - 55 && b.y <= headerY - 38 && b.x > 30 && !/project/i.test(b.text));
-        const projName = projBlock ? projBlock.text.replace(/^PROJECT;?\s*/i, "").trim() : (detectedProject || "DAMAC_LAGO");
+        let projName = "";
+        if (projHeader) {
+          const nextBlock = textBlocks.find(
+            (b) => Math.abs(b.y - projHeader.y) <= 6 && b.x > projHeader.x && !/project/i.test(b.text)
+          );
+          if (nextBlock) {
+            projName = nextBlock.text.replace(/^[:;]\s*/, "").trim();
+          } else {
+            projName = projHeader.text.replace(/^PROJECT[:;\s]*/i, "").trim();
+          }
+        }
+        if (!projName) {
+          const projMatch = fullPageText.match(/PROJECT[:;\s]+([A-Za-z0-9_\-\s]+?)(?=\s+(?:GLASS|CUT|OPT|DEL|MADE|\d{2}\/)|$)/i);
+          if (projMatch) projName = projMatch[1].trim();
+        }
         if (!detectedProject && projName) detectedProject = projName;
 
-        // 5. Extract Glass Code
+        // 5. Dynamic Glass Code Extraction
         const codeHeader = textBlocks.find((b) => /glass\s*code/i.test(b.text));
-        const codeBlock = codeHeader
-          ? textBlocks.find((b) => Math.abs(b.y - codeHeader.y) <= 4 && b.x > 30 && !/glass\s*code/i.test(b.text))
-          : textBlocks.find((b) => b.y >= 54 && b.y <= 70 && b.x > 30 && !/glass\s*code/i.test(b.text));
-        const glassCode = codeBlock ? codeBlock.text.replace(/^Glass Code:?\s*/i, "").trim() : `GL ${posNoVal || pageNum} SITE`;
+        let glassCode = "";
+        if (codeHeader) {
+          const nextBlock = textBlocks.find(
+            (b) => Math.abs(b.y - codeHeader.y) <= 6 && b.x > codeHeader.x && !/glass\s*code/i.test(b.text)
+          );
+          if (nextBlock) {
+            glassCode = nextBlock.text.replace(/^[:;]\s*/, "").trim();
+          } else {
+            glassCode = codeHeader.text.replace(/^Glass Code[:;\s]*/i, "").trim();
+          }
+        }
+        if (!glassCode) {
+          const codeMatch = fullPageText.match(/Glass Code[:;\s]*([A-Za-z0-9_\-\s]+?)(?=\s+(?:CUT|OPT|DEL|\d{2}\/)|$)/i);
+          if (codeMatch) glassCode = codeMatch[1].trim();
+        }
+        if (!glassCode) {
+          glassCode = `GL ${posNoVal || pageNum}`;
+        }
 
-        // 6. Extract Glass Specification / Description
-        // The specific glass pane being cut for this sticker is situated directly above CUT/
+        // 6. Dynamic Glass Specification / Description Extraction
         const cutBlock = textBlocks.find((b) => /CUT\//i.test(b.text));
         let primaryPane = "";
         if (cutBlock) {
           const candidates = textBlocks.filter(
-            (b) => b.y > cutBlock.y && b.y <= cutBlock.y + 25 && b.x < 70 && !/PROJECT|FITOUT|ALUMINIUM/i.test(b.text)
+            (b) => b.y > cutBlock.y && b.y <= cutBlock.y + 30 && b.x < 80 && !/PROJECT|FITOUT|ALUMINIUM|CUSTOMER|ORDER/i.test(b.text)
           );
           candidates.sort((a, b) => a.y - b.y);
           primaryPane = candidates[0]?.text?.trim() || "";
@@ -353,9 +412,16 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
         if (!primaryPane) {
           const directPane = textBlocks.find(
-            (b) => b.y >= 75 && b.y <= 100 && b.x < 70 && /\b(\d+MM|CLEAR|STOPRAY|SYP|TINT)\b/i.test(b.text) && !/PROJECT|FITOUT|ALUMINIUM/i.test(b.text)
+            (b) => b.y >= 70 && b.y <= 110 && b.x < 80 && /\b(\d+MM|CLEAR|STOPRAY|SYP|TINT|TEMPERED|LAM|FLOAT)\b/i.test(b.text)
           );
-          primaryPane = directPane?.text?.trim() || "6MM CLEAR";
+          primaryPane = directPane?.text?.trim() || "";
+        }
+        if (!primaryPane) {
+          const glassSpecMatch = fullPageText.match(/\b(\d+MM\s+[A-Za-z0-9\s\/\+\-]+?)(?=\s+(?:PROJECT|Glass Code|CUT|OPT|DEL|\d{2}\/)|$)/i);
+          if (glassSpecMatch) primaryPane = glassSpecMatch[1].trim();
+        }
+        if (!primaryPane) {
+          primaryPane = "CLEAR FLOAT";
         }
 
         const primaryLower = primaryPane.toLowerCase();
@@ -376,28 +442,22 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         const itemColorName = isPrimaryColour ? "Coloured Glass" : "Clear Float";
         const glassType = primaryPane;
 
-        // 7. Extract Dates
-        const optMatch = fullPageText.match(/OPT\.date\.?\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || fullPageText.match(/(\d{2}\/\d{2}\/202\d)/);
-        const optDateVal = optMatch ? optMatch[1] : "19/08/2026";
-        if (!detectedOptDate && optDateVal) detectedOptDate = optDateVal;
+        // 7. Dynamic Dates Extraction
+        const optMatch = fullPageText.match(/OPT\.?\s*date\.?\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
+        const optDateVal = optMatch ? optMatch[1] : (detectedOptDate || new Date().toLocaleDateString("en-GB"));
+        if (!detectedOptDate && optMatch) detectedOptDate = optMatch[1];
 
-        const delMatch = fullPageText.match(/DEL\.date\.?\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
-        const delDateVal = delMatch ? delMatch[1] : "18/08/2026";
-        if (!detectedDelDate && delDateVal) detectedDelDate = delDateVal;
+        const delMatch = fullPageText.match(/DEL\.?\s*date\.?\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
+        const delDateVal = delMatch ? delMatch[1] : (detectedDelDate || new Date().toLocaleDateString("en-GB"));
+        if (!detectedDelDate && delMatch) detectedDelDate = delMatch[1];
 
-        // 8. Extract Right Side Down Number (Rack / Stillage Lot #)
+        // 8. Dynamic Rack / Sheet Extraction
         let rackNoVal = "1";
         const rackBlock = textBlocks.find(
-          (b) => /^\d{1,3}$/.test(b.text) && b.x >= 180 && b.y <= 35 && b.text !== String(pageNum) && !b.text.includes("2026")
+          (b) => /^\d{1,3}$/.test(b.text) && b.x >= 170 && b.y <= 40 && b.text !== String(pageNum) && !b.text.includes("202")
         );
         if (rackBlock) {
           rackNoVal = rackBlock.text;
-        } else {
-          const mergedBlock = textBlocks.find((b) => /\b6MM CLEAR\s+(\d{1,3})\b/i.test(b.text));
-          if (mergedBlock) {
-            const match = mergedBlock.text.match(/\b6MM CLEAR\s+(\d{1,3})\b/i);
-            if (match) rackNoVal = match[1];
-          }
         }
 
         if (!detectedSFO && sfoNoVal) detectedSFO = sfoNoVal;
@@ -409,10 +469,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
         extractedItems.push({
           stickerNo: pageNum,
-          orderNo: orderNo || "2045",
-          obNo: obNoVal || "3705",
-          sfoNo: sfoNoVal || "201765",
-          batchNo: batchNoVal || "5442",
+          orderNo: orderNo || (detectedOB || "1"),
+          obNo: obNoVal || (detectedOB || ""),
+          sfoNo: sfoNoVal || (detectedSFO || ""),
+          batchNo: batchNoVal || (detectedBatch || "1"),
           posNo: posNoVal || String(pageNum),
           qty: unitQty,
           lineQty: lineQtyVal || 1,
@@ -421,8 +481,8 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           height: heightVal,
           sqm,
           barcode: finalBarcode,
-          customerName: custName,
-          projectName: projName,
+          customerName: custName || detectedCustomer || "",
+          projectName: projName || detectedProject || "",
           glassCode,
           glassType,
           colorOrClear: itemColorType,
@@ -436,7 +496,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         errors.push("No valid sticker records parsed from PDF file.");
       }
 
-      // Save raw individual sticker records (with proper rackNo / sheet #) for production import
+      // Save raw individual sticker records for production import
       setRawExtractedItems(extractedItems);
 
       // Combine stickers with identical PI/Order, POS NO, dimensions, and finish into 1 consolidated row for MODAL TABLE DISPLAY ONLY
@@ -518,14 +578,15 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         i.glassCategory = detectedCategory;
       });
 
-      setCustomerName(detectedCustomer || "BRIGHT PLUS FITOUT");
-      setProjectName(detectedProject || "PROJECT; VAL_BY_KAS");
-      setSfoNo(detectedSFO || "201765");
-      setObNo(detectedOB || "3705");
-      setBatchNo(detectedBatch || "5442");
-      setDeliveryDate(detectedDelDate || "18/08/2026");
-      setOptDate(detectedOptDate || "19/08/2026");
-      setBatchTitle(detectedBatch || "5442");
+      const fallbackBatchId = detectedBatch || (detectedSFO ? `${detectedSFO}-B1` : `B${Date.now().toString().slice(-4)}`);
+      setCustomerName(detectedCustomer || "");
+      setProjectName(detectedProject || "");
+      setSfoNo(detectedSFO || "");
+      setObNo(detectedOB || "");
+      setBatchNo(detectedBatch || "");
+      setDeliveryDate(detectedDelDate || new Date().toLocaleDateString("en-GB"));
+      setOptDate(detectedOptDate || new Date().toLocaleDateString("en-GB"));
+      setBatchTitle(fallbackBatchId);
 
       const now = new Date();
       const formattedUploadTime = now.toLocaleString("en-GB", {
@@ -549,9 +610,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       // Check if this PDF file or batch was already uploaded in the database
       await checkPdfDuplicate(
         uploadedFile,
-        detectedSFO || "201765",
-        detectedBatch || "5442",
-        `${detectedSFO || "201765"}-B${detectedBatch || "5442"}`,
+        detectedSFO || "",
+        detectedBatch || "",
+        fallbackBatchId,
         consolidatedItems
       );
     } catch (err: any) {
@@ -652,13 +713,13 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
   // Add a new blank sticker item row
   const handleAddBlankItem = () => {
     const nextStickerNo = parsedRows.length + 1;
-    const genBarcode = formatSejalBarcode(sfoNo || "1344", nextStickerNo);
+    const genBarcode = formatSejalBarcode(sfoNo || "1", nextStickerNo);
     const newItem: ParsedStickerItem = {
       stickerNo: nextStickerNo,
-      orderNo: obNo || "2045",
-      obNo: obNo || "3705",
-      sfoNo: sfoNo || "201765",
-      batchNo: batchNo || "5442",
+      orderNo: obNo || sfoNo || String(nextStickerNo),
+      obNo: obNo || "",
+      sfoNo: sfoNo || "",
+      batchNo: batchNo || "1",
       posNo: String(nextStickerNo),
       qty: 1,
       lineQty: 1,
@@ -667,14 +728,14 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       height: 1000,
       sqm: 1.0,
       barcode: genBarcode,
-      customerName: customerName || "BRIGHT PLUS FITOUT",
-      projectName: projectName || "PROJECT; VAL_BY_KAS",
-      glassCode: `GL ${nextStickerNo} SITE`,
+      customerName: customerName || "",
+      projectName: projectName || "",
+      glassCode: `GL ${nextStickerNo}`,
       glassType: glassCategory === "Colour" ? "6MM COLOURED TEMPERED" : "6MM CLEAR TEMPERED",
       colorOrClear: glassCategory,
       glassColor: glassCategory === "Colour" ? "Coloured Glass" : "Clear Float",
-      optDate: optDate || "19/08/2026",
-      delDate: deliveryDate || "18/08/2026",
+      optDate: optDate || new Date().toLocaleDateString("en-GB"),
+      delDate: deliveryDate || new Date().toLocaleDateString("en-GB"),
     };
 
     setParsedRows([...parsedRows, newItem]);
@@ -696,15 +757,15 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          customerName,
-          projectName,
-          sfoNo,
-          obNo,
-          batchNo,
-          deliveryDate,
-          optDate,
-          fileName: file?.name || "Glass1.pdf",
-          batchTitle: batchTitle ? batchTitle.replace(/^STK-/i, "").replace(/^B(?=\d)/i, "") : (batchNo || "5442"),
+          customerName: customerName || itemsToImport[0]?.customerName || "Customer",
+          projectName: projectName || itemsToImport[0]?.projectName || "Project",
+          sfoNo: sfoNo || itemsToImport[0]?.sfoNo || "",
+          obNo: obNo || itemsToImport[0]?.obNo || "",
+          batchNo: batchNo || itemsToImport[0]?.batchNo || "1",
+          deliveryDate: deliveryDate || itemsToImport[0]?.delDate || new Date().toLocaleDateString("en-GB"),
+          optDate: optDate || itemsToImport[0]?.optDate || new Date().toLocaleDateString("en-GB"),
+          fileName: file?.name || "Stickers.pdf",
+          batchTitle: batchTitle ? batchTitle.replace(/^STK-/i, "").replace(/^B(?=\d)/i, "") : (batchNo || "1"),
           colorOrClear: glassCategory,
           glassColor: finalBatchColor,
           glassCategory: productCategory,

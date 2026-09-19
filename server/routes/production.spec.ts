@@ -553,4 +553,245 @@ describe("DLGU (Double Glazed Laminated Unit) Workflow Verification", () => {
 
     expect(isDlguStickerPairMatch(laminatedUnit, outerGreyPane)).toBe(true);
   });
+
+  it("should reject strictly single piece before pairing (at Cutting stage)", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const cuttingPane1: any = {
+      id: "test-cut-rej-1",
+      serialNumber: "CUT-REJ-01",
+      barcode: "CUT-REJ-01-BC",
+      orderNo: "00900",
+      piNumber: "PI-00900",
+      posNo: "2",
+      width: 1000,
+      height: 1800,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Cutting",
+      status: "In Production",
+      completedStages: [],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    const cuttingPane2: any = {
+      id: "test-cut-rej-2",
+      serialNumber: "CUT-REJ-02",
+      barcode: "CUT-REJ-02-BC",
+      orderNo: "00900",
+      piNumber: "PI-00900",
+      posNo: "2",
+      width: 1000,
+      height: 1800,
+      glassType: "13.52MM CLEAR LAMINATED",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Cutting",
+      status: "In Production",
+      completedStages: [],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(cuttingPane1, cuttingPane2);
+
+    const req: any = {
+      body: {
+        serialNumber: "CUT-REJ-01",
+        reason: "Edge crack during cutting",
+        operator: "Cutter Operator",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({
+        json: (d: any) => {
+          responseData = { code, ...d };
+        },
+      }),
+      json: (d: any) => {
+        responseData = d;
+      },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    expect(cuttingPane1.status).toBe("Rejected");
+    expect(cuttingPane2.status).toBe("In Production"); // Must NOT be rejected
+    expect(responseData?.items?.length).toBe(1);
+    expect(responseData?.items?.[0]?.serialNumber).toBe("CUT-REJ-01");
+  });
+
+  it("should reject strictly ONE pair (2 panes) in Lamination when multiple pairs of same batch/pos exist", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // Pair 1: S01 + S02 (lamPairId: lam-S01-S02)
+    const p1A: any = { id: "s-01", serialNumber: "S01", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S01-S02", glassCategory: "DLGU" };
+    const p1B: any = { id: "s-02", serialNumber: "S02", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S01-S02", glassCategory: "DLGU" };
+
+    // Pair 2: S03 + S04 (lamPairId: lam-S03-S04)
+    const p2A: any = { id: "s-03", serialNumber: "S03", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S03-S04", glassCategory: "DLGU" };
+    const p2B: any = { id: "s-04", serialNumber: "S04", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S03-S04", glassCategory: "DLGU" };
+
+    // Pair 3: S05 + S06 (lamPairId: lam-S05-S06)
+    const p3A: any = { id: "s-05", serialNumber: "S05", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S05-S06", glassCategory: "DLGU" };
+    const p3B: any = { id: "s-06", serialNumber: "S06", piNumber: "1023", posNo: "3", width: 951, height: 1601, currentStage: "Lamination", status: "In Production", lamPairId: "lam-S05-S06", glassCategory: "DLGU" };
+
+    glassItemsDatabase.push(p1A, p1B, p2A, p2B, p3A, p3B);
+
+    const req: any = {
+      body: {
+        serialNumber: "S01",
+        reason: "Delamination bubble",
+        operator: "Lamination Operator",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({
+        json: (d: any) => {
+          responseData = { code, ...d };
+        },
+      }),
+      json: (d: any) => {
+        responseData = d;
+      },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // Pair 1 must be Rejected
+    expect(p1A.status).toBe("Rejected");
+    expect(p1B.status).toBe("Rejected");
+
+    // Pair 2 and Pair 3 must REMAIN In Production (NOT rejected!)
+    expect(p2A.status).toBe("In Production");
+    expect(p2B.status).toBe("In Production");
+    expect(p3A.status).toBe("In Production");
+    expect(p3B.status).toBe("In Production");
+
+    expect(responseData?.items?.length).toBe(2);
+  });
+
+  it("should rework strictly single piece before pairing (at Cutting stage) and route to targetStage", async () => {
+    const { handleReworkItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const cuttingItem: any = {
+      id: "test-cut-rw-1",
+      serialNumber: "CUT-RW-01",
+      barcode: "CUT-RW-01-BC",
+      orderNo: "00901",
+      piNumber: "PI-00901",
+      posNo: "1",
+      width: 1200,
+      height: 2000,
+      glassType: "8MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Cutting",
+      status: "In Production",
+      completedStages: [],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(cuttingItem);
+
+    const req: any = {
+      body: {
+        serialNumber: "CUT-RW-01",
+        targetStage: "Cutting",
+        reason: "Dimensions mismatched after cut",
+        operator: "Cutter Operator",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({
+        json: (d: any) => {
+          responseData = { code, ...d };
+        },
+      }),
+      json: (d: any) => {
+        responseData = d;
+      },
+    };
+
+    handleReworkItem(req, res, () => {});
+
+    expect(cuttingItem.status).toBe("Reworking");
+    expect(cuttingItem.currentStage).toBe("Cutting");
+    expect(responseData?.items?.length).toBe(1);
+    expect(responseData?.reworkEntries?.length).toBe(1);
+    expect(responseData?.reworkEntries?.[0]?.reason).toBe("Dimensions mismatched after cut");
+  });
+
+  it("should rework paired assembly (both panes) in Lamination/DGU and route together", async () => {
+    const { handleReworkItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const pairA: any = {
+      id: "rw-pair-A",
+      serialNumber: "RW-S01",
+      piNumber: "1360",
+      posNo: "5",
+      width: 1000,
+      height: 1500,
+      currentStage: "Lamination",
+      status: "In Production",
+      lamPairId: "lam-RW-01",
+      glassCategory: "DLGU",
+      completedStages: ["Cutting"],
+    };
+    const pairB: any = {
+      id: "rw-pair-B",
+      serialNumber: "RW-S02",
+      piNumber: "1360",
+      posNo: "5",
+      width: 1000,
+      height: 1500,
+      currentStage: "Lamination",
+      status: "In Production",
+      lamPairId: "lam-RW-01",
+      glassCategory: "DLGU",
+      completedStages: ["Cutting"],
+    };
+
+    glassItemsDatabase.push(pairA, pairB);
+
+    const req: any = {
+      body: {
+        serialNumber: "RW-S01",
+        targetStage: "Cutting",
+        reason: "Autoclave bubble defect",
+        operator: "Lam Operator",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({
+        json: (d: any) => {
+          responseData = { code, ...d };
+        },
+      }),
+      json: (d: any) => {
+        responseData = d;
+      },
+    };
+
+    handleReworkItem(req, res, () => {});
+
+    expect(pairA.status).toBe("Reworking");
+    expect(pairB.status).toBe("Reworking");
+    expect(pairA.currentStage).toBe("Cutting");
+    expect(pairB.currentStage).toBe("Cutting");
+    expect(responseData?.items?.length).toBe(2);
+    expect(responseData?.reworkEntries?.length).toBe(2);
+  });
 });

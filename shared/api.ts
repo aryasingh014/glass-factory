@@ -112,6 +112,9 @@ export interface RejectRecord {
   stage: ProductionStage;
   reason: string;
   defectType?: string;
+  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
+  defectiveSerialNumber?: string;
+  partnerSerialNumber?: string;
   notes?: string;
   date: string;
   operator: string;
@@ -128,6 +131,9 @@ export interface ReworkRecord {
   toStage?: ProductionStage;
   targetStage?: ProductionStage;
   reason: string;
+  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
+  defectiveSerialNumber?: string;
+  partnerSerialNumber?: string;
   date: string;
   operator: string;
 }

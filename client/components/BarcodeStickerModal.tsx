@@ -97,50 +97,50 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
             </div>
           </div>
 
-          {/* Body Section with Left Specs & Right B-1 Stamp */}
+          {/* Body Section with Left Specs & Right Stamp */}
           <div className="flex justify-between items-stretch pt-2 pb-1 border-b border-slate-800 relative">
             {/* Left Specs Text */}
             <div className="space-y-0.5 text-[11px] font-extrabold text-slate-900 leading-tight uppercase max-w-[75%]">
               <div className="font-black text-xs text-slate-950 truncate">
-                {pi?.customerName || "ASHBILIA ALUMINIUM & GLASS L.L.C"}
+                {(item as any).customerName || pi?.customerName || (item as any).clientName || "CUSTOMER"}
               </div>
-              <div className="text-slate-900 font-bold">
-                PROJECT; {pi?.projectName || "DISTRICT_O"}
+              <div className="text-slate-900 font-bold truncate">
+                PROJECT: {(item as any).projectName || pi?.projectName || "PROJECT"}
               </div>
               <div className="text-slate-900 font-black">
-                {item.glassType || "8MM EMICOOL DSR III ON CLEAR"}
+                {item.glassType || (item as any).description || "GLASS SPECIFICATION"}
               </div>
               <div className="text-slate-700 font-bold text-[10px]">
-                {item.processRoute?.map((r) => r.toUpperCase().slice(0, 3)).join("/") || "CUT/EDGE/TMP"}
+                {item.processRoute?.map((r) => r.toUpperCase().slice(0, 3)).join("/") || "CUT/TMP"}
               </div>
               <div className="text-slate-900 font-bold text-[10.5px]">
-                Glass Code:{item.itemCode || "AL 35 7BR B 2113 GL"}
+                Glass Code: {item.glassCode || item.itemCode || `GL ${item.posNo || 1}`}
               </div>
-              <div className="text-slate-700 text-[10px]">
-                8MM EMICOOL DSR III ON CLEAR
-              </div>
-              <div className="text-slate-700 text-[10px]">
-                16MM BLACK SPACER
-              </div>
-              <div className="text-slate-700 text-[10px]">
-                8MM CLEAR
-              </div>
+              {(item as any).makeup ? (
+                <div className="text-slate-700 text-[10px]">
+                  {(item as any).makeup}
+                </div>
+              ) : item.glassColor ? (
+                <div className="text-slate-700 text-[10px]">
+                  {item.glassColor} • {item.glassCategory || "Glass Unit"}
+                </div>
+              ) : null}
             </div>
 
             {/* Right Stamp & Vertical Delivery Date */}
             <div className="flex items-center justify-end gap-3 text-right">
-              {/* B-1 Stamp */}
+              {/* Rack / Lot Stamp */}
               <div className="text-center">
                 <div className="text-3xl font-black font-mono tracking-tighter text-slate-950 border-2 border-slate-950 px-1 py-0.5 rounded leading-none transform -rotate-6 shadow-2xs">
-                  B-1
+                  {item.batchNo ? `B-${item.batchNo}` : "B-1"}
                 </div>
-                <div className="text-[9px] font-mono font-bold mt-1 text-slate-700">0000</div>
-                <div className="text-[10px] font-black font-mono mt-0.5 text-slate-900">{item.rackNo || "1"}</div>
+                <div className="text-[9px] font-mono font-bold mt-1 text-slate-700">LOT</div>
+                <div className="text-[10px] font-black font-mono mt-0.5 text-slate-900">RACK: {item.rackNo || "1"}</div>
               </div>
 
               {/* Vertical Delivery Date */}
               <div className="writing-mode-vertical text-[9px] font-bold font-mono text-slate-800 tracking-wider flex items-center justify-center border-l border-slate-300 pl-1">
-                DEL.date. {new Date().toLocaleDateString("en-GB")}
+                DEL.date. {(item as any).delDate || pi?.deliveryDate || new Date().toLocaleDateString("en-GB")}
               </div>
             </div>
           </div>
@@ -148,13 +148,13 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
           {/* Footer Bar (OPT Date | MADE IN UAE | Seq) */}
           <div className="flex justify-between items-center pt-1.5 text-[10px] font-black font-mono text-slate-900">
             <div>
-              OPT date. <span className="font-bold">{new Date().toLocaleDateString("en-GB")}</span>
+              OPT date. <span className="font-bold">{(item as any).optDate || pi?.sfoDate || new Date().toLocaleDateString("en-GB")}</span>
             </div>
             <div className="text-xs font-black tracking-widest text-slate-950 uppercase">
               MADE IN UAE
             </div>
             <div className="text-xs font-black text-slate-950">
-              4
+              POS: {item.posNo || 1}
             </div>
           </div>
         </div>

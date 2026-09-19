@@ -789,7 +789,6 @@ export default function Index() {
         else hasClear = true;
 
         if (pi.projectName) projectsSet.add(pi.projectName);
-        if (pi.jobOrderNumber) projectsSet.add(`JO: ${pi.jobOrderNumber}`);
       });
 
       const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
@@ -992,8 +991,8 @@ export default function Index() {
         map.set(key, {
           id: key,
           piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
-          customerName: parentPI?.customerName || "BRIGHT PLUS FITOUT",
-          projectName: parentPI?.projectName || item.sectionName || "VAL_BY_KAS",
+          customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
+          projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
           sfoNo: item.sfoNo || parentPI?.sfoNo || "",
           items: [],
@@ -1027,8 +1026,8 @@ export default function Index() {
         map.set(p.id, {
           id: p.id,
           piNumber: (p.piNumber || "").replace(/^STK-/i, ""),
-          customerName: p.customerName || "BRIGHT PLUS FITOUT",
-          projectName: p.projectName || "VAL_BY_KAS",
+          customerName: p.customerName || "Customer",
+          projectName: p.projectName || "Project",
           jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
           sfoNo: p.sfoNo || "",
           items: [],
@@ -1125,10 +1124,10 @@ export default function Index() {
 
           <div className="hidden md:block">
             <h1 className="font-extrabold text-sm tracking-tight text-slate-900 leading-none uppercase">
-              SHOP FLOOR & PROFORMA INVOICE SYSTEM
+              SEJAL GLASS PRODUCTION OPERATIONS
             </h1>
             <p className="text-[11px] text-slate-500 font-medium leading-tight">
-              Reflecting Values • Precision Glass Production Tracking
+              Architectural Glass Processing & Shop Floor Execution System
             </p>
           </div>
         </div>
@@ -1468,11 +1467,17 @@ export default function Index() {
           {activeTab === "overview" && (
             <div className="space-y-6">
               {/* Live Production Sync Active Banner */}
-              <div className="flex items-center justify-between bg-white border border-slate-200/80 p-3 px-4 rounded-xl text-xs shadow-2xs">
-                <div className="flex items-center gap-2 text-slate-600 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                  <span className="font-bold text-slate-800">Live Production Sync Active</span>
-                  <span className="text-slate-400">• Last synced: {getDubaiTimeStr(lastUpdated)}</span>
+              <div className="flex items-center justify-between bg-white border border-slate-200/90 p-3.5 px-5 rounded-2xl text-xs shadow-xs">
+                <div className="flex items-center gap-2.5 text-slate-600 font-medium">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <span className="font-bold text-slate-900 tracking-tight">Real-Time Shop Floor Sync Active</span>
+                  <span className="text-slate-400 font-mono">• Last synced: {getDubaiTimeStr(lastUpdated)}</span>
+                </div>
+                <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono">Dubai Plant (UAE)</span>
                 </div>
               </div>
 
@@ -1481,7 +1486,7 @@ export default function Index() {
                 {/* Card 1: Total Batches Uploaded */}
                 <div
                   onClick={() => setActiveTab("pis")}
-                  className="bg-gradient-to-br from-white via-white to-blue-50/40 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-blue-400 transition-all duration-300 relative overflow-hidden group cursor-pointer"
+                  className="bg-white border border-slate-200/90 hover:border-blue-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden group cursor-pointer"
                   title="Click to open Sticker & Batch Status list"
                   role="button"
                   tabIndex={0}
@@ -1492,26 +1497,20 @@ export default function Index() {
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-blue-800 transition-colors">
-                        Total Batches Uploaded <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-blue-600" />
-                      </div>
-                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.totalPI}</div>
-                      <div className="text-[11px] text-blue-700 font-semibold mt-1 flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" /> {effectiveStats.pendingPI} Pending Production
-                      </div>
-                    </div>
-                    <div className="w-11 h-11 rounded-2xl bg-blue-100/70 text-blue-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-[#1a3a6b] group-hover:text-white transition-all duration-300 shadow-2xs">
-                      <FileText className="w-5 h-5" />
-                    </div>
+                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-blue-700 transition-colors">
+                    Total Batches Uploaded
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.totalPI}</div>
+                  <div className="text-[11px] text-blue-700 font-semibold mt-1.5 flex items-center gap-1.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                    <span>{effectiveStats.pendingPI} Pending Production</span>
                   </div>
                 </div>
 
                 {/* Card 2: Finished Glass Items */}
                 <div
                   onClick={() => setActiveTab("finished")}
-                  className="bg-gradient-to-br from-white via-white to-emerald-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-emerald-400 transition-all duration-300 group cursor-pointer"
+                  className="bg-white border border-slate-200/90 hover:border-emerald-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
                   title="Click to open Finished Items Warehouse & Dispatch queue"
                   role="button"
                   tabIndex={0}
@@ -1522,19 +1521,13 @@ export default function Index() {
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-emerald-700 transition-colors">
-                        Finished Glass Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-emerald-600" />
-                      </div>
-                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.finishedItems}</div>
-                      <div className="text-[11px] text-emerald-600 font-semibold mt-1 flex items-center gap-1">
-                        <CheckCircle className="w-3.5 h-3.5" /> 100% Quality Inspected
-                      </div>
-                    </div>
-                    <div className="w-11 h-11 rounded-2xl bg-emerald-100/70 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-300 shadow-2xs">
-                      <CheckCircle className="w-5 h-5" />
-                    </div>
+                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-emerald-700 transition-colors">
+                    Finished Glass Items
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.finishedItems}</div>
+                  <div className="text-[11px] text-emerald-700 font-semibold mt-1.5 flex items-center gap-1.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    <span>100% Quality Inspected</span>
                   </div>
                 </div>
 
@@ -1542,9 +1535,12 @@ export default function Index() {
                 <div
                   onClick={() => {
                     setReportsInitialTab("rejects");
+                    try {
+                      localStorage.setItem("sejal_reports_active_tab", "rejects");
+                    } catch {}
                     setActiveTab("reports");
                   }}
-                  className="bg-gradient-to-br from-white via-white to-red-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-red-400 transition-all duration-300 group cursor-pointer"
+                  className="bg-white border border-slate-200/90 hover:border-rose-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
                   title="Click to open Quality Rejects log"
                   role="button"
                   tabIndex={0}
@@ -1552,23 +1548,20 @@ export default function Index() {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       setReportsInitialTab("rejects");
+                      try {
+                        localStorage.setItem("sejal_reports_active_tab", "rejects");
+                      } catch {}
                       setActiveTab("reports");
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-red-700 transition-colors">
-                        Rejected Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-red-600" />
-                      </div>
-                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.rejectItems}</div>
-                      <div className="text-[11px] text-red-600 font-semibold mt-1 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Log & Reason Traceable
-                      </div>
-                    </div>
-                    <div className="w-11 h-11 rounded-2xl bg-red-100/70 text-red-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-red-600 group-hover:text-white transition-all duration-300 shadow-2xs">
-                      <AlertTriangle className="w-5 h-5" />
-                    </div>
+                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-rose-700 transition-colors">
+                    Rejected Items
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.rejectItems}</div>
+                  <div className="text-[11px] text-rose-700 font-semibold mt-1.5 flex items-center gap-1.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    <span>Log & Reason Traceable</span>
                   </div>
                 </div>
 
@@ -1576,9 +1569,12 @@ export default function Index() {
                 <div
                   onClick={() => {
                     setReportsInitialTab("reworks");
+                    try {
+                      localStorage.setItem("sejal_reports_active_tab", "reworks");
+                    } catch {}
                     setActiveTab("reports");
                   }}
-                  className="bg-gradient-to-br from-white via-white to-amber-50/30 border border-slate-300 rounded-2xl p-4 shadow-2xs hover:shadow-lg hover:-translate-y-1 hover:border-amber-400 transition-all duration-300 group cursor-pointer"
+                  className="bg-white border border-slate-200/90 hover:border-amber-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
                   title="Click to open Rework log and tracking"
                   role="button"
                   tabIndex={0}
@@ -1586,23 +1582,20 @@ export default function Index() {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       setReportsInitialTab("reworks");
+                      try {
+                        localStorage.setItem("sejal_reports_active_tab", "reworks");
+                      } catch {}
                       setActiveTab("reports");
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 group-hover:text-amber-700 transition-colors">
-                        Rework Items <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all text-amber-600" />
-                      </div>
-                      <div className="text-3xl font-extrabold text-slate-900 mt-1.5 tracking-tight">{effectiveStats.reworkItems}</div>
-                      <div className="text-[11px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
-                        <RefreshCw className="w-3.5 h-3.5 group-hover:rotate-180 transition-transform duration-500" /> Re-routed to Workstations
-                      </div>
-                    </div>
-                    <div className="w-11 h-11 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-amber-600 group-hover:text-white transition-all duration-300 shadow-2xs">
-                      <RefreshCw className="w-5 h-5" />
-                    </div>
+                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-amber-700 transition-colors">
+                    Rework Items
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.reworkItems}</div>
+                  <div className="text-[11px] text-amber-700 font-semibold mt-1.5 flex items-center gap-1.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    <span>Re-routed to Workstations</span>
                   </div>
                 </div>
               </div>
@@ -1717,7 +1710,7 @@ export default function Index() {
                                 CUSTOMER {renderSortIcon("customerName")}
                               </th>
                               <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
-                                PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                                PROJECT {renderSortIcon("projectName")}
                               </th>
                               <th className="py-2.5 px-2 whitespace-nowrap">
                                 CURRENT STAGE
@@ -1752,10 +1745,7 @@ export default function Index() {
                                   <td className="py-3 px-2.5 font-mono font-bold text-blue-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
                                   <td className="py-3 px-2.5 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
                                   <td className="py-3 px-2.5 text-slate-600 leading-snug">
-                                    <div className="font-medium text-slate-900">{pi.projectName}</div>
-                                    {pi.jobOrderNumber && (
-                                      <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
-                                    )}
+                                    <div className="font-medium text-slate-900">{pi.projectName || "—"}</div>
                                   </td>
                                   <td className="py-3 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                     <button
@@ -2471,25 +2461,49 @@ export default function Index() {
                   {groupedCustomerData.length > 0 ? (
                     groupedCustomerData.map((customer) => {
                       const isExpanded = isCustomerExpanded(customer.customerName);
+                      const isCompleted = customer.status === "Completed" || (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces);
+
                       return (
                         <div
                           key={customer.customerName}
-                          className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-purple-300"
+                          className={`rounded-2xl transition-all overflow-hidden ${
+                            isCompleted
+                              ? "bg-emerald-50/25 border-2 border-emerald-400 shadow-xs hover:border-emerald-500 hover:shadow-md"
+                              : "bg-white border border-slate-200/90 shadow-2xs hover:border-purple-300"
+                          }`}
                         >
                           {/* Customer Summary Card Header */}
                           <div
                             onClick={() => toggleCustomerExpanded(customer.customerName)}
-                            className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30 transition-colors"
+                            className={`p-4 cursor-pointer select-none transition-colors ${
+                              isCompleted
+                                ? "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-teal-50/20 hover:from-emerald-100/90"
+                                : "bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30"
+                            }`}
                           >
                             <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
                               {/* Left: Customer Info & Badges */}
                               <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
-                                  <Building2 className="w-5 h-5" />
+                                <div
+                                  className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
+                                    isCompleted
+                                      ? "bg-gradient-to-br from-emerald-600 to-teal-700 ring-2 ring-emerald-300 shadow-emerald-200/50"
+                                      : "bg-gradient-to-br from-purple-600 to-indigo-700"
+                                  }`}
+                                >
+                                  {isCompleted ? (
+                                    <CheckCircle className="w-5 h-5 text-emerald-50" />
+                                  ) : (
+                                    <Building2 className="w-5 h-5" />
+                                  )}
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <h3 className="text-base font-extrabold text-slate-900 truncate">
+                                    <h3
+                                      className={`text-base font-extrabold truncate ${
+                                        isCompleted ? "text-emerald-950" : "text-slate-900"
+                                      }`}
+                                    >
                                       {customer.customerName}
                                     </h3>
                                     {customer.hasColour && (
@@ -2502,7 +2516,13 @@ export default function Index() {
                                         Clear
                                       </span>
                                     )}
-                                    <StatusBadge status={customer.status} />
+                                    {isCompleted ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
+                                        <Check className="w-3 h-3 stroke-[3]" /> COMPLETED
+                                      </span>
+                                    ) : (
+                                      <StatusBadge status={customer.status} />
+                                    )}
                                   </div>
                                   <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
                                     <span>
@@ -2606,24 +2626,48 @@ export default function Index() {
                               <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
                                 <div className="text-right">
                                   <div className="font-mono text-xs font-black text-slate-900">
-                                    <span className="text-purple-700">{customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}</span>
+                                    <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-purple-700"}>
+                                      {customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}
+                                    </span>
                                     <span className="text-slate-400 mx-1.5">•</span>
-                                    <span>{customer.completedPieces}/{customer.totalPieces} pcs</span>
+                                    <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
+                                      {customer.completedPieces}/{customer.totalPieces} pcs
+                                    </span>
                                     <span className="text-slate-400 mx-1.5">•</span>
                                     <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                                   </div>
                                   <div className="flex items-center gap-2 justify-end mt-1">
-                                    <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                    <div
+                                      className={`w-24 h-1.5 rounded-full overflow-hidden ${
+                                        isCompleted ? "bg-emerald-200" : "bg-slate-200"
+                                      }`}
+                                    >
                                       <div
-                                        className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all"
+                                        className={`h-full rounded-full transition-all ${
+                                          isCompleted
+                                            ? "bg-gradient-to-r from-emerald-500 to-teal-600"
+                                            : "bg-gradient-to-r from-purple-500 to-indigo-600"
+                                        }`}
                                         style={{ width: `${customer.progressPct}%` }}
                                       />
                                     </div>
-                                    <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                                    <span
+                                      className={`text-[10px] font-mono ${
+                                        isCompleted ? "text-emerald-700 font-extrabold" : "text-slate-500 font-bold"
+                                      }`}
+                                    >
+                                      {customer.progressPct}%
+                                    </span>
                                   </div>
                                 </div>
 
-                                <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 transition-colors">
+                                <div
+                                  className={`p-1.5 rounded-lg transition-colors ${
+                                    isCompleted
+                                      ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                                      : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700"
+                                  }`}
+                                >
                                   {isExpanded ? (
                                     <ChevronUp className="w-4 h-4" />
                                   ) : (
@@ -2709,7 +2753,7 @@ export default function Index() {
                                     <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
                                       <th className="py-2.5 px-3 whitespace-nowrap">BATCH NO</th>
                                       <th className="py-2.5 px-3 whitespace-nowrap">FINISH</th>
-                                      <th className="py-2.5 px-3 whitespace-nowrap">PROJECT / JOB ORDER</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">PROJECT</th>
                                       <th className="py-2.5 px-3 whitespace-nowrap">CURRENT STAGE</th>
                                       <th className="py-2.5 px-3 text-center whitespace-nowrap">PIECES</th>
                                       <th className="py-2.5 px-3 text-right whitespace-nowrap">TOTAL SQM</th>
@@ -2743,9 +2787,6 @@ export default function Index() {
                                           </td>
                                           <td className="py-2.5 px-3 text-slate-700">
                                             <div className="font-semibold">{pi.projectName || "Standard Project"}</div>
-                                            {pi.jobOrderNumber && (
-                                              <span className="text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
-                                            )}
                                           </td>
                                           <td className="py-2.5 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                             <button
@@ -2842,7 +2883,7 @@ export default function Index() {
                               CUSTOMER {renderSortIcon("customerName")}
                             </th>
                             <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
-                              PROJECT / JOB ORDER {renderSortIcon("projectName")}
+                              PROJECT {renderSortIcon("projectName")}
                             </th>
                             <th className="py-2.5 px-3 whitespace-nowrap">
                               CURRENT STAGE
@@ -2888,10 +2929,7 @@ export default function Index() {
                                 </td>
                                 <td className="py-3 px-3 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
                                 <td className="py-3 px-3 text-slate-600 leading-snug">
-                                  <div className="font-medium text-slate-900">{pi.projectName}</div>
-                                  {pi.jobOrderNumber && (
-                                    <span className="block text-[10px] text-slate-400 font-mono">JO: {pi.jobOrderNumber}</span>
-                                  )}
+                                  <div className="font-medium text-slate-900">{pi.projectName || "—"}</div>
                                 </td>
                                 <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                   <button
@@ -3004,6 +3042,7 @@ export default function Index() {
           {/* TAB: REPORTS & AUDIT LOG */}
           {activeTab === "reports" && (
             <ReportsView
+              key={reportsInitialTab}
               initialTab={reportsInitialTab}
               onTabChange={(tab) => {
                 setReportsInitialTab(tab);

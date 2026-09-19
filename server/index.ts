@@ -28,6 +28,7 @@ import {
   handleClearDatabase,
   handleEventsStream,
   handleCleanupDatabase,
+  handleDeleteItems,
 } from "./routes/production";
 
 import { handleGetPerformanceAnalytics } from "./routes/analytics";
@@ -212,6 +213,8 @@ export function createServer() {
   apiV1.get("/production/events", handleEventsStream);
   apiV1.post("/production/clear-db", requireRole(["Admin"]), handleClearDatabase);
   apiV1.post("/production/cleanup", requireRole(["Admin"]), handleCleanupDatabase);
+  apiV1.post("/production/delete-items", handleDeleteItems);
+  apiV1.delete("/production/items", handleDeleteItems);
 
   // Mount API Router v1 on both /api/v1 (versioned) and /api (backward compatible)
   app.use("/api/v1", apiV1);

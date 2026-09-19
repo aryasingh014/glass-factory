@@ -165,7 +165,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     items.forEach((item) => {
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
       const orderPi = (item.orderNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
-      const customer = parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT";
+      const customer = parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer";
 
       if (!map.has(orderPi)) {
         map.set(orderPi, {
@@ -191,7 +191,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         map.set(pNum, {
           id: p.id || pNum,
           piNumber: pNum,
-          customerName: p.customerName || "BRIGHT PLUS FITOUT",
+          customerName: p.customerName || "Customer",
           totalItems: p.totalQty || p.itemsCount || 0,
           cutItems: p.completedItemsCount || 0,
         });
@@ -206,7 +206,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     const map = new Map<string, { name: string; totalItems: number; cutItems: number }>();
     items.forEach((item) => {
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
-      const cust = (parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT").trim();
+      const cust = (parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer").trim();
       if (cust) {
         if (!map.has(cust)) {
           map.set(cust, { name: cust, totalItems: 0, cutItems: 0 });
@@ -220,7 +220,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       }
     });
     pis.forEach((p) => {
-      const cust = (p.customerName || "BRIGHT PLUS FITOUT").trim();
+      const cust = (p.customerName || "Customer").trim();
       if (cust && !map.has(cust)) {
         map.set(cust, { name: cust, totalItems: p.totalQty || p.itemsCount || 0, cutItems: p.completedItemsCount || 0 });
       }
@@ -285,8 +285,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           id: groupKey,
           piNumber: cleanPiNumber,
           piId: item.piId || parentPI?.id,
-          customerName: parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT",
-          projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "VAL_BY_KAS",
+          customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
+          projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           posNo: posKey,
           glassCategory,
           dlguPhase: effectiveDlguPhase,
@@ -295,11 +295,11 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           height: item.height || 1000,
           rawItems: [],
           bufferItems: [],
-          glassCode: item.glassCode || `GL ${posKey} SITE`,
+          glassCode: item.glassCode || `GL ${posKey}`,
           glassType: isDlgu && finish === "Clear" ? "13.52MM CLEAR LAMINATED (DLGU Sub-Assembly)" : (item.glassType || item.itemCode || (finish === "Colour" ? "6MM COLOURED TEMPERED" : "6MM CLEAR TEMPERED")),
-          obNo: item.obNo || "3705",
+          obNo: item.obNo || "",
           sfoNo: item.sfoNo || cleanPiNumber,
-          batchNo: item.batchNo || "5442",
+          batchNo: item.batchNo || "1",
           barcode: item.barcode || "",
           thickness: rawThickness,
         } as any);
@@ -450,7 +450,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
         // Customer / Client Filter
         if (selectedCustomerFilter !== "ALL") {
-          const matchCust = (row.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+          const matchCust = (row.customerName || (row as any).clientName || "Customer").trim() === selectedCustomerFilter;
           if (!matchCust) return false;
         }
 
@@ -550,7 +550,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     const map = new Map<string, typeof filteredRows>();
 
     filteredRows.forEach((row) => {
-      const cust = (row.customerName || "BRIGHT PLUS FITOUT").trim();
+      const cust = (row.customerName || (row as any).clientName || "Customer").trim();
       if (!map.has(cust)) {
         map.set(cust, []);
       }
@@ -674,7 +674,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       if (!matchPI) return false;
     }
     if (selectedCustomerFilter !== "ALL") {
-      const matchCust = (r.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+      const matchCust = (r.customerName || (r as any).clientName || "Customer").trim() === selectedCustomerFilter;
       if (!matchCust) return false;
     }
     if (categoryFilter === "ALL_PENDING") return isRowPending(r);
@@ -695,7 +695,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         if (!matchPI) return false;
       }
       if (selectedCustomerFilter !== "ALL") {
-        const matchCust = (r.customerName || "BRIGHT PLUS FITOUT").trim() === selectedCustomerFilter;
+        const matchCust = (r.customerName || (r as any).clientName || "Customer").trim() === selectedCustomerFilter;
         if (!matchCust) return false;
       }
       return true;
@@ -928,10 +928,10 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       const serials = matchedItem ? [matchedItem.serialNumber] : scanRow.bufferItems.map((i) => i.serialNumber);
       setScanRow(null);
       setScanInput("");
-      toast.success(`⚡ Verified barcode for POS #${scanRow.posNo}! Advancing to DGU...`);
+      toast.success(`Verified barcode for POS #${scanRow.posNo}. Advancing to DGU...`);
       await completeStage(serials, 1, false);
     } else {
-      toast.error("❌ Barcode mismatch — please scan the correct glass sticker barcode.");
+      toast.error("Barcode mismatch — please scan the correct glass sticker barcode.");
       setScanInput("");
     }
   };
@@ -1458,94 +1458,146 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         </div>
       </div>
 
-      {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
-      {bufferViewMode === "CUSTOMER" && (
-        <div className="space-y-3">
-          {groupedCustomerRows.length > 0 ? (
-            groupedCustomerRows.map((customer) => {
-              const isExpanded = isBufferCustomerExpanded(customer.customerName);
-              return (
-                <div
-                  key={customer.customerName}
-                  className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden hover:border-indigo-300"
-                >
-                  {/* Customer Summary Card Header */}
+        {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
+        {bufferViewMode === "CUSTOMER" && (
+          <div className="space-y-3">
+            {groupedCustomerRows.length > 0 ? (
+              groupedCustomerRows.map((customer) => {
+                const isExpanded = isBufferCustomerExpanded(customer.customerName);
+                const isCompleted = customer.isFullyCut || (customer.totalPieces > 0 && customer.cutPieces >= customer.totalPieces);
+
+                return (
                   <div
-                    onClick={() => toggleBufferCustomerExpanded(customer.customerName)}
-                    className="p-4 cursor-pointer select-none bg-gradient-to-r from-slate-50/70 via-white to-indigo-50/20 hover:from-indigo-50/30 transition-colors"
+                    key={customer.customerName}
+                    className={`rounded-2xl transition-all overflow-hidden ${
+                      isCompleted
+                        ? "bg-emerald-50/25 border-2 border-emerald-400 shadow-xs hover:border-emerald-500 hover:shadow-md"
+                        : "bg-white border border-slate-200/90 shadow-2xs hover:border-indigo-300"
+                    }`}
                   >
-                    <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
-                      {/* Left: Customer Info */}
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
-                          <Building2 className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="text-base font-extrabold text-slate-900 truncate">
-                              {customer.customerName}
-                            </h3>
-                            {customer.hasColour && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                Coloured
-                              </span>
+                    {/* Customer Summary Card Header */}
+                    <div
+                      onClick={() => toggleBufferCustomerExpanded(customer.customerName)}
+                      className={`p-4 cursor-pointer select-none transition-colors ${
+                        isCompleted
+                          ? "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-teal-50/20 hover:from-emerald-100/90"
+                          : "bg-gradient-to-r from-slate-50/70 via-white to-indigo-50/20 hover:from-indigo-50/30"
+                      }`}
+                    >
+                      <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                        {/* Left: Customer Info */}
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div
+                            className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
+                              isCompleted
+                                ? "bg-gradient-to-br from-emerald-600 to-teal-700 ring-2 ring-emerald-300 shadow-emerald-200/50"
+                                : "bg-gradient-to-br from-indigo-600 to-purple-700"
+                            }`}
+                          >
+                            {isCompleted ? (
+                              <CheckCircle className="w-5 h-5 text-emerald-50" />
+                            ) : (
+                              <Building2 className="w-5 h-5" />
                             )}
-                            {customer.hasClear && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
-                                Clear
-                              </span>
-                            )}
-                            {customer.readyPairs > 0 && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
-                                <Sparkles className="w-3 h-3 text-emerald-600" />
-                                {customer.readyPairs} Pairs Ready
-                              </span>
-                            )}
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                              customer.isFullyCut ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
-                            }`}>
-                              {customer.isFullyCut ? "Completed" : "In Production"}
-                            </span>
                           </div>
-                          <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                            {customer.projects.length > 0 ? customer.projects.join(" • ") : "Standard Shop Floor Order"}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right: Quantities, Progress & Accordion Trigger */}
-                      <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
-                        <div className="text-right">
-                          <div className="font-mono text-xs font-black text-slate-900">
-                            <span className="text-indigo-700">{customer.totalPositions} Positions</span>
-                            <span className="text-slate-400 mx-1.5">•</span>
-                            <span>{customer.cutPieces}/{customer.totalPieces} Cut</span>
-                            <span className="text-slate-400 mx-1.5">•</span>
-                            <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
-                          </div>
-                          <div className="flex items-center gap-2 justify-end mt-1">
-                            <div className="w-24 bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                              <div
-                                className="bg-gradient-to-r from-indigo-500 to-purple-600 h-full rounded-full transition-all"
-                                style={{ width: `${customer.progressPct}%` }}
-                              />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3
+                                className={`text-base font-extrabold truncate ${
+                                  isCompleted ? "text-emerald-950" : "text-slate-900"
+                                }`}
+                              >
+                                {customer.customerName}
+                              </h3>
+                              {customer.hasColour && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                  Coloured
+                                </span>
+                              )}
+                              {customer.hasClear && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                  Clear
+                                </span>
+                              )}
+                              {customer.readyPairs > 0 && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
+                                  <Sparkles className="w-3 h-3 text-emerald-600" />
+                                  {customer.readyPairs} Pairs Ready
+                                </span>
+                              )}
+                              {isCompleted ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
+                                  <Check className="w-3 h-3 stroke-[3]" /> FULLY CUT
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300">
+                                  In Production
+                                </span>
+                              )}
                             </div>
-                            <span className="text-[10px] font-bold text-slate-500 font-mono">{customer.progressPct}%</span>
+                            <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                              {customer.projects.length > 0 ? customer.projects.join(" • ") : "Standard Shop Floor Order"}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors">
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4" />
-                          )}
+                        {/* Right: Quantities, Progress & Accordion Trigger */}
+                        <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                          <div className="text-right">
+                            <div className="font-mono text-xs font-black text-slate-900">
+                              <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-indigo-700"}>
+                                {customer.totalPositions} Positions
+                              </span>
+                              <span className="text-slate-400 mx-1.5">•</span>
+                              <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
+                                {customer.cutPieces}/{customer.totalPieces} Cut
+                              </span>
+                              <span className="text-slate-400 mx-1.5">•</span>
+                              <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
+                            </div>
+                            <div className="flex items-center gap-2 justify-end mt-1">
+                              <div
+                                className={`w-24 h-1.5 rounded-full overflow-hidden ${
+                                  isCompleted ? "bg-emerald-200" : "bg-slate-200"
+                                }`}
+                              >
+                                <div
+                                  className={`h-full rounded-full transition-all ${
+                                    isCompleted
+                                      ? "bg-gradient-to-r from-emerald-500 to-teal-600"
+                                      : "bg-gradient-to-r from-indigo-500 to-purple-600"
+                                  }`}
+                                  style={{ width: `${customer.progressPct}%` }}
+                                />
+                              </div>
+                              <span
+                                className={`text-[10px] font-mono ${
+                                  isCompleted ? "text-emerald-700 font-extrabold" : "text-slate-500 font-bold"
+                                }`}
+                              >
+                                {customer.progressPct}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <div
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              isCompleted
+                                ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                                : "bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700"
+                            }`}
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Collapsible Customer Position Rows Table */}
+                    {/* Collapsible Customer Position Rows Table */}
                   {isExpanded && (
                     <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
                       <div className="border border-slate-200 rounded-xl bg-white shadow-2xs overflow-hidden">
@@ -1565,7 +1617,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                 <th className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200">REMAINING</th>
                                 <th className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap">SQM</th>
                                 <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
-                                <th className="px-3 py-2.5 text-right w-32 min-w-[120px] whitespace-nowrap">ACTIONS</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
@@ -1656,40 +1707,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                           </span>
                                         )}
                                       </td>
-                                      <td className="px-3 py-2.5 text-right align-middle whitespace-nowrap">
-                                        {row.inBufferQty > 0 && row.readyPairsCount > 0 ? (
-                                          <Button
-                                            size="sm"
-                                            onClick={() =>
-                                              row.glassCategory === "DLGU"
-                                                ? handlePairDlguDirect(row.posNo, row.piNumber)
-                                                : row.glassCategory === "DGU"
-                                                ? handlePairDguDirect(row.posNo, row.piNumber)
-                                                : handlePairLaminationDirect(row.posNo, row.piNumber)
-                                            }
-                                            disabled={loading}
-                                            className="h-6 px-2 text-[10px] font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-2xs gap-1"
-                                          >
-                                            <Zap className="w-2.5 h-2.5" /> Pair & Advance
-                                          </Button>
-                                        ) : row.inBufferQty > 0 ? (
-                                          <Button
-                                            size="sm"
-                                            onClick={() => openScanModal(row)}
-                                            className="h-6 px-2 text-[10px] font-bold bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-md gap-1"
-                                          >
-                                            <ScanLine className="w-2.5 h-2.5" /> Scan Verify
-                                          </Button>
-                                        ) : (
-                                          <span className="text-[10px] text-slate-400 italic">Waiting Cut</span>
-                                        )}
-                                      </td>
                                     </tr>
 
                                     {/* Expanded Individual Pieces Sub-Table */}
                                     {isRowExpanded && (
                                       <tr>
-                                        <td colSpan={13} className="bg-slate-50/80 p-3 border-b-2 border-slate-200">
+                                        <td colSpan={12} className="bg-slate-50/80 p-3 border-b-2 border-slate-200">
                                           <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs">
                                             <div className="text-xs font-black text-slate-800 mb-2 flex items-center justify-between">
                                               <span>POS #{row.posNo} — Individual Glass Panes ({row.rawItems.length} items)</span>
@@ -1886,13 +1909,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                     </div>
                   </th>
                   <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
-                  <th className="px-3 py-2.5 text-right w-32 min-w-[120px] whitespace-nowrap">ACTIONS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="text-center py-12 text-slate-400 whitespace-nowrap">
+                    <td colSpan={12} className="text-center py-12 text-slate-400 whitespace-nowrap">
                       No position records found matching the current PI or filters.
                     </td>
                   </tr>
@@ -2073,29 +2095,24 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                               </span>
                             ) : row.readyPairsCount > 0 ? (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs whitespace-nowrap">
-                                <Link2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                                <span>✨ {row.readyPairsCount} Pair(s) Ready for Assembly</span>
+                                <span>{row.readyPairsCount} Pair(s) Ready for Assembly</span>
                               </span>
                             ) : row.inBufferQty > 0 ? (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-purple-100 text-purple-950 border border-purple-300 shadow-2xs whitespace-nowrap">
-                                <Layers className="w-3.5 h-3.5 text-purple-700 shrink-0" />
-                                <span>📦 Staged in Buffer ({row.inBufferQty} pcs) • Waiting for {row.waitingFinish || "Partner Lite"}</span>
+                                <span>Staged in Buffer ({row.inBufferQty} pcs) • Waiting for {row.waitingFinish || "Partner Lite"}</span>
                               </span>
                             ) : row.rawItems.some((i: any) => i.currentStage === "DGU") ? (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-teal-100 text-teal-900 border border-teal-300 shadow-2xs whitespace-nowrap">
-                                <Layers className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                                <span>⚡ Assembling in DGU Workstation</span>
+                                <span>Assembling in DGU Workstation</span>
                               </span>
                             ) : row.rawItems.some((i: any) => i.currentStage === "Lamination") ? (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs whitespace-nowrap">
-                                <Layers className="w-3.5 h-3.5 text-indigo-700 shrink-0" />
-                                <span>🔥 Processing in Lamination</span>
+                                <span>Processing in Lamination</span>
                               </span>
                             ) : row.remainingQty > 0 && row.matchingPartnerRow && (row.matchingPartnerRow.inBufferQty > 0 || row.matchingPartnerRow.cutQty > 0) ? (
                               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs whitespace-nowrap">
-                                <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
                                 <span>
-                                  ⏳ Partner Lite has {row.matchingPartnerRow.inBufferQty || row.matchingPartnerRow.cutQty} Cut in Buffer • Cut {row.finish || "this lite"} to Pair
+                                  Partner Lite has {row.matchingPartnerRow.inBufferQty || row.matchingPartnerRow.cutQty} Cut in Buffer • Cut {row.finish || "this lite"} to Pair
                                 </span>
                               </span>
                             ) : isFullyCut ? (
@@ -2108,103 +2125,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                 <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                                 <span>Waiting on Cutting Table</span>
                               </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* ACTIONS */}
-                        <td className="px-3 py-2.5 text-right align-middle whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                            {(row.finishedQty > 0 || (row.matchingPartnerRow && row.matchingPartnerRow.finishedQty > 0 && row.remainingQty === 0)) && row.inBufferQty === 0 ? (
-                              <span className="text-[10px] font-black text-white bg-emerald-600 border border-emerald-700 px-2.5 py-1 rounded-lg whitespace-nowrap inline-flex items-center gap-1 shadow-2xs">
-                                <CheckCircle className="w-3 h-3 text-white" /> Finished ({row.finishedQty || row.matchingPartnerRow?.finishedQty || row.totalQty}/{row.totalQty})
-                              </span>
-                            ) : row.inBufferQty > 0 ? (
-                              row.readyPairsCount > 0 ? (
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    row.glassCategory === "DLGU"
-                                      ? handlePairDlguDirect(row.posNo, row.piNumber)
-                                      : row.glassCategory === "DGU"
-                                      ? handlePairDguDirect(row.posNo, row.piNumber)
-                                      : handlePairLaminationDirect(row.posNo, row.piNumber)
-                                  }
-                                  disabled={loading}
-                                  className={`h-7 px-3 text-[11px] font-black text-white rounded-lg shadow-2xs gap-1 whitespace-nowrap ${
-                                    row.glassCategory === "DLGU"
-                                      ? "bg-teal-600 hover:bg-teal-700"
-                                      : row.glassCategory === "DGU"
-                                      ? "bg-teal-600 hover:bg-teal-700"
-                                      : "bg-indigo-600 hover:bg-indigo-700"
-                                  }`}
-                                  title={`Pair matching lites and advance to ${row.glassCategory === "DLGU" || row.glassCategory === "DGU" ? "DGU Workstation" : "Lamination"}`}
-                                >
-                                  <Zap className="w-3 h-3" /> Pair & Advance {row.glassCategory === "DLGU" ? "DLGU" : row.glassCategory === "DGU" ? "DGU" : "Lam"}
-                                </Button>
-                              ) : (
-                                <span className="text-[10px] font-black text-purple-900 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-lg whitespace-nowrap inline-flex items-center gap-1">
-                                  <Layers className="w-3 h-3 text-purple-600" /> In Buffer ({row.inBufferQty})
-                                </span>
-                              )
-                            ) : row.rawItems.some((i: any) => i.currentStage === "DGU") ? (
-                              <span className="text-[10px] font-black text-teal-800 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg whitespace-nowrap inline-flex items-center gap-1">
-                                <Layers className="w-3 h-3 text-teal-600" /> In DGU
-                              </span>
-                            ) : row.rawItems.some((i: any) => i.currentStage === "Lamination") ? (
-                              <span className="text-[10px] font-black text-indigo-800 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg whitespace-nowrap inline-flex items-center gap-1">
-                                <Layers className="w-3 h-3 text-indigo-600" /> In Lamination
-                              </span>
-                            ) : row.remainingQty > 0 && row.matchingPartnerRow && (row.matchingPartnerRow.inBufferQty > 0 || row.matchingPartnerRow.cutQty > 0) ? (
-                              <span className="text-[10px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg whitespace-nowrap inline-flex items-center gap-1">
-                                <Clock className="w-3 h-3 text-amber-600" /> Cut Pending
-                              </span>
-                            ) : isFullyCut ? (
-                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                                Cut & Passed
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                                In Cutting Queue
-                              </span>
-                            )}
-
-                            {row.rawItems[0] && (
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onPrintSticker(row.rawItems[0]);
-                                  }}
-                                  className="w-7 h-7 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                  title="Print Barcode / QR Sticker"
-                                >
-                                  <Tag className="w-3.5 h-3.5 text-slate-700" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onReject(row.rawItems[0]);
-                                  }}
-                                  className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                  title="Reject Item / Report Defect"
-                                >
-                                  <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onRework(row.rawItems[0]);
-                                  }}
-                                  className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                  title="Send Item to Rework"
-                                >
-                                  <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                                </button>
-                              </div>
                             )}
                           </div>
                         </td>
@@ -2456,10 +2376,15 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                                   type="button"
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    onReject(piece);
+                                                    onReject({
+                                                      ...(row.rawItems[pIdx] || piece),
+                                                      partnerItem: row.rawItems[pIdx === 0 ? 1 : 0] || null,
+                                                      allSerials: row.rawItems.map((r) => r.serialNumber),
+                                                      isDguPair: row.rawItems.length > 1,
+                                                    } as any);
                                                   }}
                                                   className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                                  title="Reject Piece / Report Defect"
+                                                  title="Reject Item / Report Defect"
                                                 >
                                                   <AlertCircle className="w-3.5 h-3.5 text-red-600" />
                                                 </button>
@@ -2467,10 +2392,15 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                                   type="button"
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    onRework(piece);
+                                                    onRework({
+                                                      ...(row.rawItems[pIdx] || piece),
+                                                      partnerItem: row.rawItems[pIdx === 0 ? 1 : 0] || null,
+                                                      allSerials: row.rawItems.map((r) => r.serialNumber),
+                                                      isDguPair: row.rawItems.length > 1,
+                                                    } as any);
                                                   }}
                                                   className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                                  title="Send Piece to Rework"
+                                                  title="Send Item to Rework"
                                                 >
                                                   <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
                                                 </button>

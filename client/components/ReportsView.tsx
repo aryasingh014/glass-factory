@@ -24,6 +24,10 @@ import {
   Check,
   Building2,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
+  Printer,
+  SlidersHorizontal,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -33,6 +37,7 @@ import {
   formatPlatformDate,
   formatBatchNumber,
   getItemFinish,
+  getGlassPaneRole,
   getDguEffectiveQtyAndSqm,
   isDlguGlass,
   isDguGlass,
@@ -57,16 +62,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onRework,
 }) => {
   const [reportData, setReportData] = useState<ReportsResponse | null>(null);
-  // ponytail: Preserve user's active report tab across page refreshes and real-time auto-syncs
-  const [activeTab, setActiveTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(() => {
-    try {
-      const saved = localStorage.getItem("sejal_reports_active_tab") as "pis" | "items" | "history" | "rejects" | "reworks";
-      if (saved && ["pis", "items", "history", "rejects", "reworks"].includes(saved)) {
-        return saved;
-      }
-    } catch {}
-    return initialTab;
-  });
+  const [activeTab, setActiveTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(
+    initialTab || "pis"
+  );
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   const handleTabSelect = (tab: "pis" | "items" | "history" | "rejects" | "reworks") => {
     setActiveTab(tab);
@@ -75,6 +79,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     } catch {}
     onTabChange?.(tab);
   };
+
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoSync, setAutoSync] = useState(true);
@@ -84,7 +89,37 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStage, setSelectedStage] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedCustomer, setSelectedCustomer] = useState<string>("all");
   const [selectedDateRange, setSelectedDateRange] = useState<"all" | "today" | "week" | "month">("all");
+
+  // Rejects & Reworks sub-filter view modes
+  const [rejectsFilterMode, setRejectsFilterMode] = useState<"all" | "rejected_only">("all");
+  const [reworksFilterMode, setReworksFilterMode] = useState<"all" | "reworks_only">("all");
+
+  // Customer Accordion collapse state (true = open, false = closed)
+  const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
+
+  const toggleCustomerExpanded = (custName: string) => {
+    setExpandedCustomers((prev) => ({
+      ...prev,
+      [custName]: !isCustomerExpanded(custName),
+    }));
+  };
+
+  const isCustomerExpanded = (custName: string) => {
+    if (searchTerm.trim().length > 0) {
+      return expandedCustomers[custName] !== false; // Auto-expand when searching
+    }
+    return Boolean(expandedCustomers[custName]); // Default closed
+  };
+
+  const setAllCustomersExpanded = (expand: boolean) => {
+    const newState: Record<string, boolean> = {};
+    customerList.forEach((c) => {
+      newState[c] = expand;
+    });
+    setExpandedCustomers(newState);
+  };
 
   const fetchReports = async (showLoadingState = true) => {
     if (showLoadingState) {
@@ -110,13 +145,40 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     fetchReports(true);
   }, []);
 
-  // Real-Time auto-refresh polling interval (every 10 seconds)
+  // Real-Time auto-refresh polling interval (every 10 seconds) + SSE event listener
   useEffect(() => {
-    if (!autoSync) return;
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource("/api/production/events");
+      const handleStreamUpdate = () => {
+        fetchReports(false);
+      };
+      eventSource.addEventListener("stage_advanced", handleStreamUpdate);
+      eventSource.addEventListener("item_rejected", handleStreamUpdate);
+      eventSource.addEventListener("item_reworked", handleStreamUpdate);
+      eventSource.addEventListener("excel_uploaded", handleStreamUpdate);
+      eventSource.addEventListener("sticker_batch_uploaded", handleStreamUpdate);
+      eventSource.addEventListener("pi_released", handleStreamUpdate);
+      eventSource.addEventListener("pi_deleted", handleStreamUpdate);
+      eventSource.addEventListener("database_cleared", handleStreamUpdate);
+    } catch (err) {
+      console.error("SSE connection error in ReportsView:", err);
+    }
+
+    if (!autoSync) {
+      return () => {
+        eventSource?.close();
+      };
+    }
+
     const interval = setInterval(() => {
       fetchReports(false);
     }, 10000);
-    return () => clearInterval(interval);
+
+    return () => {
+      eventSource?.close();
+      clearInterval(interval);
+    };
   }, [autoSync]);
 
   // Helper date filter
@@ -142,6 +204,93 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       return date >= thirtyDaysAgo;
     }
     return true;
+  };
+
+  // Helper to get Customer Name for any item
+  const getCustomerNameForItem = (item: GlassItem | RejectRecord | ReworkRecord | string | null | undefined): string => {
+    if (!item) return "General Customer";
+    if (typeof item === "string") {
+      const matchedPI = reportData?.pis?.find((p) => p.piNumber === item || p.id === item);
+      return (matchedPI?.customerName || "General Customer").trim();
+    }
+    if ((item as any).customerName) return ((item as any).customerName).trim();
+    const piNum = (item as any).piNumber || (item as any).orderNo || (item as any).batchNo;
+    const piId = (item as any).piId;
+    const matchedPI = reportData?.pis?.find((p) => p.piNumber === piNum || p.id === piId || p.id === piNum);
+    if (matchedPI?.customerName) return matchedPI.customerName.trim();
+    return "General Customer";
+  };
+
+  // Customer List for Dropdown Filter
+  const customerList = useMemo(() => {
+    if (!reportData) return [];
+    const set = new Set<string>();
+    reportData.pis?.forEach((p) => {
+      if (p.customerName) set.add(p.customerName.trim());
+    });
+    reportData.items?.forEach((i) => {
+      const c = getCustomerNameForItem(i);
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort();
+  }, [reportData]);
+
+  // Reject lookup map by unique serial / itemId (NOT shared barcode)
+  const rejectMap = useMemo(() => {
+    const map = new Map<string, RejectRecord>();
+    (reportData?.rejects || []).forEach((r) => {
+      if (r.serialNumber) map.set(r.serialNumber, r);
+      if (r.itemId) map.set(r.itemId, r);
+    });
+    return map;
+  }, [reportData?.rejects]);
+
+  // Rework lookup map by unique serial / itemId (NOT shared barcode)
+  const reworkMap = useMemo(() => {
+    const map = new Map<string, ReworkRecord>();
+    (reportData?.reworks || []).forEach((rw) => {
+      if (rw.serialNumber) map.set(rw.serialNumber, rw);
+      if (rw.itemId) map.set(rw.itemId, rw);
+    });
+    return map;
+  }, [reportData?.reworks]);
+
+  // Helper to resolve or build GlassItem object for sticker/reject/rework actions
+  const getGlassItemForActions = (
+    serialNumber?: string,
+    barcode?: string,
+    piNumber?: string,
+    fallbackStage?: ProductionStage,
+    fallbackStatus: "Pending" | "In Production" | "Completed" | "Rejected" | "Reworking" = "Pending",
+    fallbackRemarks?: string
+  ): GlassItem => {
+    const matched = reportData?.items?.find(
+      (i) => (serialNumber && i.serialNumber === serialNumber)
+    );
+    if (matched) return matched;
+
+    const safeSerial = serialNumber || barcode || "ITEM";
+    return {
+      id: `item-${safeSerial}`,
+      piId: piNumber || "",
+      piNumber: piNumber || "",
+      serialNumber: safeSerial,
+      barcode: barcode || safeSerial,
+      qrId: `QR-${safeSerial}`,
+      itemCode: safeSerial,
+      glassType: "Glass Unit",
+      width: 0,
+      height: 0,
+      qty: 1,
+      sqm: 0,
+      delLocation: "FACTORY",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      currentStage: fallbackStage || "Cutting",
+      completedStages: [],
+      status: fallbackStatus,
+      remarks: fallbackRemarks,
+      updatedAt: new Date().toISOString(),
+    };
   };
 
   // High-Level Live Summary Calculations
@@ -211,7 +360,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     };
   }, [reportData]);
 
-  // Filtered Datasets for each tab
+  // 1. Filtered Proforma Invoices
   const filteredPis = useMemo(() => {
     if (!reportData?.pis) return [];
     const q = searchTerm.toLowerCase().trim();
@@ -223,35 +372,45 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         const matchProj = (pi.projectName || "").toLowerCase().includes(q);
         if (!matchNumber && !matchJob && !matchCust && !matchProj) return false;
       }
+      if (selectedCustomer !== "all" && (pi.customerName || "").trim() !== selectedCustomer) return false;
       if (selectedStatus !== "all" && pi.status !== selectedStatus) return false;
       if (!isWithinDateRange(pi.createdAt)) return false;
       return true;
     });
-  }, [reportData?.pis, searchTerm, selectedStatus, selectedDateRange]);
+  }, [reportData?.pis, searchTerm, selectedCustomer, selectedStatus, selectedDateRange]);
 
+  // 2. Filtered Glass Items
   const filteredItems = useMemo(() => {
     if (!reportData?.items) return [];
     const q = searchTerm.toLowerCase().trim();
     return reportData.items.filter((item) => {
+      const cust = getCustomerNameForItem(item);
+      if (selectedCustomer !== "all" && cust !== selectedCustomer) return false;
+
       if (q) {
         const matchBar = (item.barcode || "").toLowerCase().includes(q);
         const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
         const matchPi = (item.piNumber || item.batchNo || "").toLowerCase().includes(q);
         const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
         const matchType = (item.glassType || "").toLowerCase().includes(q);
-        if (!matchBar && !matchSerial && !matchPi && !matchCode && !matchType) return false;
+        const matchCust = cust.toLowerCase().includes(q);
+        if (!matchBar && !matchSerial && !matchPi && !matchCode && !matchType && !matchCust) return false;
       }
       if (selectedStage !== "all" && item.currentStage !== selectedStage) return false;
       if (selectedStatus !== "all" && (item.status || "Pending") !== selectedStatus) return false;
       if (!isWithinDateRange(item.updatedAt || item.createdAt)) return false;
       return true;
     });
-  }, [reportData?.items, searchTerm, selectedStage, selectedStatus, selectedDateRange]);
+  }, [reportData?.items, searchTerm, selectedCustomer, selectedStage, selectedStatus, selectedDateRange]);
 
+  // 3. Filtered Audit History
   const filteredHistory = useMemo(() => {
     if (!reportData?.history) return [];
     const q = searchTerm.toLowerCase().trim();
     return reportData.history.filter((h) => {
+      const cust = getCustomerNameForItem(h.piNumber || h.itemOrBatch);
+      if (selectedCustomer !== "all" && cust !== selectedCustomer) return false;
+
       if (q) {
         const matchSerial = (h.serialNumber || "").toLowerCase().includes(q);
         const matchPi = (h.piNumber || "").toLowerCase().includes(q);
@@ -262,6 +421,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         const matchStage = (h.stage || "").toLowerCase().includes(q);
         const matchPrev = (h.prevStatus || "").toLowerCase().includes(q);
         const matchNew = (h.newStatus || h.status || "").toLowerCase().includes(q);
+        const matchCust = cust.toLowerCase().includes(q);
         if (
           !matchSerial &&
           !matchPi &&
@@ -271,7 +431,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           !matchRemarks &&
           !matchStage &&
           !matchPrev &&
-          !matchNew
+          !matchNew &&
+          !matchCust
         ) {
           return false;
         }
@@ -280,42 +441,284 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       if (!isWithinDateRange(h.timestamp)) return false;
       return true;
     });
-  }, [reportData?.history, searchTerm, selectedStage, selectedDateRange]);
+  }, [reportData?.history, searchTerm, selectedCustomer, selectedStage, selectedDateRange]);
 
-  const filteredRejects = useMemo(() => {
-    if (!reportData?.rejects) return [];
+  // 4. Quality Rejects Log - Customer-Wise Grouping with All Stickers Visible
+  const rejectCustomerGroups = useMemo(() => {
+    if (!reportData) return [];
     const q = searchTerm.toLowerCase().trim();
-    return reportData.rejects.filter((r) => {
-      if (q) {
-        const matchSerial = (r.serialNumber || "").toLowerCase().includes(q);
-        const matchPi = (r.piNumber || "").toLowerCase().includes(q);
-        const matchReason = (r.reason || "").toLowerCase().includes(q);
-        const matchOp = (r.operator || "").toLowerCase().includes(q);
-        if (!matchSerial && !matchPi && !matchReason && !matchOp) return false;
-      }
-      if (selectedStage !== "all" && r.stage !== selectedStage) return false;
-      if (!isWithinDateRange(r.date)) return false;
-      return true;
-    });
-  }, [reportData?.rejects, searchTerm, selectedStage, selectedDateRange]);
 
-  const filteredReworks = useMemo(() => {
-    if (!reportData?.reworks) return [];
-    const q = searchTerm.toLowerCase().trim();
-    return reportData.reworks.filter((rw) => {
+    const allItemSerials = new Set((reportData.items || []).map((i) => i.serialNumber));
+    const standaloneRejects: GlassItem[] = (reportData.rejects || [])
+      .filter((r) => !allItemSerials.has(r.serialNumber))
+      .map((r) => ({
+        id: r.id || `rej-${r.serialNumber}`,
+        piId: r.piNumber,
+        piNumber: r.piNumber,
+        serialNumber: r.serialNumber,
+        barcode: r.barcode || r.serialNumber,
+        qrId: `QR-${r.serialNumber}`,
+        itemCode: r.serialNumber,
+        glassType: "Glass Unit",
+        width: 0,
+        height: 0,
+        qty: 1,
+        sqm: 0,
+        delLocation: "FACTORY",
+        processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+        currentStage: r.stage || "Cutting",
+        completedStages: [],
+        status: "Rejected",
+        remarks: r.reason,
+        updatedAt: r.date || new Date().toISOString(),
+      }));
+
+    const combined = [...(reportData.items || []), ...standaloneRejects];
+    const map = new Map<string, Array<{ item: GlassItem; rejectRecord?: RejectRecord; isRejected: boolean }>>();
+
+    combined.forEach((item) => {
+      const cust = getCustomerNameForItem(item);
+      if (selectedCustomer !== "all" && cust !== selectedCustomer) return;
+
+      const rRecord = rejectMap.get(item.serialNumber) || (item.id ? rejectMap.get(item.id) : undefined);
+      const isRejected = item.status === "Rejected" || Boolean(rRecord);
+
+      if (rejectsFilterMode === "rejected_only" && !isRejected) return;
+
       if (q) {
-        const matchSerial = (rw.serialNumber || "").toLowerCase().includes(q);
-        const matchFrom = (rw.fromStage || "").toLowerCase().includes(q);
-        const matchTarget = (rw.targetStage || "").toLowerCase().includes(q);
-        const matchReason = (rw.reason || "").toLowerCase().includes(q);
-        const matchOp = (rw.operator || "").toLowerCase().includes(q);
-        if (!matchSerial && !matchFrom && !matchTarget && !matchReason && !matchOp) return false;
+        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
+        const matchBar = (item.barcode || "").toLowerCase().includes(q);
+        const matchQr = (item.qrId || "").toLowerCase().includes(q);
+        const matchPi = (item.piNumber || (item as any).orderNo || item.batchNo || "").toLowerCase().includes(q);
+        const matchPos = String(item.posNo || item.srNo || "").toLowerCase().includes(q);
+        const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
+        const matchType = (item.glassType || "").toLowerCase().includes(q);
+        const matchCust = cust.toLowerCase().includes(q);
+        const matchFinish = getItemFinish(item).toLowerCase().includes(q);
+        const matchOb = (item.obNo || "").toLowerCase().includes(q);
+        const matchSfo = (item.sfoNo || "").toLowerCase().includes(q);
+        const matchDim =
+          `${item.width}x${item.height}`.includes(q.replace(/\s+/g, "")) ||
+          `${item.width} x ${item.height}`.toLowerCase().includes(q) ||
+          String(item.width).includes(q) ||
+          String(item.height).includes(q);
+        const matchReason = (
+          rRecord?.reason ||
+          (rRecord as any)?.defectDetails ||
+          (rRecord as any)?.defectType ||
+          item.remarks ||
+          ""
+        )
+          .toLowerCase()
+          .includes(q);
+        const matchOp = (rRecord?.operator || "").toLowerCase().includes(q);
+        const matchStage = (rRecord?.stage || item.currentStage || "").toLowerCase().includes(q);
+        const matchStatus = (item.status || "").toLowerCase().includes(q);
+
+        if (
+          !matchSerial &&
+          !matchBar &&
+          !matchQr &&
+          !matchPi &&
+          !matchPos &&
+          !matchCode &&
+          !matchType &&
+          !matchCust &&
+          !matchFinish &&
+          !matchOb &&
+          !matchSfo &&
+          !matchDim &&
+          !matchReason &&
+          !matchOp &&
+          !matchStage &&
+          !matchStatus
+        )
+          return;
       }
-      if (selectedStage !== "all" && rw.targetStage !== selectedStage && rw.fromStage !== selectedStage) return false;
-      if (!isWithinDateRange(rw.date)) return false;
-      return true;
+
+      if (selectedStage !== "all") {
+        const itemStage = rRecord?.stage || item.currentStage;
+        if (itemStage !== selectedStage) return;
+      }
+
+      if (!isWithinDateRange(rRecord?.date || item.updatedAt || item.createdAt)) return;
+
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push({ item, rejectRecord: rRecord, isRejected });
     });
-  }, [reportData?.reworks, searchTerm, selectedStage, selectedDateRange]);
+
+    const groups: Array<{
+      customerName: string;
+      items: Array<{ item: GlassItem; rejectRecord?: RejectRecord; isRejected: boolean }>;
+      totalItems: number;
+      rejectedCount: number;
+      totalSqm: number;
+    }> = [];
+
+    map.forEach((items, customerName) => {
+      let totalSqm = 0;
+      let rejectedCount = 0;
+      items.forEach(({ item, isRejected }) => {
+        const eff = getDguEffectiveQtyAndSqm(item);
+        totalSqm += eff.sqm;
+        if (isRejected) rejectedCount += 1;
+      });
+      groups.push({
+        customerName,
+        items,
+        totalItems: items.length,
+        rejectedCount,
+        totalSqm,
+      });
+    });
+
+    return groups;
+  }, [reportData, searchTerm, selectedCustomer, selectedStage, selectedDateRange, rejectsFilterMode, rejectMap]);
+
+  // Total reject items count in filtered view
+  const totalRejectsInFilter = useMemo(() => {
+    return (reportData?.rejects || []).length;
+  }, [reportData?.rejects]);
+
+  // 5. Reworks Log - Customer-Wise Grouping with All Stickers Visible
+  const reworkCustomerGroups = useMemo(() => {
+    if (!reportData) return [];
+    const q = searchTerm.toLowerCase().trim();
+
+    const allItemSerials = new Set((reportData.items || []).map((i) => i.serialNumber));
+    const standaloneReworks: GlassItem[] = (reportData.reworks || [])
+      .filter((rw) => !allItemSerials.has(rw.serialNumber))
+      .map((rw) => ({
+        id: rw.id || `rw-${rw.serialNumber}`,
+        piId: rw.piNumber,
+        piNumber: rw.piNumber,
+        serialNumber: rw.serialNumber,
+        barcode: rw.barcode || rw.serialNumber,
+        qrId: `QR-${rw.serialNumber}`,
+        itemCode: rw.serialNumber,
+        glassType: "Glass Unit",
+        width: 0,
+        height: 0,
+        qty: 1,
+        sqm: 0,
+        delLocation: "FACTORY",
+        processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+        currentStage: rw.targetStage || "Cutting",
+        completedStages: [],
+        status: "Reworking",
+        remarks: rw.reason,
+        updatedAt: rw.date || new Date().toISOString(),
+      }));
+
+    const combined = [...(reportData.items || []), ...standaloneReworks];
+    const map = new Map<string, Array<{ item: GlassItem; reworkRecord?: ReworkRecord; isReworking: boolean }>>();
+
+    combined.forEach((item) => {
+      const cust = getCustomerNameForItem(item);
+      if (selectedCustomer !== "all" && cust !== selectedCustomer) return;
+
+      const rwRecord = reworkMap.get(item.serialNumber) || (item.id ? reworkMap.get(item.id) : undefined);
+      const isReworking = (item.status as any) === "Reworking" || (item.status as any) === "Rework" || Boolean(rwRecord);
+
+      if (reworksFilterMode === "reworks_only" && !isReworking) return;
+
+      if (q) {
+        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
+        const matchBar = (item.barcode || "").toLowerCase().includes(q);
+        const matchQr = (item.qrId || "").toLowerCase().includes(q);
+        const matchPi = (item.piNumber || (item as any).orderNo || item.batchNo || "").toLowerCase().includes(q);
+        const matchPos = String(item.posNo || item.srNo || "").toLowerCase().includes(q);
+        const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
+        const matchType = (item.glassType || "").toLowerCase().includes(q);
+        const matchCust = cust.toLowerCase().includes(q);
+        const matchFinish = getItemFinish(item).toLowerCase().includes(q);
+        const matchOb = (item.obNo || "").toLowerCase().includes(q);
+        const matchSfo = (item.sfoNo || "").toLowerCase().includes(q);
+        const matchDim =
+          `${item.width}x${item.height}`.includes(q.replace(/\s+/g, "")) ||
+          `${item.width} x ${item.height}`.toLowerCase().includes(q) ||
+          String(item.width).includes(q) ||
+          String(item.height).includes(q);
+        const matchReason = (
+          rwRecord?.reason ||
+          (rwRecord as any)?.reworkDetails ||
+          item.remarks ||
+          ""
+        )
+          .toLowerCase()
+          .includes(q);
+        const matchOp = (rwRecord?.operator || "").toLowerCase().includes(q);
+        const matchStage = (rwRecord?.targetStage || rwRecord?.fromStage || item.currentStage || "").toLowerCase().includes(q);
+        const matchStatus = (item.status || "").toLowerCase().includes(q);
+
+        if (
+          !matchSerial &&
+          !matchBar &&
+          !matchQr &&
+          !matchPi &&
+          !matchPos &&
+          !matchCode &&
+          !matchType &&
+          !matchCust &&
+          !matchFinish &&
+          !matchOb &&
+          !matchSfo &&
+          !matchDim &&
+          !matchReason &&
+          !matchOp &&
+          !matchStage &&
+          !matchStatus
+        )
+          return;
+      }
+
+      if (selectedStage !== "all") {
+        const itemStage = rwRecord?.targetStage || rwRecord?.fromStage || item.currentStage;
+        if (itemStage !== selectedStage) return;
+      }
+
+      if (!isWithinDateRange(rwRecord?.date || item.updatedAt || item.createdAt)) return;
+
+      if (!map.has(cust)) {
+        map.set(cust, []);
+      }
+      map.get(cust)!.push({ item, reworkRecord: rwRecord, isReworking });
+    });
+
+    const groups: Array<{
+      customerName: string;
+      items: Array<{ item: GlassItem; reworkRecord?: ReworkRecord; isReworking: boolean }>;
+      totalItems: number;
+      reworkCount: number;
+      totalSqm: number;
+    }> = [];
+
+    map.forEach((items, customerName) => {
+      let totalSqm = 0;
+      let reworkCount = 0;
+      items.forEach(({ item, isReworking }) => {
+        const eff = getDguEffectiveQtyAndSqm(item);
+        totalSqm += eff.sqm;
+        if (isReworking) reworkCount += 1;
+      });
+      groups.push({
+        customerName,
+        items,
+        totalItems: items.length,
+        reworkCount,
+        totalSqm,
+      });
+    });
+
+    return groups;
+  }, [reportData, searchTerm, selectedCustomer, selectedStage, selectedDateRange, reworksFilterMode, reworkMap]);
+
+  // Total rework items count in filtered view
+  const totalReworksInFilter = useMemo(() => {
+    return (reportData?.reworks || []).length;
+  }, [reportData?.reworks]);
 
   // Export current filtered view to Excel with styled layout
   const handleExportCurrentView = () => {
@@ -329,7 +732,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       }
       const data = filteredPis.map((p, idx) => ({
         "Sr No": idx + 1,
-        "Batch / PI Number": formatBatchNumber(p.piNumber) || p.piNumber,
+        "Batch Number": formatBatchNumber(p.piNumber) || p.piNumber,
+        "PI Number": p.proformaInvNo || p.piNumber || p.jobOrderNumber || "—",
         "Job Order No": p.jobOrderNumber || "—",
         "Customer Name": p.customerName || "—",
         "Project Name": p.projectName || "—",
@@ -363,9 +767,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const data = filteredItems.map((item, idx) => {
         const eff = getDguEffectiveQtyAndSqm(item);
         const finish = getItemFinish(item);
+        const cust = getCustomerNameForItem(item);
 
         return {
           "SL No": idx + 1,
+          "Customer": cust,
           "PI": item.piNumber || item.orderNo || item.batchNo || "—",
           "POS No": item.posNo || "—",
           "Finish / Type": finish,
@@ -388,6 +794,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const ws = XLSX.utils.json_to_sheet(data);
       ws["!cols"] = [
         { wch: 8 },
+        { wch: 25 },
         { wch: 16 },
         { wch: 10 },
         { wch: 14 },
@@ -417,6 +824,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const data = filteredHistory.map((h, idx) => ({
         "Sr No": idx + 1,
         "Timestamp (GST)": formatDubaiDateTime(h.timestamp),
+        "Customer": getCustomerNameForItem(h.piNumber || h.itemOrBatch),
         "User / Operator": h.user || h.operator || "Operator",
         "Action Performed": h.action || (h.status === "Completed" ? "Stage Completed" : h.status || "Activity Logged"),
         "Item / Batch": h.itemOrBatch || h.serialNumber || (h.piNumber ? `Batch ${h.piNumber}` : "—"),
@@ -429,6 +837,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       ws["!cols"] = [
         { wch: 6 },
         { wch: 22 },
+        { wch: 25 },
         { wch: 18 },
         { wch: 26 },
         { wch: 22 },
@@ -441,55 +850,105 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       XLSX.writeFile(wb, `Sejal_Glass_Audit_Log_${dateStr}.xlsx`);
       toast.success("Audit log exported to Excel");
     } else if (activeTab === "rejects") {
-      if (filteredRejects.length === 0) {
-        toast.error("No rejects to export in current filtered view");
+      const allRejectItems: any[] = [];
+      rejectCustomerGroups.forEach((grp) => {
+        grp.items.forEach(({ item, rejectRecord, isRejected }) => {
+          const eff = getDguEffectiveQtyAndSqm(item);
+          allRejectItems.push({
+            "Customer Name": grp.customerName,
+            "Serial Number": item.serialNumber,
+            "Barcode": item.barcode,
+            "Batch No": item.batchNo || formatBatchNumber(item.piNumber) || "—",
+            "PI No": item.orderNo || item.piNumber || item.sfoNo || "—",
+            "POS No": item.posNo || "—",
+            "Glass Code": item.glassCode || item.itemCode || "—",
+            "Glass Specification": item.glassType,
+            "Dimensions (mm)": `${item.width} x ${item.height}`,
+            "SQM": eff.sqm,
+            "Current Stage": item.currentStage,
+            "Quality Status": isRejected ? "REJECTED" : item.status || "In Production",
+            "Defect Stage": rejectRecord?.stage || (isRejected ? item.currentStage : "—"),
+            "Defect Reason": rejectRecord?.reason || (isRejected ? item.remarks || "Defect Reported" : "None"),
+            "Operator": rejectRecord?.operator || "Operator",
+            "Date (GST)": formatDubaiDateTime(rejectRecord?.date || item.updatedAt || item.createdAt),
+          });
+        });
+      });
+
+      if (allRejectItems.length === 0) {
+        toast.error("No sticker records to export in current filtered view");
         return;
       }
-      const data = filteredRejects.map((r, idx) => ({
-        "Sr No": idx + 1,
-        "Date (GST)": formatDubaiDateTime(r.date),
-        "Serial Number": r.serialNumber,
-        "Batch / PI No": r.piNumber || "—",
-        "Defect Stage": r.stage,
-        "Defect Reason": r.reason,
-        "Operator": r.operator || "—",
-      }));
-      const ws = XLSX.utils.json_to_sheet(data);
+      const ws = XLSX.utils.json_to_sheet(allRejectItems);
       ws["!cols"] = [
-        { wch: 6 },
-        { wch: 22 },
+        { wch: 26 },
         { wch: 16 },
+        { wch: 20 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 30 },
+        { wch: 16 },
+        { wch: 10 },
+        { wch: 14 },
         { wch: 16 },
         { wch: 16 },
         { wch: 30 },
         { wch: 16 },
+        { wch: 22 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Rejects Log");
       XLSX.writeFile(wb, `Sejal_Glass_Rejects_Log_${dateStr}.xlsx`);
       toast.success("Rejects log exported to Excel");
     } else if (activeTab === "reworks") {
-      if (filteredReworks.length === 0) {
+      const allReworkItems: any[] = [];
+      reworkCustomerGroups.forEach((grp) => {
+        grp.items.forEach(({ item, reworkRecord, isReworking }) => {
+          const eff = getDguEffectiveQtyAndSqm(item);
+          allReworkItems.push({
+            "Customer Name": grp.customerName,
+            "Serial Number": item.serialNumber,
+            "Barcode": item.barcode,
+            "Batch No": item.batchNo || formatBatchNumber(item.piNumber) || "—",
+            "PI No": item.orderNo || item.piNumber || item.sfoNo || "—",
+            "POS No": item.posNo || "—",
+            "Glass Code": item.glassCode || item.itemCode || "—",
+            "Glass Specification": item.glassType,
+            "Dimensions (mm)": `${item.width} x ${item.height}`,
+            "SQM": eff.sqm,
+            "Current Stage": item.currentStage,
+            "Rework Status": isReworking ? "REWORKING" : item.status || "In Production",
+            "From Stage": reworkRecord?.fromStage || "—",
+            "Target Stage": reworkRecord?.targetStage || (isReworking ? item.currentStage : "—"),
+            "Rework Reason": reworkRecord?.reason || (isReworking ? item.remarks || "Reworking" : "None"),
+            "Operator": reworkRecord?.operator || "Operator",
+            "Date (GST)": formatDubaiDateTime(reworkRecord?.date || item.updatedAt || item.createdAt),
+          });
+        });
+      });
+
+      if (allReworkItems.length === 0) {
         toast.error("No reworks to export in current filtered view");
         return;
       }
-      const data = filteredReworks.map((rw, idx) => ({
-        "Sr No": idx + 1,
-        "Date (GST)": formatDubaiDateTime(rw.date),
-        "Serial Number": rw.serialNumber,
-        "From Stage": rw.fromStage,
-        "Target Stage": rw.targetStage,
-        "Rework Reason": rw.reason,
-        "Operator": rw.operator || "—",
-      }));
-      const ws = XLSX.utils.json_to_sheet(data);
+      const ws = XLSX.utils.json_to_sheet(allReworkItems);
       ws["!cols"] = [
-        { wch: 6 },
-        { wch: 22 },
+        { wch: 26 },
+        { wch: 16 },
+        { wch: 20 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 30 },
+        { wch: 16 },
+        { wch: 10 },
+        { wch: 14 },
         { wch: 16 },
         { wch: 16 },
         { wch: 16 },
         { wch: 30 },
         { wch: 16 },
+        { wch: 22 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Reworks Log");
       XLSX.writeFile(wb, `Sejal_Glass_Reworks_Log_${dateStr}.xlsx`);
@@ -499,13 +958,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const clearFilters = () => {
     setSearchTerm("");
+    setSelectedCustomer("all");
     setSelectedStage("all");
     setSelectedStatus("all");
     setSelectedDateRange("all");
+    setRejectsFilterMode("all");
+    setReworksFilterMode("all");
   };
 
   const hasActiveFilters =
-    searchTerm !== "" || selectedStage !== "all" || selectedStatus !== "all" || selectedDateRange !== "all";
+    searchTerm !== "" ||
+    selectedCustomer !== "all" ||
+    selectedStage !== "all" ||
+    selectedStatus !== "all" ||
+    selectedDateRange !== "all" ||
+    rejectsFilterMode !== "all" ||
+    reworksFilterMode !== "all";
 
   if (loading) {
     return (
@@ -545,7 +1013,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </div>
           </div>
           <p className="text-xs text-slate-500 font-medium">
-            Live business intelligence, workstation throughput, quality logs, and instant Excel exports.
+            Customer-wise production tracking, quality defects, rework routes, and instant Excel exports.
           </p>
         </div>
 
@@ -724,6 +1192,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap text-xs">
+          {/* Customer Filter Dropdown */}
+          <select
+            value={selectedCustomer}
+            onChange={(e) => setSelectedCustomer(e.target.value)}
+            className="h-9 px-2.5 rounded-lg border border-slate-200 bg-slate-50/60 text-slate-700 font-semibold text-xs focus:ring-1 focus:ring-indigo-500 focus:bg-white max-w-[200px] truncate"
+            title="Filter by Customer"
+          >
+            <option value="all">All Customers ({customerList.length})</option>
+            {customerList.map((cust) => (
+              <option key={cust} value={cust}>
+                {cust}
+              </option>
+            ))}
+          </select>
+
           {/* Stage Filter */}
           {(activeTab === "items" || activeTab === "history" || activeTab === "rejects" || activeTab === "reworks") && (
             <select
@@ -823,23 +1306,37 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </button>
         <button
           onClick={() => handleTabSelect("rejects")}
-          className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
+          className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
             activeTab === "rejects"
               ? "border-indigo-600 text-indigo-600"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          Quality Rejects Log ({filteredRejects.length})
+          <span>Quality Rejects Log</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+            totalRejectsInFilter > 0
+              ? "bg-red-100 text-red-700 border border-red-200"
+              : "bg-slate-100 text-slate-600"
+          }`}>
+            {totalRejectsInFilter}
+          </span>
         </button>
         <button
           onClick={() => handleTabSelect("reworks")}
-          className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
+          className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
             activeTab === "reworks"
               ? "border-indigo-600 text-indigo-600"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          Reworks Log ({filteredReworks.length})
+          <span>Reworks Log</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+            totalReworksInFilter > 0
+              ? "bg-amber-100 text-amber-700 border border-amber-200"
+              : "bg-slate-100 text-slate-600"
+          }`}>
+            {totalReworksInFilter}
+          </span>
         </button>
       </div>
 
@@ -851,7 +1348,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
-                  <th className="p-3">Batch / PI Number</th>
+                  <th className="p-3">Batch No</th>
+                  <th className="p-3">PI Number</th>
                   <th className="p-3">Customer</th>
                   <th className="p-3">Project / Job Order</th>
                   <th className="p-3 text-center">Finish</th>
@@ -864,7 +1362,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <tbody className="divide-y divide-slate-100 text-slate-800">
                 {filteredPis.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-500 font-medium">
+                    <td colSpan={9} className="p-8 text-center text-slate-500 font-medium">
                       No proforma invoice / batch records matched your filter.
                     </td>
                   </tr>
@@ -874,6 +1372,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <tr key={pi.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
                           {formatBatchNumber(pi.piNumber)}
+                        </td>
+                        <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                          {pi.proformaInvNo || pi.piNumber || pi.jobOrderNumber || "—"}
                         </td>
                         <td className="p-3 font-bold text-slate-900">{pi.customerName || "—"}</td>
                         <td className="p-3 text-slate-600">
@@ -921,6 +1422,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3 text-center w-14">SL NO.</th>
+                  <th className="p-3">CUSTOMER</th>
                   <th className="p-3">PI</th>
                   <th className="p-3 text-center">POS NO.</th>
                   <th className="p-3">FINISH / TYPE</th>
@@ -942,7 +1444,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
                 {filteredItems.length === 0 ? (
                   <tr>
-                    <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
+                    <td colSpan={18} className="p-8 text-center text-slate-500 font-medium">
                       No glass item records found for the current search and filters.
                     </td>
                   </tr>
@@ -951,6 +1453,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     const itemStatus = i.status || "Pending";
                     const eff = getDguEffectiveQtyAndSqm(i);
                     const finish = getItemFinish(i);
+                    const cust = getCustomerNameForItem(i);
 
                     return (
                       <tr key={i.id} className="hover:bg-purple-50/40 transition-colors">
@@ -959,9 +1462,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           {i.srNo || idx + 1}
                         </td>
 
+                        {/* Customer */}
+                        <td className="p-3 font-semibold text-slate-900 whitespace-nowrap">
+                          <div className="truncate max-w-[160px]" title={cust}>{cust}</div>
+                        </td>
+
                         {/* 2. PI */}
-                        <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                          {formatBatchNumber(i.piNumber || i.orderNo || i.batchNo)}
+                        <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                          {i.orderNo || i.piNumber || i.sfoNo || "—"}
                         </td>
 
                         {/* 3. POS NO. */}
@@ -978,7 +1486,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 : "bg-cyan-100 text-cyan-800 border-cyan-200"
                             }`}
                           >
-                            {finish}
+                            {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
                           </span>
                         </td>
 
@@ -1026,7 +1534,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                         {/* 13. BATCH */}
                         <td className="p-3 font-mono text-center text-purple-700 font-bold whitespace-nowrap">
-                          {i.batchNo || "—"}
+                          {i.batchNo || formatBatchNumber(i.piNumber) || "—"}
                         </td>
 
                         {/* 14. BARCODE */}
@@ -1062,7 +1570,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 <Tag className="w-3.5 h-3.5 text-slate-700" />
                               </button>
                             )}
-                            {onReject && (
+                            {onReject && i.status !== "Rejected" && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1106,18 +1614,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3">Timestamp (GST)</th>
+                  <th className="p-3">Customer</th>
                   <th className="p-3">User / Operator</th>
                   <th className="p-3">Action Performed</th>
                   <th className="p-3">Item / Batch</th>
                   <th className="p-3 text-center">Module / Stage</th>
                   <th className="p-3 text-center">Status Change</th>
                   <th className="p-3">Activity Details</th>
+                  <th className="p-3 text-right min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-800">
                 {filteredHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-500 font-medium">
+                    <td colSpan={9} className="p-8 text-center text-slate-500 font-medium">
                       No audit history log records found.
                     </td>
                   </tr>
@@ -1135,11 +1645,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                     const prev = h.prevStatus || "Pending";
                     const next = h.newStatus || h.status || "Completed";
+                    const cust = getCustomerNameForItem(h.piNumber || h.itemOrBatch);
+                    const hasItemTarget = Boolean(h.serialNumber || (h.itemOrBatch && !h.itemOrBatch.includes("Batch")));
+                    const targetItem = hasItemTarget
+                      ? getGlassItemForActions(h.serialNumber || h.itemOrBatch, undefined, h.piNumber, h.stage as any, h.status as any, h.remarks)
+                      : null;
 
                     return (
                       <tr key={h.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-3 font-mono text-slate-500 whitespace-nowrap">
                           {formatDubaiDateTime(h.timestamp)}
+                        </td>
+                        <td className="p-3 font-semibold text-slate-900 whitespace-nowrap">
+                          <div className="truncate max-w-[140px]" title={cust}>{cust}</div>
                         </td>
                         <td className="p-3 font-semibold text-slate-900 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
@@ -1191,6 +1709,53 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           </div>
                         </td>
                         <td className="p-3 text-slate-600 text-xs">{h.remarks || "—"}</td>
+                        <td className="p-3 text-right whitespace-nowrap">
+                          {targetItem ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              {onPrintSticker && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPrintSticker(targetItem);
+                                  }}
+                                  className="w-7 h-7 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                  title={`View & Print Barcode Sticker for #${targetItem.serialNumber}`}
+                                >
+                                  <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                </button>
+                              )}
+                              {onReject && targetItem.status !== "Rejected" && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onReject(targetItem);
+                                  }}
+                                  className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                  title={`Reject Item #${targetItem.serialNumber}`}
+                                >
+                                  <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                </button>
+                              )}
+                              {onRework && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onRework(targetItem);
+                                  }}
+                                  className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                  title={`Send Item #${targetItem.serialNumber} to Rework`}
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })
@@ -1200,101 +1765,745 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         )}
 
-        {/* 4. REJECTS LOG TAB */}
+        {/* 4. QUALITY REJECTS LOG TAB (CUSTOMER-WISE) */}
         {activeTab === "rejects" && (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
-                  <th className="p-3">Date & Time (GST)</th>
-                  <th className="p-3">Serial Number</th>
-                  <th className="p-3">Batch / PI Number</th>
-                  <th className="p-3 text-center">Defect Stage</th>
-                  <th className="p-3">Defect Reason</th>
-                  <th className="p-3">Operator</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-800">
-                {filteredRejects.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-500 font-medium">
-                      No glass rejects recorded in current filter.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredRejects.map((r: RejectRecord) => (
-                    <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-mono text-slate-500 whitespace-nowrap">
-                        {formatDubaiDateTime(r.date)}
-                      </td>
-                      <td className="p-3 font-mono font-bold text-red-600 whitespace-nowrap">
-                        {r.serialNumber}
-                      </td>
-                      <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                        {formatBatchNumber(r.piNumber) || r.piNumber || "—"}
-                      </td>
-                      <td className="p-3 text-center whitespace-nowrap">
-                        <span className="px-2 py-0.5 rounded bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold">
-                          {r.stage}
+          <div className="space-y-4 p-4 bg-slate-50/50">
+            {/* Sub-header Controls Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" /> View Mode:
+                </span>
+                {/* Mode toggle: All Stickers vs Rejected Only */}
+                <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setRejectsFilterMode("all")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      rejectsFilterMode === "all"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    All Glass Stickers ({summaryMetrics.totalItems})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRejectsFilterMode("rejected_only")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                      rejectsFilterMode === "rejected_only"
+                        ? "bg-red-600 text-white shadow-xs"
+                        : "text-red-700 hover:text-red-900 hover:bg-red-50"
+                    }`}
+                  >
+                    <AlertCircle className="w-3 h-3" />
+                    <span>Rejected Defects ({totalRejectsInFilter})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Dedicated Search Input & Button for Stickers / Details */}
+              <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Search sticker #, PI #, batch #, pos #, glass type, defect, operator..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-slate-50/60 focus:bg-white rounded-lg"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllCustomersExpanded(true)}
+                  className="h-7 text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700"
+                >
+                  Expand All
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllCustomersExpanded(false)}
+                  className="h-7 text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700"
+                >
+                  Collapse All
+                </Button>
+              </div>
+            </div>
+
+            {/* Customer-Wise Accordion Groups */}
+            {rejectCustomerGroups.length === 0 ? (
+              <div className="p-12 text-center bg-white rounded-xl border border-slate-200 text-slate-500 font-medium">
+                <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-sm font-bold text-slate-700">No sticker items found for the current selection.</p>
+                <p className="text-xs text-slate-400 mt-0.5">Try clearing filters or switching to "All Glass Stickers" view mode.</p>
+              </div>
+            ) : (
+              rejectCustomerGroups.map((group) => {
+                const isExpanded = isCustomerExpanded(group.customerName);
+
+                return (
+                  <div
+                    key={group.customerName}
+                    className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden transition-all"
+                  >
+                    {/* Customer Section Header */}
+                    <div
+                      onClick={() => toggleCustomerExpanded(group.customerName)}
+                      className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer select-none transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        {isExpanded ? (
+                          <ChevronDown className="w-4 h-4 text-slate-500" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-slate-500" />
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-purple-600" />
+                          <h3 className="text-sm font-black text-slate-900 tracking-tight">
+                            {group.customerName}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 flex-wrap text-xs">
+                        <span className="px-2.5 py-1 rounded-md bg-white border border-slate-200 font-mono font-bold text-slate-700 text-[11px] shadow-2xs">
+                          {group.totalItems} Stickers
                         </span>
-                      </td>
-                      <td className="p-3 text-red-700 font-bold">{r.reason}</td>
-                      <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
-                        {r.operator || "Operator"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                        <span className="px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 font-mono font-black text-emerald-800 text-[11px]">
+                          {formatAENumber(group.totalSqm, 2)} SQM
+                        </span>
+                        <span
+                          className={`px-2.5 py-1 rounded-md font-bold text-[11px] border ${
+                            group.rejectedCount > 0
+                              ? "bg-red-50 border-red-200 text-red-700"
+                              : "bg-slate-100 border-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {group.rejectedCount} {group.rejectedCount === 1 ? "Reject" : "Rejects"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Customer Items Table */}
+                    {isExpanded && (
+                      <div className="overflow-x-auto w-full">
+                        <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+                          <thead>
+                            <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
+                              <th className="p-3 w-12 text-center">SL</th>
+                              <th className="p-3">SERIAL NUMBER</th>
+                              <th className="p-3">BATCH NO</th>
+                              <th className="p-3">PI NUMBER</th>
+                              <th className="p-3 text-center">POS NO</th>
+                              <th className="p-3 text-center">FINISH</th>
+                              <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                              <th className="p-3 text-right">SQM</th>
+                              <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
+                              <th className="p-3 text-center">STAGE</th>
+                              <th className="p-3 text-center">QUALITY STATUS</th>
+                              <th className="p-3">DEFECT DETAILS</th>
+                              <th className="p-3">OPERATOR</th>
+                              <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-slate-800">
+                            {group.items.map(({ item, rejectRecord, isRejected }, idx) => {
+                              const eff = getDguEffectiveQtyAndSqm(item);
+                              const finish = getItemFinish(item);
+                              const actionItem = getGlassItemForActions(
+                                item.serialNumber,
+                                item.barcode,
+                                item.piNumber,
+                                rejectRecord?.stage || item.currentStage,
+                                isRejected ? "Rejected" : (item.status as any) || "Pending",
+                                rejectRecord?.reason || item.remarks
+                              );
+
+                              return (
+                                <tr
+                                  key={item.id || item.serialNumber}
+                                  className={`transition-colors ${
+                                    isRejected
+                                      ? "bg-red-50/40 hover:bg-red-50/70"
+                                      : "hover:bg-slate-50/80"
+                                  }`}
+                                >
+                                  {/* SL */}
+                                  <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
+                                    {idx + 1}
+                                  </td>
+
+                                  {/* Serial Number & Barcode */}
+                                  <td className="p-3 font-mono whitespace-nowrap">
+                                    <div className={`font-bold ${isRejected ? "text-red-700" : "text-blue-700"}`}>
+                                      {item.serialNumber}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-medium">
+                                      {item.barcode}
+                                    </div>
+                                  </td>
+
+                                  {/* Batch No */}
+                                  <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                    {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                  </td>
+
+                                  {/* PI Number */}
+                                  <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                                    {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                  </td>
+
+                                  {/* POS NO */}
+                                  <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
+                                    {item.posNo || "—"}
+                                  </td>
+
+                                  {/* Finish */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    <span
+                                      className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
+                                        finish === "Colour"
+                                          ? "bg-purple-100 text-purple-800 border-purple-200"
+                                          : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                      }`}
+                                    >
+                                      {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
+                                    </span>
+                                  </td>
+
+                                  {/* Dimensions */}
+                                  <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                                    {item.width} × {item.height} mm
+                                  </td>
+
+                                  {/* SQM */}
+                                  <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
+                                    {formatAENumber(eff.sqm, 2)} m²
+                                  </td>
+
+                                  {/* Glass Type / Spec */}
+                                  <td className="p-3 text-slate-700">
+                                    <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
+                                      {item.glassType}
+                                    </div>
+                                    {item.glassCode && (
+                                      <div className="text-[10px] font-mono text-slate-400">
+                                        Code: {item.glassCode}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Stage */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
+                                      {rejectRecord?.stage || item.currentStage}
+                                    </span>
+                                  </td>
+
+                                  {/* Quality Status */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    {isRejected ? (
+                                      <span className="px-2.5 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
+                                        <AlertCircle className="w-3 h-3 text-red-600" />
+                                        REJECTED
+                                      </span>
+                                    ) : (
+                                      <StatusBadge status={item.status || "In Production"} />
+                                    )}
+                                  </td>
+
+                                  {/* Defect Details */}
+                                  <td className="p-3">
+                                    {isRejected ? (
+                                      <div>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          {rejectRecord?.defectivePane && (
+                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${
+                                              rejectRecord.defectivePane === "OP"
+                                                ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                : rejectRecord.defectivePane === "IP"
+                                                ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                : "bg-red-100 text-red-800 border-red-200"
+                                            }`}>
+                                              {rejectRecord.defectivePane === "OP"
+                                                ? "OP • Outer Pane"
+                                                : rejectRecord.defectivePane === "IP"
+                                                ? "IP • Inner Pane"
+                                                : rejectRecord.defectivePane === "ASSEMBLY"
+                                                ? "Assembly Defect"
+                                                : rejectRecord.defectivePane}
+                                            </span>
+                                          )}
+                                          <span className="text-red-700 font-extrabold text-xs">
+                                            {rejectRecord?.reason || item.remarks || "Defect Scrap"}
+                                          </span>
+                                        </div>
+                                        {rejectRecord?.date && (
+                                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                                            {formatDubaiDateTime(rejectRecord.date)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 font-medium text-xs">No Defects</span>
+                                    )}
+                                  </td>
+
+                                  {/* Operator */}
+                                  <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
+                                    {rejectRecord?.operator || "Operator"}
+                                  </td>
+
+                                  {/* Actions: Sticker, Reject, Rework */}
+                                  <td className="p-3 text-right whitespace-nowrap">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {/* Sticker Button */}
+                                      {onPrintSticker && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onPrintSticker(actionItem);
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
+                                          title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
+                                        >
+                                          <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                          <span>Sticker</span>
+                                        </button>
+                                      )}
+
+                                      {/* Reject Button - Only visible if item is NOT already rejected */}
+                                      {!isRejected && item.status !== "Rejected" && onReject && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onReject(actionItem);
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:border-red-300 transition-colors shadow-2xs cursor-pointer"
+                                          title={`Report Defect / Reject Glass #${item.serialNumber}`}
+                                        >
+                                          <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                          <span>Reject</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 
-        {/* 5. REWORKS LOG TAB */}
+        {/* 5. REWORKS LOG TAB (CUSTOMER-WISE) */}
         {activeTab === "reworks" && (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
-                  <th className="p-3">Date & Time (GST)</th>
-                  <th className="p-3">Serial Number</th>
-                  <th className="p-3 text-center">Rework Route</th>
-                  <th className="p-3">Rework Reason</th>
-                  <th className="p-3">Operator</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-800">
-                {filteredReworks.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 font-medium">
-                      No glass reworks recorded in current filter.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredReworks.map((rw: ReworkRecord) => (
-                    <tr key={rw.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-mono text-slate-500 whitespace-nowrap">
-                        {formatDubaiDateTime(rw.date)}
-                      </td>
-                      <td className="p-3 font-mono font-bold text-amber-600 whitespace-nowrap">
-                        {rw.serialNumber}
-                      </td>
-                      <td className="p-3 text-center whitespace-nowrap">
-                        <span className="font-semibold text-slate-700">{rw.fromStage}</span>
-                        <span className="mx-1.5 text-slate-400">→</span>
-                        <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold">
-                          {rw.targetStage}
+          <div className="space-y-4 p-4 bg-slate-50/50">
+            {/* Sub-header Controls Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" /> View Mode:
+                </span>
+                {/* Mode toggle: All Stickers vs Reworks Only */}
+                <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setReworksFilterMode("all")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      reworksFilterMode === "all"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    All Glass Stickers ({summaryMetrics.totalItems})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReworksFilterMode("reworks_only")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                      reworksFilterMode === "reworks_only"
+                        ? "bg-amber-600 text-white shadow-xs"
+                        : "text-amber-800 hover:text-amber-950 hover:bg-amber-50"
+                    }`}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>In Rework ({totalReworksInFilter})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Dedicated Search Input & Button for Stickers / Details */}
+              <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Search sticker #, PI #, batch #, pos #, glass type, rework details, operator..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-slate-50/60 focus:bg-white rounded-lg"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllCustomersExpanded(true)}
+                  className="h-7 text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700"
+                >
+                  Expand All
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllCustomersExpanded(false)}
+                  className="h-7 text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700"
+                >
+                  Collapse All
+                </Button>
+              </div>
+            </div>
+
+            {/* Customer-Wise Accordion Groups */}
+            {reworkCustomerGroups.length === 0 ? (
+              <div className="p-12 text-center bg-white rounded-xl border border-slate-200 text-slate-500 font-medium">
+                <RotateCcw className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-sm font-bold text-slate-700">No sticker items found for the current selection.</p>
+                <p className="text-xs text-slate-400 mt-0.5">Try clearing filters or switching to "All Glass Stickers" view mode.</p>
+              </div>
+            ) : (
+              reworkCustomerGroups.map((group) => {
+                const isExpanded = isCustomerExpanded(group.customerName);
+
+                return (
+                  <div
+                    key={group.customerName}
+                    className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden transition-all"
+                  >
+                    {/* Customer Section Header */}
+                    <div
+                      onClick={() => toggleCustomerExpanded(group.customerName)}
+                      className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer select-none transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        {isExpanded ? (
+                          <ChevronDown className="w-4 h-4 text-slate-500" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-slate-500" />
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-purple-600" />
+                          <h3 className="text-sm font-black text-slate-900 tracking-tight">
+                            {group.customerName}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 flex-wrap text-xs">
+                        <span className="px-2.5 py-1 rounded-md bg-white border border-slate-200 font-mono font-bold text-slate-700 text-[11px] shadow-2xs">
+                          {group.totalItems} Stickers
                         </span>
-                      </td>
-                      <td className="p-3 text-amber-800 font-bold">{rw.reason}</td>
-                      <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
-                        {rw.operator || "Operator"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                        <span className="px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 font-mono font-black text-emerald-800 text-[11px]">
+                          {formatAENumber(group.totalSqm, 2)} SQM
+                        </span>
+                        <span
+                          className={`px-2.5 py-1 rounded-md font-bold text-[11px] border ${
+                            group.reworkCount > 0
+                              ? "bg-amber-50 border-amber-200 text-amber-800"
+                              : "bg-slate-100 border-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {group.reworkCount} {group.reworkCount === 1 ? "Rework" : "Reworks"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Customer Items Table */}
+                    {isExpanded && (
+                      <div className="overflow-x-auto w-full">
+                        <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+                          <thead>
+                            <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
+                              <th className="p-3 w-12 text-center">SL</th>
+                              <th className="p-3">SERIAL NUMBER</th>
+                              <th className="p-3">BATCH NO</th>
+                              <th className="p-3">PI NUMBER</th>
+                              <th className="p-3 text-center">POS NO</th>
+                              <th className="p-3 text-center">FINISH</th>
+                              <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                              <th className="p-3 text-right">SQM</th>
+                              <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
+                              <th className="p-3 text-center">REWORK ROUTE</th>
+                              <th className="p-3 text-center">STATUS</th>
+                              <th className="p-3">REWORK DETAILS</th>
+                              <th className="p-3">OPERATOR</th>
+                              <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-slate-800">
+                            {group.items.map(({ item, reworkRecord, isReworking }, idx) => {
+                              const eff = getDguEffectiveQtyAndSqm(item);
+                              const finish = getItemFinish(item);
+                              const actionItem = getGlassItemForActions(
+                                item.serialNumber,
+                                item.barcode,
+                                item.piNumber,
+                                reworkRecord?.targetStage || item.currentStage,
+                                isReworking ? "Reworking" : (item.status as any) || "Pending",
+                                reworkRecord?.reason || item.remarks
+                              );
+
+                              return (
+                                <tr
+                                  key={item.id || item.serialNumber}
+                                  className={`transition-colors ${
+                                    isReworking
+                                      ? "bg-amber-50/40 hover:bg-amber-50/70"
+                                      : "hover:bg-slate-50/80"
+                                  }`}
+                                >
+                                  {/* SL */}
+                                  <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
+                                    {idx + 1}
+                                  </td>
+
+                                  {/* Serial Number & Barcode */}
+                                  <td className="p-3 font-mono whitespace-nowrap">
+                                    <div className={`font-bold ${isReworking ? "text-amber-700" : "text-blue-700"}`}>
+                                      {item.serialNumber}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-medium">
+                                      {item.barcode}
+                                    </div>
+                                  </td>
+
+                                  {/* Batch No */}
+                                  <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                    {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                  </td>
+
+                                  {/* PI Number */}
+                                  <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                                    {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                  </td>
+
+                                  {/* POS NO */}
+                                  <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
+                                    {item.posNo || "—"}
+                                  </td>
+
+                                  {/* Finish */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    <span
+                                      className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
+                                        finish === "Colour"
+                                          ? "bg-purple-100 text-purple-800 border-purple-200"
+                                          : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                      }`}
+                                    >
+                                      {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
+                                    </span>
+                                  </td>
+
+                                  {/* Dimensions */}
+                                  <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                                    {item.width} × {item.height} mm
+                                  </td>
+
+                                  {/* SQM */}
+                                  <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
+                                    {formatAENumber(eff.sqm, 2)} m²
+                                  </td>
+
+                                  {/* Glass Type / Spec */}
+                                  <td className="p-3 text-slate-700">
+                                    <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
+                                      {item.glassType}
+                                    </div>
+                                    {item.glassCode && (
+                                      <div className="text-[10px] font-mono text-slate-400">
+                                        Code: {item.glassCode}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Rework Route */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    {isReworking && reworkRecord ? (
+                                      <div className="inline-flex items-center gap-1 text-[10px] font-bold">
+                                        <span className="text-slate-600">{reworkRecord.fromStage}</span>
+                                        <span className="text-slate-400">→</span>
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-100 border border-amber-200 text-amber-800">
+                                          {reworkRecord.targetStage}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
+                                        {item.currentStage}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  {/* Status */}
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    {isReworking ? (
+                                      <span className="px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
+                                        <RotateCcw className="w-3 h-3 text-amber-700" />
+                                        REWORKING
+                                      </span>
+                                    ) : (
+                                      <StatusBadge status={item.status || "In Production"} />
+                                    )}
+                                  </td>
+
+                                  {/* Rework Details */}
+                                  <td className="p-3">
+                                    {isReworking ? (
+                                      <div>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          {reworkRecord?.defectivePane && (
+                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${
+                                              reworkRecord.defectivePane === "OP"
+                                                ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                : reworkRecord.defectivePane === "IP"
+                                                ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                : "bg-amber-100 text-amber-800 border-amber-200"
+                                            }`}>
+                                              {reworkRecord.defectivePane === "OP"
+                                                ? "OP • Outer Pane"
+                                                : reworkRecord.defectivePane === "IP"
+                                                ? "IP • Inner Pane"
+                                                : reworkRecord.defectivePane === "ASSEMBLY"
+                                                ? "Assembly Defect"
+                                                : reworkRecord.defectivePane}
+                                            </span>
+                                          )}
+                                          <span className="text-amber-800 font-extrabold text-xs">
+                                            {reworkRecord?.reason || item.remarks || "Workstation Reprocess"}
+                                          </span>
+                                        </div>
+                                        {reworkRecord?.date && (
+                                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                                            {formatDubaiDateTime(reworkRecord.date)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 font-medium text-xs">Standard Route</span>
+                                    )}
+                                  </td>
+
+                                  {/* Operator */}
+                                  <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
+                                    {reworkRecord?.operator || "Operator"}
+                                  </td>
+
+                                  {/* Actions: Sticker, Reject, Rework */}
+                                  <td className="p-3 text-right whitespace-nowrap">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {/* Sticker Button */}
+                                      {onPrintSticker && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onPrintSticker(actionItem);
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
+                                          title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
+                                        >
+                                          <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                          <span>Sticker</span>
+                                        </button>
+                                      )}
+
+                                      {/* Rework Button */}
+                                      {onRework && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onRework(actionItem);
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 hover:border-amber-400 transition-colors shadow-2xs cursor-pointer"
+                                          title={`Re-route Glass #${item.serialNumber} to Rework`}
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                                          <span>Rework</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
       </div>

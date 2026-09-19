@@ -250,8 +250,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         map.set(key, {
           id: key,
           piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
-          customerName: parentPI?.customerName || (item as any).customerName || "BRIGHT PLUS FITOUT",
-          projectName: parentPI?.projectName || item.sectionName || "VAL_BY_KAS",
+          customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
+          projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
           sfoNo: item.sfoNo || parentPI?.sfoNo || "",
           items: [],
@@ -293,8 +293,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         map.set(p.id, {
           id: p.id,
           piNumber: (p.piNumber || "").replace(/^STK-/i, ""),
-          customerName: p.customerName || "BRIGHT PLUS FITOUT",
-          projectName: p.projectName || "VAL_BY_KAS",
+          customerName: p.customerName || "Customer",
+          projectName: p.projectName || "Project",
           jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
           sfoNo: p.sfoNo || "",
           items: [],
@@ -544,114 +544,102 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         {/* 1. Total Production */}
         <div
           onClick={() => onNavigateTab("pis")}
-          className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-blue-300 transition-all cursor-pointer group"
+          className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-blue-300 transition-all cursor-pointer group"
           title="Click to view all Sticker & Batch statuses"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>Total Production</span>
-            <Boxes className="w-3.5 h-3.5 text-blue-600 group-hover:scale-110 transition-transform" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            Total Production
           </div>
-          <div className="text-2xl font-black text-slate-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight font-mono">
             {metrics.totalItems} <span className="text-xs font-bold text-blue-700">Pcs</span>
           </div>
-          <div className="text-[11px] text-blue-700 font-semibold mt-1 flex items-center gap-1">
-            <Layers className="w-3 h-3 text-blue-500" />
-            <span>{metrics.totalSqm.toFixed(1)} m² Total</span>
+          <div className="text-[11px] text-blue-700 font-semibold mt-1">
+            {metrics.totalSqm.toFixed(1)} m² Total
           </div>
         </div>
 
         {/* 2. In-Progress Quantity */}
         <div
           onClick={() => onNavigateTab("cutting")}
-          className="bg-white border border-cyan-200/80 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-cyan-300 transition-all cursor-pointer group"
+          className="bg-white border border-cyan-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-cyan-300 transition-all cursor-pointer group"
           title="Click to view active Workstation queues"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>In-Progress WIP</span>
-            <Activity className="w-3.5 h-3.5 text-cyan-600 group-hover:scale-110 transition-transform" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            In-Progress WIP
           </div>
-          <div className="text-2xl font-black text-cyan-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-cyan-900 mt-2 tracking-tight font-mono">
             {metrics.inProgressCount} <span className="text-xs font-bold text-cyan-700">Pcs</span>
           </div>
-          <div className="text-[11px] text-cyan-700 font-semibold mt-1 flex items-center gap-1">
-            <Clock className="w-3 h-3 text-cyan-500" />
-            <span>{metrics.inProgressSqm.toFixed(1)} m² Active</span>
+          <div className="text-[11px] text-cyan-700 font-semibold mt-1">
+            {metrics.inProgressSqm.toFixed(1)} m² Active
           </div>
         </div>
 
         {/* 3. Completed Quantity */}
         <div
           onClick={() => onNavigateTab("finished")}
-          className="bg-white border border-emerald-200/80 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300 transition-all cursor-pointer group"
+          className="bg-white border border-emerald-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300 transition-all cursor-pointer group"
           title="Click to view Finished Items Warehouse"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>Completed Units</span>
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            Completed Units
           </div>
-          <div className="text-2xl font-black text-emerald-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-emerald-900 mt-2 tracking-tight font-mono">
             {metrics.finishedCount} <span className="text-xs font-bold text-emerald-700">Units</span>
           </div>
-          <div className="text-[11px] text-emerald-700 font-semibold mt-1 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-            <span>{metrics.completionPercent}% Inspected</span>
+          <div className="text-[11px] text-emerald-700 font-semibold mt-1">
+            {metrics.completionPercent}% Inspected
           </div>
         </div>
 
         {/* 4. Pending Quantity */}
         <div
           onClick={() => onNavigateTab("cutting")}
-          className="bg-white border border-amber-200/80 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-amber-300 transition-all cursor-pointer group"
+          className="bg-white border border-amber-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-amber-300 transition-all cursor-pointer group"
           title="Click to view Pending Cutting queue"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>Pending Cutting</span>
-            <Clock className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            Pending Cutting
           </div>
-          <div className="text-2xl font-black text-amber-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-amber-900 mt-2 tracking-tight font-mono">
             {metrics.pendingCuttingCount} <span className="text-xs font-bold text-amber-700">Panes</span>
           </div>
-          <div className="text-[11px] text-amber-700 font-semibold mt-1 flex items-center gap-1">
-            <Boxes className="w-3 h-3 text-amber-500" />
-            <span>{metrics.distinctCuttingSheets} Raw Sheets</span>
+          <div className="text-[11px] text-amber-700 font-semibold mt-1">
+            {metrics.distinctCuttingSheets} Raw Sheets
           </div>
         </div>
 
         {/* 5. Rejected Quantity */}
         <div
           onClick={() => onNavigateTab("reports")}
-          className="bg-white border border-rose-200/80 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-rose-300 transition-all cursor-pointer group"
+          className="bg-white border border-rose-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-rose-300 transition-all cursor-pointer group"
           title="Click to view Quality Rejects & Defect Log"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>Rejected Items</span>
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-600 group-hover:scale-110 transition-transform" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            Rejected Items
           </div>
-          <div className="text-2xl font-black text-rose-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-rose-900 mt-2 tracking-tight font-mono">
             {metrics.rejectedCount} <span className="text-xs font-bold text-rose-700">Panes</span>
           </div>
-          <div className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3 text-rose-500" />
-            <span>{metrics.yieldRate}% Pass Rate</span>
+          <div className="text-[11px] text-rose-600 font-semibold mt-1">
+            {metrics.yieldRate}% Pass Rate
           </div>
         </div>
 
         {/* 6. Rework Quantity */}
         <div
           onClick={() => onNavigateTab("reports")}
-          className="bg-white border border-orange-200/80 rounded-2xl p-3.5 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-orange-300 transition-all cursor-pointer group"
+          className="bg-white border border-orange-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-orange-300 transition-all cursor-pointer group"
           title="Click to view Rework Tracking"
         >
-          <div className="flex items-center justify-between text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            <span>Rework Items</span>
-            <RefreshCw className="w-3.5 h-3.5 text-orange-600 group-hover:rotate-180 transition-transform duration-500" />
+          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
+            Rework Items
           </div>
-          <div className="text-2xl font-black text-orange-900 mt-1.5 tracking-tight">
+          <div className="text-2xl font-black text-orange-900 mt-2 tracking-tight font-mono">
             {metrics.reworkCount} <span className="text-xs font-bold text-orange-700">Items</span>
           </div>
-          <div className="text-[11px] text-orange-700 font-semibold mt-1 flex items-center gap-1">
-            <Zap className="w-3 h-3 text-orange-500" />
-            <span>Re-routed Flow</span>
+          <div className="text-[11px] text-orange-700 font-semibold mt-1">
+            Re-routed Flow
           </div>
         </div>
       </div>
