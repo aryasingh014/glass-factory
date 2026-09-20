@@ -1,7 +1,7 @@
 import React from "react";
 import { PIMaster, GlassItem } from "@shared/api";
 import { FileText, Box, Layers, Grid, ChevronRight, CheckCircle, Flame, ClipboardList, Search } from "lucide-react";
-import { getDguEffectiveQtyAndSqm } from "@/lib/utils";
+import { getDguEffectiveQtyAndSqm, getDisplayStage } from "@/lib/utils";
 
 interface UniversalSearchResultsProps {
   searchTerm: string;
@@ -66,6 +66,7 @@ export const UniversalSearchResults: React.FC<UniversalSearchResultsProps> = ({
   ).slice(0, 4);
 
   const totalMatches = matchedPIs.length + matchedItems.length + matchedModules.length;
+  if (totalMatches === 0) return null;
 
   return (
     <div className="absolute left-0 top-full mt-1.5 w-[460px] max-w-[90vw] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
@@ -82,121 +83,110 @@ export const UniversalSearchResults: React.FC<UniversalSearchResultsProps> = ({
       </div>
 
       <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100">
-        {totalMatches === 0 ? (
-          <div className="p-6 text-center text-slate-500">
-            <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-            <div className="text-xs font-bold text-slate-700">No matching records found</div>
-            <div className="text-[11px] text-slate-400 mt-1">
-              Try searching for a serial number (e.g. S001), barcode, PI number, customer name, or workstation.
+        {/* PI Matches */}
+        {matchedPIs.length > 0 && (
+          <div className="p-2.5">
+            <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
+              <FileText className="w-3 h-3 text-purple-600" /> Proforma Invoices ({matchedPIs.length})
+            </div>
+            <div className="space-y-1">
+              {matchedPIs.map((pi) => (
+                <button
+                  key={pi.id}
+                  onClick={() => {
+                    onSelectPI(pi);
+                    onClose();
+                  }}
+                  className="w-full text-left p-2 rounded-xl hover:bg-purple-50/70 transition-colors flex items-center justify-between group cursor-pointer"
+                >
+                  <div>
+                    <div className="text-xs font-bold text-purple-700 group-hover:underline flex items-center gap-2">
+                      {pi.piNumber}
+                      <span className="text-[10px] font-semibold text-slate-500 font-sans">
+                        • {pi.customerName}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      Project: <span className="font-semibold text-slate-700">{pi.projectName}</span> | {pi.itemsCount} items ({pi.totalSqm?.toFixed(1)} m²)
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+              ))}
             </div>
           </div>
-        ) : (
-          <>
-            {/* PI Matches */}
-            {matchedPIs.length > 0 && (
-              <div className="p-2.5">
-                <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
-                  <FileText className="w-3 h-3 text-purple-600" /> Proforma Invoices ({matchedPIs.length})
-                </div>
-                <div className="space-y-1">
-                  {matchedPIs.map((pi) => (
-                    <button
-                      key={pi.id}
-                      onClick={() => {
-                        onSelectPI(pi);
-                        onClose();
-                      }}
-                      className="w-full text-left p-2 rounded-xl hover:bg-purple-50/70 transition-colors flex items-center justify-between group"
-                    >
-                      <div>
-                        <div className="text-xs font-bold text-purple-700 group-hover:underline flex items-center gap-2">
-                          {pi.piNumber}
-                          <span className="text-[10px] font-semibold text-slate-500 font-sans">
-                            • {pi.customerName}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Project: <span className="font-semibold text-slate-700">{pi.projectName}</span> | {pi.itemsCount} items ({pi.totalSqm?.toFixed(1)} m²)
-                        </div>
+        )}
+
+        {/* Glass Item & Barcode Matches */}
+        {matchedItems.length > 0 && (
+          <div className="p-2.5">
+            <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
+              <Box className="w-3 h-3 text-blue-600" /> Glass Items & Barcodes ({matchedItems.length})
+            </div>
+            <div className="space-y-1">
+              {matchedItems.map((item) => {
+                const eff = getDguEffectiveQtyAndSqm(item);
+                const displayStage = getDisplayStage(item);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelectItem(item);
+                      onClose();
+                    }}
+                    className="w-full text-left p-2 rounded-xl hover:bg-blue-50/70 transition-colors flex items-center justify-between group cursor-pointer"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                        <span className="text-purple-700 font-mono">{item.serialNumber}</span>
+                        <span className="text-[10px] font-mono bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded border border-slate-200">
+                          {item.barcode}
+                        </span>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-transform" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                      <div className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[340px]">
+                        {item.glassType} ({item.width}×{item.height}mm) | Qty: {eff.qty} {eff.unitLabel} ({eff.sqm.toFixed(1)} m²) | Stage: <span className="font-bold text-slate-700">{displayStage}</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 shrink-0">
+                      {displayStage}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-            {/* Glass Item & Barcode Matches */}
-            {matchedItems.length > 0 && (
-              <div className="p-2.5">
-                <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
-                  <Box className="w-3 h-3 text-blue-600" /> Glass Items & Barcodes ({matchedItems.length})
-                </div>
-                <div className="space-y-1">
-                  {matchedItems.map((item) => {
-                    const eff = getDguEffectiveQtyAndSqm(item);
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          onSelectItem(item);
-                          onClose();
-                        }}
-                        className="w-full text-left p-2 rounded-xl hover:bg-blue-50/70 transition-colors flex items-center justify-between group"
-                      >
-                        <div>
-                          <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                            <span className="text-purple-700 font-mono">{item.serialNumber}</span>
-                            <span className="text-[10px] font-mono bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded border border-slate-200">
-                              {item.barcode}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[340px]">
-                            {item.glassType} ({item.width}×{item.height}mm) | Qty: {eff.qty} {eff.unitLabel} ({eff.sqm.toFixed(1)} m²) | Stage: <span className="font-bold text-slate-700">{item.currentStage}</span>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 shrink-0">
-                          {item.currentStage}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Module Matches */}
-            {matchedModules.length > 0 && (
-              <div className="p-2.5">
-                <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
-                  <Grid className="w-3 h-3 text-indigo-600" /> System Views & Workstations ({matchedModules.length})
-                </div>
-                <div className="space-y-1">
-                  {matchedModules.map((mod) => {
-                    const ModIcon = mod.icon;
-                    return (
-                      <button
-                        key={mod.id}
-                        onClick={() => {
-                          onSelectModule(mod.id);
-                          onClose();
-                        }}
-                        className="w-full text-left p-2 rounded-xl hover:bg-indigo-50/70 transition-colors flex items-center justify-between group"
-                      >
-                        <div className="flex items-center gap-2">
-                          <ModIcon className="w-4 h-4 text-indigo-600" />
-                          <span className="text-xs font-bold text-slate-800">{mod.name}</span>
-                        </div>
-                        <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
-                          {mod.tag}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
+        {/* Module Matches */}
+        {matchedModules.length > 0 && (
+          <div className="p-2.5">
+            <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-1.5 flex items-center gap-1.5">
+              <Grid className="w-3 h-3 text-indigo-600" /> System Views & Workstations ({matchedModules.length})
+            </div>
+            <div className="space-y-1">
+              {matchedModules.map((mod) => {
+                const ModIcon = mod.icon;
+                return (
+                  <button
+                    key={mod.id}
+                    onClick={() => {
+                      onSelectModule(mod.id);
+                      onClose();
+                    }}
+                    className="w-full text-left p-2 rounded-xl hover:bg-indigo-50/70 transition-colors flex items-center justify-between group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ModIcon className="w-4 h-4 text-indigo-600" />
+                      <span className="text-xs font-bold text-slate-800">{mod.name}</span>
+                    </div>
+                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                      {mod.tag}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
     </div>

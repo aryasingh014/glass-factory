@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { GlassItem, ProductionStage, ProductionHistory, PIMaster } from "@shared/api";
-import { formatPlatformDate, formatPlatformDateTime, formatBatchNumber, getItemFinish, getDguEffectiveQtyAndSqm, isDlguGlass, isDguGlass, isLaminatedGlass } from "./utils";
+import { formatPlatformDate, formatPlatformDateTime, formatBatchNumber, getItemFinish, getDguEffectiveQtyAndSqm, isDlguGlass, isDguGlass, isLaminatedGlass, getDisplayStage } from "./utils";
 import { toast } from "sonner";
 
 /**
@@ -46,7 +46,7 @@ function buildItemExportRows(items: GlassItem[], stage: ProductionStage) {
       "Quantity": eff.qty,
       "Unit": eff.unitLabel,
       "Total SQM": eff.sqm,
-      "Current Stage": item.currentStage,
+      "Current Stage": getDisplayStage(item, item.currentStage),
       "Status": item.status,
       "Last Updated": formatPlatformDateTime(item.updatedAt),
       "Remarks": item.remarks || "",

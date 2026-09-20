@@ -233,7 +233,7 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
                     <CheckCircle className="w-4 h-4" /> Advance Stage ({scannedResult.item.currentStage})
                   </Button>
                 )}
-                {onReject && scannedResult.item.status !== "Rejected" && (
+                {onReject && scannedResult.item.status !== "Rejected" && scannedResult.item.status !== "Completed" && scannedResult.item.currentStage !== "Finished" && scannedResult.item.currentStage !== "Cutting" && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -243,7 +243,7 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
                     <AlertOctagon className="w-4 h-4" /> Reject Glass
                   </Button>
                 )}
-                {onRework && (
+                {onRework && scannedResult.item.currentStage !== "Cutting" && (scannedResult.item.status === "Rejected" || scannedResult.item.status === "Reworking" || (scannedResult.item.status as any) === "Rework") && (
                   <Button
                     size="sm"
                     variant="outline"

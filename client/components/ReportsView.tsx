@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Tag,
   AlertCircle,
+  AlertOctagon,
   RotateCcw,
   Search,
   Filter,
@@ -42,9 +43,126 @@ import {
   isDlguGlass,
   isDguGlass,
   isLaminatedGlass,
+  getDisplayStage,
 } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ReportsResponse, PIMaster, GlassItem, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage } from "@shared/api";
+
+interface BatchSheetGroup<T> {
+  key: string;
+  batchNo: string;
+  piNumber: string;
+  rackNo: string | number;
+  sheetTitle: string;
+  sfoList: string[];
+  obList: string[];
+  glassType: string;
+  finish: "Colour" | "Clear" | "Mixed";
+  totalPieces: number;
+  totalSqm: number;
+  defectCount: number;
+  items: T[];
+}
+
+function groupItemsByBatchAndSheet<
+  T extends {
+    item: GlassItem;
+    rejectRecord?: RejectRecord;
+    reworkRecord?: ReworkRecord;
+    isRejected?: boolean;
+    isReworking?: boolean;
+  }
+>(items: T[]): Array<BatchSheetGroup<T>> {
+  const map = new Map<string, T[]>();
+
+  items.forEach((entry) => {
+    const it = entry.item;
+    const batch = it.batchNo || formatBatchNumber(it.piNumber) || "Default";
+    const rack =
+      it.rackNo !== undefined && it.rackNo !== null && String(it.rackNo).trim() !== ""
+        ? String(it.rackNo)
+        : (it as any).sheetNo !== undefined
+        ? String((it as any).sheetNo)
+        : "";
+    const pi = it.piNumber || it.orderNo || "Default";
+
+    const key = `${pi}__${batch}__${rack || "1"}`;
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key)!.push(entry);
+  });
+
+  const result: Array<BatchSheetGroup<T>> = [];
+
+  map.forEach((sheetItems, key) => {
+    const first = sheetItems[0].item;
+    const batchNo = first.batchNo || formatBatchNumber(first.piNumber) || "—";
+    const piNumber = first.piNumber || first.orderNo || "—";
+    const rackNo =
+      first.rackNo !== undefined && first.rackNo !== null && String(first.rackNo).trim() !== ""
+        ? first.rackNo
+        : (first as any).sheetNo !== undefined
+        ? (first as any).sheetNo
+        : "";
+
+    let totalPieces = 0;
+    let totalSqm = 0;
+    let defectCount = 0;
+    let colourCount = 0;
+    let clearCount = 0;
+    const sfoSet = new Set<string>();
+    const obSet = new Set<string>();
+
+    sheetItems.forEach((si) => {
+      const it = si.item;
+      const pieces = it.qty || 1;
+      totalPieces += pieces;
+      const eff = getDguEffectiveQtyAndSqm(it);
+      totalSqm += eff.sqm;
+      if (si.isRejected || si.isReworking) defectCount += 1;
+      const f = getItemFinish(it);
+      if (f === "Colour") colourCount += pieces;
+      else clearCount += pieces;
+      if (it.sfoNo) sfoSet.add(it.sfoNo);
+      if (it.obNo) obSet.add(it.obNo);
+    });
+
+    const finish: "Colour" | "Clear" | "Mixed" =
+      colourCount > 0 && clearCount === 0
+        ? "Colour"
+        : clearCount > 0 && colourCount === 0
+        ? "Clear"
+        : "Mixed";
+
+    const sheetTitle = rackNo ? `Raw Sheet ${rackNo}` : `Batch ${batchNo}`;
+
+    result.push({
+      key,
+      batchNo,
+      piNumber,
+      rackNo: rackNo || 1,
+      sheetTitle,
+      sfoList: Array.from(sfoSet),
+      obList: Array.from(obSet),
+      glassType: first.glassType || "Standard Float",
+      finish,
+      totalPieces,
+      totalSqm,
+      defectCount,
+      items: sheetItems,
+    });
+  });
+
+  result.sort((a, b) => {
+    const aNum = Number(a.rackNo);
+    const bNum = Number(b.rackNo);
+    if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+    return String(a.key).localeCompare(String(b.key));
+  });
+
+  return result;
+}
 
 interface ReportsViewProps {
   initialTab?: "pis" | "items" | "history" | "rejects" | "reworks";
@@ -85,8 +203,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [autoSync, setAutoSync] = useState(true);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
 
-  // Filter States
-  const [searchTerm, setSearchTerm] = useState("");
+  // Filter States - Split search into PI / Batch filter and Position / Sticker filter
+  const [searchPi, setSearchPi] = useState("");
+  const [searchPos, setSearchPos] = useState("");
   const [selectedStage, setSelectedStage] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [selectedCustomer, setSelectedCustomer] = useState<string>("all");
@@ -98,6 +217,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // Customer Accordion collapse state (true = open, false = closed)
   const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
+  // Batch / Sheet sub-card collapse state within customer accordions (default closed)
+  const [expandedBatchCards, setExpandedBatchCards] = useState<Record<string, boolean>>({});
+  const [expandAllSheets, setExpandAllSheets] = useState(false);
 
   const toggleCustomerExpanded = (custName: string) => {
     setExpandedCustomers((prev) => ({
@@ -107,10 +229,27 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const isCustomerExpanded = (custName: string) => {
-    if (searchTerm.trim().length > 0) {
+    if (searchPi.trim().length > 0 || searchPos.trim().length > 0) {
       return expandedCustomers[custName] !== false; // Auto-expand when searching
     }
     return Boolean(expandedCustomers[custName]); // Default closed
+  };
+
+  const toggleBatchCardExpanded = (cardKey: string) => {
+    setExpandedBatchCards((prev) => ({
+      ...prev,
+      [cardKey]: !isBatchCardExpanded(cardKey),
+    }));
+  };
+
+  const isBatchCardExpanded = (cardKey: string) => {
+    if (searchPi.trim().length > 0 || searchPos.trim().length > 0) {
+      return expandedBatchCards[cardKey] !== false; // Auto-expand when searching
+    }
+    if (expandedBatchCards[cardKey] !== undefined) {
+      return expandedBatchCards[cardKey];
+    }
+    return expandAllSheets; // Default closed (false)
   };
 
   const setAllCustomersExpanded = (expand: boolean) => {
@@ -119,6 +258,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       newState[c] = expand;
     });
     setExpandedCustomers(newState);
+    setExpandAllSheets(expand);
+    setExpandedBatchCards({});
   };
 
   const fetchReports = async (showLoadingState = true) => {
@@ -305,6 +446,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         inProgressItems: 0,
         totalSqm: 0,
         completedSqm: 0,
+        rejectedUnits: 0,
+        rejectedSqm: 0,
         totalRejects: 0,
         totalReworks: 0,
         defectRate: 0,
@@ -328,6 +471,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
     let totalSqm = 0;
     let completedSqm = 0;
+    let rejectedUnits = 0;
+    let rejectedSqm = 0;
+
+    const allItemSerials = new Set(items.map((i) => i.serialNumber));
+    const rejectedSerialSet = new Set<string>();
+    rejects.forEach((r) => {
+      if (r.serialNumber) rejectedSerialSet.add(r.serialNumber);
+      if (r.defectiveSerialNumber) rejectedSerialSet.add(r.defectiveSerialNumber);
+      if (r.itemId) rejectedSerialSet.add(r.itemId);
+    });
 
     items.forEach((i) => {
       const eff = getDguEffectiveQtyAndSqm(i);
@@ -335,10 +488,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       if (i.status === "Completed" || i.currentStage === "Finished") {
         completedSqm += eff.sqm;
       }
+      if (i.status === "Rejected" || rejectedSerialSet.has(i.serialNumber) || (i.id && rejectedSerialSet.has(i.id))) {
+        rejectedUnits += 1;
+        rejectedSqm += eff.sqm;
+      }
     });
 
+    // Count any standalone rejects
+    rejects.forEach((r) => {
+      if (r.serialNumber && !allItemSerials.has(r.serialNumber)) {
+        rejectedUnits += 1;
+      }
+    });
+
+    if (rejectedUnits === 0 && rejects.length > 0) {
+      rejectedUnits = rejects.length;
+    }
+
     const totalRejects = rejects.length;
-    const totalReworks = reworks.length;
+    const reworkSerials = new Set<string>();
+    reworks.forEach((r) => r.serialNumber && reworkSerials.add(r.serialNumber));
+    items.forEach((i) => {
+      if (i.status === "Reworking" || (i.status as any) === "Rework") {
+        if (i.serialNumber) reworkSerials.add(i.serialNumber);
+      }
+    });
+    const totalReworks = reworkSerials.size > 0 ? reworkSerials.size : reworks.length;
     const defectRate = totalItems > 0 ? (totalRejects / (totalItems + totalRejects)) * 100 : 0;
     const reworkRate = totalItems > 0 ? (totalReworks / totalItems) * 100 : 0;
     const completionRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0;
@@ -352,6 +527,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       inProgressItems,
       totalSqm,
       completedSqm,
+      rejectedUnits,
+      rejectedSqm,
       totalRejects,
       totalReworks,
       defectRate,
@@ -360,93 +537,202 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     };
   }, [reportData]);
 
+  // Strict matching for PI Number / Batch Number
+  const matchStrictPi = (item: any, query: string): boolean => {
+    if (!query || !query.trim()) return true;
+    const rawQ = query.trim().toLowerCase();
+    const cleanQ = rawQ.replace(/^(pi|batch|order|job|sfo|ob|po|wo)\s*[-#.:/]*\s*/i, "").trim();
+
+    const pi = String(item.piNumber || item.piId || item.id || "").trim().toLowerCase();
+    const batch = String(item.batchNo || "").trim().toLowerCase();
+    const batchFmt = (item.piNumber ? formatBatchNumber(item.piNumber) : (item.batchNo ? formatBatchNumber(item.batchNo) : "")).trim().toLowerCase();
+    const order = String(item.orderNo || item.soNoDate || "").trim().toLowerCase();
+    const sfo = String(item.sfoNo || "").trim().toLowerCase();
+    const ob = String(item.obNo || "").trim().toLowerCase();
+    const proforma = String(item.proformaInvNo || "").trim().toLowerCase();
+    const job = String(item.jobOrderNumber || "").trim().toLowerCase();
+    const po = String(item.purchaseOrderNo || "").trim().toLowerCase();
+
+    const checkMatch = (val: string) => {
+      if (!val || val === "-" || val === "—") return false;
+      return val.includes(rawQ) || (cleanQ.length > 0 && val.includes(cleanQ));
+    };
+
+    return (
+      checkMatch(pi) ||
+      checkMatch(batch) ||
+      checkMatch(batchFmt) ||
+      checkMatch(order) ||
+      checkMatch(sfo) ||
+      checkMatch(ob) ||
+      checkMatch(proforma) ||
+      checkMatch(job) ||
+      checkMatch(po)
+    );
+  };
+
+  // Strict matching for Position Number ONLY
+  const matchStrictPos = (item: any, query: string): boolean => {
+    if (!query || !query.trim()) return true;
+    const rawQ = query.trim().toLowerCase();
+    const cleanQ = rawQ.replace(/^(pos|position|sr|sl|pos#|pos\.?|sr#|sl#)\s*[-#.:/]*\s*/i, "").trim();
+
+    // 1. Direct item position fields
+    const posNoStr = String(item.posNo || "").trim().toLowerCase();
+    const cleanPosNo = posNoStr.replace(/^(pos|position|sr|sl)\s*[-#.:/]*\s*/i, "").trim();
+    const srNoStr = item.srNo !== undefined && item.srNo !== null ? String(item.srNo).trim().toLowerCase() : "";
+
+    // Exact string match on position (e.g. "1" === "1", "POS 1" === "pos 1", etc.)
+    if (posNoStr && (posNoStr === rawQ || posNoStr === cleanQ)) return true;
+    if (cleanPosNo && (cleanPosNo === rawQ || cleanPosNo === cleanQ)) return true;
+
+    // Number-equivalent match (e.g. "01" vs "1", "001" vs "1", "1.0" vs "1")
+    const numQ = parseInt(cleanQ, 10);
+    if (!isNaN(numQ)) {
+      const numPos = parseInt(cleanPosNo, 10);
+      if (!isNaN(numPos) && numPos === numQ) return true;
+      if (srNoStr) {
+        const numSr = parseInt(srNoStr, 10);
+        if (!isNaN(numSr) && numSr === numQ) return true;
+      }
+    }
+
+    if (srNoStr && (srNoStr === rawQ || srNoStr === cleanQ)) return true;
+
+    // 2. Exact sticker serial or barcode match ONLY (if user enters a specific full serial or barcode)
+    const serial = String(item.serialNumber || "").trim().toLowerCase();
+    const barcode = String(item.barcode || "").trim().toLowerCase();
+    const qrId = String(item.qrId || "").trim().toLowerCase();
+
+    // Never use substring .includes() because '1' would match almost every barcode!
+    if (serial && (serial === rawQ || serial === cleanQ)) return true;
+    if (barcode && (barcode === rawQ || barcode === cleanQ)) return true;
+    if (qrId && (qrId === rawQ || qrId === cleanQ)) return true;
+
+    // Only allow prefix match if the entered query is long enough (at least 6 characters, e.g. "101262")
+    if (cleanQ.length >= 6) {
+      if (serial && serial.startsWith(cleanQ)) return true;
+      if (barcode && barcode.startsWith(cleanQ)) return true;
+    }
+
+    return false;
+  };
+
+  // Helper to test if a GlassItem matches both searchPi and searchPos filters
+  const matchesItemFilters = (
+    item: GlassItem,
+    cust: string,
+    extraFields?: {
+      reason?: string;
+      defectivePane?: string;
+      operator?: string;
+      stage?: string;
+    }
+  ) => {
+    // 1. Strictly check PI / Batch filter
+    if (searchPi.trim()) {
+      if (!matchStrictPi(item, searchPi)) {
+        return false;
+      }
+    }
+
+    // 2. Strictly check Pos / Position filter
+    if (searchPos.trim()) {
+      const matchItemPos = matchStrictPos(item, searchPos);
+      const matchDefectSerial =
+        extraFields?.defectivePane &&
+        matchStrictPos({ serialNumber: extraFields.defectivePane } as any, searchPos);
+      if (!matchItemPos && !matchDefectSerial) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   // 1. Filtered Proforma Invoices
   const filteredPis = useMemo(() => {
     if (!reportData?.pis) return [];
-    const q = searchTerm.toLowerCase().trim();
     return reportData.pis.filter((pi) => {
-      if (q) {
-        const matchNumber = pi.piNumber.toLowerCase().includes(q);
-        const matchJob = (pi.jobOrderNumber || "").toLowerCase().includes(q);
-        const matchCust = (pi.customerName || "").toLowerCase().includes(q);
-        const matchProj = (pi.projectName || "").toLowerCase().includes(q);
-        if (!matchNumber && !matchJob && !matchCust && !matchProj) return false;
+      // 1. Strict PI filter
+      if (searchPi.trim() && !matchStrictPi(pi, searchPi)) {
+        return false;
+      }
+      // 2. Strict Pos filter: check if any item in this PI matches the position number
+      if (searchPos.trim()) {
+        const hasMatchingPosItem = (reportData.items || []).some(
+          (item) =>
+            (item.piNumber === pi.piNumber ||
+              item.piId === pi.id ||
+              item.piNumber === pi.id ||
+              (item as any).orderNo === pi.piNumber ||
+              (item as any).orderNo === (pi as any).orderNo ||
+              (item.batchNo && (pi as any).batchNo && item.batchNo === (pi as any).batchNo)) &&
+            matchStrictPos(item, searchPos)
+        );
+        if (!hasMatchingPosItem) return false;
       }
       if (selectedCustomer !== "all" && (pi.customerName || "").trim() !== selectedCustomer) return false;
       if (selectedStatus !== "all" && pi.status !== selectedStatus) return false;
       if (!isWithinDateRange(pi.createdAt)) return false;
       return true;
     });
-  }, [reportData?.pis, searchTerm, selectedCustomer, selectedStatus, selectedDateRange]);
+  }, [reportData?.pis, reportData?.items, searchPi, searchPos, selectedCustomer, selectedStatus, selectedDateRange]);
 
   // 2. Filtered Glass Items
   const filteredItems = useMemo(() => {
     if (!reportData?.items) return [];
-    const q = searchTerm.toLowerCase().trim();
     return reportData.items.filter((item) => {
       const cust = getCustomerNameForItem(item);
       if (selectedCustomer !== "all" && cust !== selectedCustomer) return false;
-
-      if (q) {
-        const matchBar = (item.barcode || "").toLowerCase().includes(q);
-        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
-        const matchPi = (item.piNumber || item.batchNo || "").toLowerCase().includes(q);
-        const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
-        const matchType = (item.glassType || "").toLowerCase().includes(q);
-        const matchCust = cust.toLowerCase().includes(q);
-        if (!matchBar && !matchSerial && !matchPi && !matchCode && !matchType && !matchCust) return false;
-      }
+      if (!matchesItemFilters(item, cust)) return false;
       if (selectedStage !== "all" && item.currentStage !== selectedStage) return false;
       if (selectedStatus !== "all" && (item.status || "Pending") !== selectedStatus) return false;
       if (!isWithinDateRange(item.updatedAt || item.createdAt)) return false;
       return true;
     });
-  }, [reportData?.items, searchTerm, selectedCustomer, selectedStage, selectedStatus, selectedDateRange]);
+  }, [reportData?.items, searchPi, searchPos, selectedCustomer, selectedStage, selectedStatus, selectedDateRange]);
 
   // 3. Filtered Audit History
   const filteredHistory = useMemo(() => {
     if (!reportData?.history) return [];
-    const q = searchTerm.toLowerCase().trim();
     return reportData.history.filter((h) => {
       const cust = getCustomerNameForItem(h.piNumber || h.itemOrBatch);
       if (selectedCustomer !== "all" && cust !== selectedCustomer) return false;
 
-      if (q) {
-        const matchSerial = (h.serialNumber || "").toLowerCase().includes(q);
-        const matchPi = (h.piNumber || "").toLowerCase().includes(q);
-        const matchItem = (h.itemOrBatch || "").toLowerCase().includes(q);
-        const matchAction = (h.action || "").toLowerCase().includes(q);
-        const matchUser = (h.user || h.operator || "").toLowerCase().includes(q);
-        const matchRemarks = (h.remarks || "").toLowerCase().includes(q);
-        const matchStage = (h.stage || "").toLowerCase().includes(q);
-        const matchPrev = (h.prevStatus || "").toLowerCase().includes(q);
-        const matchNew = (h.newStatus || h.status || "").toLowerCase().includes(q);
-        const matchCust = cust.toLowerCase().includes(q);
-        if (
-          !matchSerial &&
-          !matchPi &&
-          !matchItem &&
-          !matchAction &&
-          !matchUser &&
-          !matchRemarks &&
-          !matchStage &&
-          !matchPrev &&
-          !matchNew &&
-          !matchCust
-        ) {
-          return false;
-        }
+      // 1. Strict PI filter
+      if (searchPi.trim()) {
+        const itemMock = {
+          piNumber: h.piNumber,
+          piId: h.piNumber,
+          orderNo: h.itemOrBatch,
+          batchNo: h.piNumber,
+        };
+        if (!matchStrictPi(itemMock, searchPi)) return false;
       }
+
+      // 2. Strict Position filter
+      if (searchPos.trim()) {
+        const matchedItem = (reportData?.items || []).find(
+          (i) => (h.serialNumber && i.serialNumber === h.serialNumber) || (h.itemId && i.id === h.itemId)
+        );
+        const itemMock = matchedItem || {
+          serialNumber: h.serialNumber,
+          barcode: h.barcode || h.serialNumber,
+          posNo: h.itemOrBatch,
+        };
+        if (!matchStrictPos(itemMock, searchPos)) return false;
+      }
+
       if (selectedStage !== "all" && h.stage !== selectedStage) return false;
       if (!isWithinDateRange(h.timestamp)) return false;
       return true;
     });
-  }, [reportData?.history, searchTerm, selectedCustomer, selectedStage, selectedDateRange]);
+  }, [reportData?.history, reportData?.items, searchPi, searchPos, selectedCustomer, selectedStage, selectedDateRange]);
 
   // 4. Quality Rejects Log - Customer-Wise Grouping with All Stickers Visible
   const rejectCustomerGroups = useMemo(() => {
     if (!reportData) return [];
-    const q = searchTerm.toLowerCase().trim();
 
     const allItemSerials = new Set((reportData.items || []).map((i) => i.serialNumber));
     const standaloneRejects: GlassItem[] = (reportData.rejects || [])
@@ -485,55 +771,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
       if (rejectsFilterMode === "rejected_only" && !isRejected) return;
 
-      if (q) {
-        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
-        const matchBar = (item.barcode || "").toLowerCase().includes(q);
-        const matchQr = (item.qrId || "").toLowerCase().includes(q);
-        const matchPi = (item.piNumber || (item as any).orderNo || item.batchNo || "").toLowerCase().includes(q);
-        const matchPos = String(item.posNo || item.srNo || "").toLowerCase().includes(q);
-        const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
-        const matchType = (item.glassType || "").toLowerCase().includes(q);
-        const matchCust = cust.toLowerCase().includes(q);
-        const matchFinish = getItemFinish(item).toLowerCase().includes(q);
-        const matchOb = (item.obNo || "").toLowerCase().includes(q);
-        const matchSfo = (item.sfoNo || "").toLowerCase().includes(q);
-        const matchDim =
-          `${item.width}x${item.height}`.includes(q.replace(/\s+/g, "")) ||
-          `${item.width} x ${item.height}`.toLowerCase().includes(q) ||
-          String(item.width).includes(q) ||
-          String(item.height).includes(q);
-        const matchReason = (
-          rRecord?.reason ||
-          (rRecord as any)?.defectDetails ||
-          (rRecord as any)?.defectType ||
-          item.remarks ||
-          ""
-        )
-          .toLowerCase()
-          .includes(q);
-        const matchOp = (rRecord?.operator || "").toLowerCase().includes(q);
-        const matchStage = (rRecord?.stage || item.currentStage || "").toLowerCase().includes(q);
-        const matchStatus = (item.status || "").toLowerCase().includes(q);
-
-        if (
-          !matchSerial &&
-          !matchBar &&
-          !matchQr &&
-          !matchPi &&
-          !matchPos &&
-          !matchCode &&
-          !matchType &&
-          !matchCust &&
-          !matchFinish &&
-          !matchOb &&
-          !matchSfo &&
-          !matchDim &&
-          !matchReason &&
-          !matchOp &&
-          !matchStage &&
-          !matchStatus
-        )
-          return;
+      if (
+        !matchesItemFilters(item, cust, {
+          reason: rRecord?.reason || (rRecord as any)?.defectDetails || (rRecord as any)?.defectType || item.remarks,
+          defectivePane: rRecord?.defectivePane || rRecord?.defectiveSerialNumber || rRecord?.partnerSerialNumber,
+          operator: rRecord?.operator,
+          stage: rRecord?.stage || item.currentStage,
+        })
+      ) {
+        return;
       }
 
       if (selectedStage !== "all") {
@@ -575,7 +821,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
 
     return groups;
-  }, [reportData, searchTerm, selectedCustomer, selectedStage, selectedDateRange, rejectsFilterMode, rejectMap]);
+  }, [reportData, searchPi, searchPos, selectedCustomer, selectedStage, selectedDateRange, rejectsFilterMode, rejectMap]);
 
   // Total reject items count in filtered view
   const totalRejectsInFilter = useMemo(() => {
@@ -585,7 +831,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // 5. Reworks Log - Customer-Wise Grouping with All Stickers Visible
   const reworkCustomerGroups = useMemo(() => {
     if (!reportData) return [];
-    const q = searchTerm.toLowerCase().trim();
 
     const allItemSerials = new Set((reportData.items || []).map((i) => i.serialNumber));
     const standaloneReworks: GlassItem[] = (reportData.reworks || [])
@@ -612,7 +857,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         updatedAt: rw.date || new Date().toISOString(),
       }));
 
-    const combined = [...(reportData.items || []), ...standaloneReworks];
+    // Auto-include any standalone rejects as auto-remake entries if not in reworks yet
+    const standaloneRejects: GlassItem[] = (reportData.rejects || [])
+      .filter((rej) => !allItemSerials.has(rej.serialNumber) && !(reportData.reworks || []).some((rw) => rw.serialNumber === rej.serialNumber))
+      .map((r) => ({
+        id: `rw-rej-${r.serialNumber}`,
+        piId: r.piNumber,
+        piNumber: r.piNumber,
+        serialNumber: r.serialNumber,
+        barcode: r.barcode || r.serialNumber,
+        qrId: `QR-${r.serialNumber}`,
+        itemCode: r.serialNumber,
+        glassType: "Glass Unit",
+        width: 0,
+        height: 0,
+        qty: 1,
+        sqm: 0,
+        delLocation: "FACTORY",
+        processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+        currentStage: "Cutting",
+        completedStages: [],
+        status: "Reworking",
+        remarks: `[Auto-Remake after Rejection] ${r.reason}`,
+        updatedAt: r.date || new Date().toISOString(),
+      }));
+
+    const combined = [...(reportData.items || []), ...standaloneReworks, ...standaloneRejects];
     const map = new Map<string, Array<{ item: GlassItem; reworkRecord?: ReworkRecord; isReworking: boolean }>>();
 
     combined.forEach((item) => {
@@ -620,71 +890,49 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       if (selectedCustomer !== "all" && cust !== selectedCustomer) return;
 
       const rwRecord = reworkMap.get(item.serialNumber) || (item.id ? reworkMap.get(item.id) : undefined);
+      const rejRecord = rejectMap.get(item.serialNumber) || (item.id ? rejectMap.get(item.id) : undefined);
+
+      const effectiveRwRecord: ReworkRecord | undefined = rwRecord || (rejRecord ? {
+        id: `rew-${rejRecord.id || rejRecord.serialNumber}`,
+        serialNumber: rejRecord.serialNumber,
+        barcode: rejRecord.barcode,
+        piNumber: rejRecord.piNumber,
+        fromStage: rejRecord.stage || "Cutting",
+        targetStage: "Cutting",
+        reason: `[Auto-Remake after Rejection] ${rejRecord.reason}`,
+        defectivePane: rejRecord.defectivePane,
+        defectiveSerialNumber: rejRecord.defectiveSerialNumber,
+        partnerSerialNumber: rejRecord.partnerSerialNumber,
+        date: rejRecord.date || new Date().toISOString(),
+        operator: rejRecord.operator || "Operator",
+      } : undefined);
+
       const isReworking = (item.status as any) === "Reworking" || (item.status as any) === "Rework" || Boolean(rwRecord);
 
       if (reworksFilterMode === "reworks_only" && !isReworking) return;
 
-      if (q) {
-        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
-        const matchBar = (item.barcode || "").toLowerCase().includes(q);
-        const matchQr = (item.qrId || "").toLowerCase().includes(q);
-        const matchPi = (item.piNumber || (item as any).orderNo || item.batchNo || "").toLowerCase().includes(q);
-        const matchPos = String(item.posNo || item.srNo || "").toLowerCase().includes(q);
-        const matchCode = (item.itemCode || item.glassCode || "").toLowerCase().includes(q);
-        const matchType = (item.glassType || "").toLowerCase().includes(q);
-        const matchCust = cust.toLowerCase().includes(q);
-        const matchFinish = getItemFinish(item).toLowerCase().includes(q);
-        const matchOb = (item.obNo || "").toLowerCase().includes(q);
-        const matchSfo = (item.sfoNo || "").toLowerCase().includes(q);
-        const matchDim =
-          `${item.width}x${item.height}`.includes(q.replace(/\s+/g, "")) ||
-          `${item.width} x ${item.height}`.toLowerCase().includes(q) ||
-          String(item.width).includes(q) ||
-          String(item.height).includes(q);
-        const matchReason = (
-          rwRecord?.reason ||
-          (rwRecord as any)?.reworkDetails ||
-          item.remarks ||
-          ""
-        )
-          .toLowerCase()
-          .includes(q);
-        const matchOp = (rwRecord?.operator || "").toLowerCase().includes(q);
-        const matchStage = (rwRecord?.targetStage || rwRecord?.fromStage || item.currentStage || "").toLowerCase().includes(q);
-        const matchStatus = (item.status || "").toLowerCase().includes(q);
-
-        if (
-          !matchSerial &&
-          !matchBar &&
-          !matchQr &&
-          !matchPi &&
-          !matchPos &&
-          !matchCode &&
-          !matchType &&
-          !matchCust &&
-          !matchFinish &&
-          !matchOb &&
-          !matchSfo &&
-          !matchDim &&
-          !matchReason &&
-          !matchOp &&
-          !matchStage &&
-          !matchStatus
-        )
-          return;
+      if (
+        !matchesItemFilters(item, cust, {
+          reason: effectiveRwRecord?.reason || (effectiveRwRecord as any)?.reworkDetails || rejRecord?.reason || item.remarks,
+          defectivePane: effectiveRwRecord?.defectivePane || effectiveRwRecord?.defectiveSerialNumber || effectiveRwRecord?.partnerSerialNumber || rejRecord?.defectivePane,
+          operator: effectiveRwRecord?.operator || rejRecord?.operator,
+          stage: effectiveRwRecord?.targetStage || effectiveRwRecord?.fromStage || rejRecord?.stage || item.currentStage,
+        })
+      ) {
+        return;
       }
 
       if (selectedStage !== "all") {
-        const itemStage = rwRecord?.targetStage || rwRecord?.fromStage || item.currentStage;
+        const itemStage = effectiveRwRecord?.targetStage || effectiveRwRecord?.fromStage || rejRecord?.stage || item.currentStage;
         if (itemStage !== selectedStage) return;
       }
 
-      if (!isWithinDateRange(rwRecord?.date || item.updatedAt || item.createdAt)) return;
+      if (!isWithinDateRange(effectiveRwRecord?.date || rejRecord?.date || item.updatedAt || item.createdAt)) return;
 
       if (!map.has(cust)) {
         map.set(cust, []);
       }
-      map.get(cust)!.push({ item, reworkRecord: rwRecord, isReworking });
+      map.get(cust)!.push({ item, reworkRecord: effectiveRwRecord, isReworking });
     });
 
     const groups: Array<{
@@ -713,12 +961,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
 
     return groups;
-  }, [reportData, searchTerm, selectedCustomer, selectedStage, selectedDateRange, reworksFilterMode, reworkMap]);
+  }, [reportData, searchPi, searchPos, selectedCustomer, selectedStage, selectedDateRange, reworksFilterMode, reworkMap, rejectMap]);
 
   // Total rework items count in filtered view
   const totalReworksInFilter = useMemo(() => {
-    return (reportData?.reworks || []).length;
-  }, [reportData?.reworks]);
+    const reworkSerials = new Set<string>();
+    (reportData?.reworks || []).forEach((rw) => {
+      if (rw.serialNumber) reworkSerials.add(rw.serialNumber);
+    });
+    (reportData?.items || []).forEach((item) => {
+      if (item.status === "Reworking" || (item.status as any) === "Rework") {
+        if (item.serialNumber) reworkSerials.add(item.serialNumber);
+      }
+    });
+    return reworkSerials.size > 0 ? reworkSerials.size : (reportData?.reworks || []).length;
+  }, [reportData?.reworks, reportData?.items]);
 
   // Export current filtered view to Excel with styled layout
   const handleExportCurrentView = () => {
@@ -786,7 +1043,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           "SFO": item.sfoNo || "—",
           "Batch": item.batchNo || "—",
           "Barcode": item.barcode,
-          "Current Stage": item.currentStage,
+          "Current Stage": getDisplayStage(item, item.currentStage),
           "Status": item.status || "Pending",
           "Last Updated": formatDubaiDateTime(item.updatedAt || item.createdAt),
         };
@@ -865,9 +1122,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             "Glass Specification": item.glassType,
             "Dimensions (mm)": `${item.width} x ${item.height}`,
             "SQM": eff.sqm,
-            "Current Stage": item.currentStage,
+            "Current Stage": getDisplayStage(item, item.currentStage),
             "Quality Status": isRejected ? "REJECTED" : item.status || "In Production",
-            "Defect Stage": rejectRecord?.stage || (isRejected ? item.currentStage : "—"),
+            "Defect Stage": getDisplayStage(item, rejectRecord?.stage || (isRejected ? item.currentStage : "—")),
             "Defect Reason": rejectRecord?.reason || (isRejected ? item.remarks || "Defect Reported" : "None"),
             "Operator": rejectRecord?.operator || "Operator",
             "Date (GST)": formatDubaiDateTime(rejectRecord?.date || item.updatedAt || item.createdAt),
@@ -916,10 +1173,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             "Glass Specification": item.glassType,
             "Dimensions (mm)": `${item.width} x ${item.height}`,
             "SQM": eff.sqm,
-            "Current Stage": item.currentStage,
+            "Current Stage": getDisplayStage(item, item.currentStage),
             "Rework Status": isReworking ? "REWORKING" : item.status || "In Production",
-            "From Stage": reworkRecord?.fromStage || "—",
-            "Target Stage": reworkRecord?.targetStage || (isReworking ? item.currentStage : "—"),
+            "From Stage": getDisplayStage(item, reworkRecord?.fromStage || "—"),
+            "Target Stage": getDisplayStage(item, reworkRecord?.targetStage || (isReworking ? item.currentStage : "—")),
             "Rework Reason": reworkRecord?.reason || (isReworking ? item.remarks || "Reworking" : "None"),
             "Operator": reworkRecord?.operator || "Operator",
             "Date (GST)": formatDubaiDateTime(reworkRecord?.date || item.updatedAt || item.createdAt),
@@ -957,7 +1214,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const clearFilters = () => {
-    setSearchTerm("");
+    setSearchPi("");
+    setSearchPos("");
     setSelectedCustomer("all");
     setSelectedStage("all");
     setSelectedStatus("all");
@@ -967,7 +1225,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const hasActiveFilters =
-    searchTerm !== "" ||
+    searchPi !== "" ||
+    searchPos !== "" ||
     selectedCustomer !== "all" ||
     selectedStage !== "all" ||
     selectedStatus !== "all" ||
@@ -1061,15 +1320,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
 
       {/* ── LIVE KPI METRICS SUMMARY BANNER ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {/* Total Batches */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {/* 1. Total Batches */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
             <span>Total Batches</span>
             <Boxes className="w-4 h-4 text-purple-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-slate-900">{summaryMetrics.totalPis}</span>
+            <span className="text-xl font-black text-slate-900 font-mono">{summaryMetrics.totalPis}</span>
             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
               {summaryMetrics.completedPis} Done
             </span>
@@ -1079,67 +1338,48 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
 
-        {/* Total Glass Units */}
+        {/* 2. Total Rejected Glass Units */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Total Units</span>
-            <Layers className="w-4 h-4 text-blue-600" />
+            <span>Rejected Units</span>
+            <Layers className="w-4 h-4 text-red-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-slate-900">{summaryMetrics.totalItems}</span>
-            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
-              {summaryMetrics.completedItems} Finished
+            <span className="text-xl font-black text-red-600 font-mono">{summaryMetrics.rejectedUnits}</span>
+            <span className="text-[10px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
+              {summaryMetrics.defectRate.toFixed(1)}% Scrap
             </span>
           </div>
           <div className="mt-1.5 text-[10px] text-slate-500">
-            {summaryMetrics.inProgressItems} WIP Pieces
+            Total Defective Glass Units
           </div>
         </div>
 
-        {/* Total SQM */}
+        {/* 3. Total Rejected Glass Volume (SQM) */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Total Volume</span>
-            <TrendingUp className="w-4 h-4 text-emerald-600" />
+            <span>Rejected Volume</span>
+            <AlertOctagon className="w-4 h-4 text-rose-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-emerald-700 font-mono">
-              {formatAENumber(summaryMetrics.totalSqm, 1)}
+            <span className="text-xl font-black text-rose-700 font-mono">
+              {formatAENumber(summaryMetrics.rejectedSqm, 1)}
             </span>
-            <span className="text-[10px] font-extrabold text-emerald-800">SQM</span>
+            <span className="text-[10px] font-extrabold text-rose-800">SQM</span>
           </div>
           <div className="mt-1.5 text-[10px] text-slate-500">
-            {formatAENumber(summaryMetrics.completedSqm, 1)} SQM Dispatched
+            Scrapped Glass Area
           </div>
         </div>
 
-        {/* Progress % */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Completion Rate</span>
-            <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-indigo-700">
-              {summaryMetrics.completionRate.toFixed(1)}%
-            </span>
-          </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
-            <div
-              className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, Math.max(0, summaryMetrics.completionRate))}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Rejects & Defect Rate */}
+        {/* 4. Quality Rejects Log */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
             <span>Quality Rejects</span>
             <AlertCircle className="w-4 h-4 text-red-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-red-600">{summaryMetrics.totalRejects}</span>
+            <span className="text-xl font-black text-red-600 font-mono">{summaryMetrics.totalRejects}</span>
             <span className="text-[10px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
               {summaryMetrics.defectRate.toFixed(1)}% Rate
             </span>
@@ -1149,14 +1389,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
 
-        {/* Reworks & Rework Rate */}
+        {/* 5. Reworks Log */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
             <span>Reworks</span>
             <RotateCcw className="w-4 h-4 text-amber-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-amber-600">{summaryMetrics.totalReworks}</span>
+            <span className="text-xl font-black text-amber-600 font-mono">{summaryMetrics.totalReworks}</span>
             <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
               {summaryMetrics.reworkRate.toFixed(1)}% Rate
             </span>
@@ -1167,28 +1407,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
       </div>
 
-      {/* ── REAL-TIME SEARCH & FILTER BAR ── */}
+      {/* ── REAL-TIME FILTER BAR ── */}
       <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <Input
-              type="text"
-              placeholder="Search by PI #, Serial #, Barcode, Customer, Glass Code, Operator..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-8 h-9 text-xs font-medium border-slate-200 bg-slate-50/60 focus:bg-white"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2 text-slate-700 font-bold text-xs uppercase tracking-wider">
+          <Filter className="w-4 h-4 text-indigo-600" />
+          <span>Filters</span>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -1344,8 +1567,68 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-2xs">
         {/* 1. PROFORMA INVOICES TAB */}
         {activeTab === "pis" && (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
+          <div>
+            {/* Tab Search Toolbar */}
+            <div className="p-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-[320px] max-w-xl">
+                {/* 1. PI / Batch Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <FileText className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search PI # / Batch #..."
+                    value={searchPi}
+                    onChange={(e) => setSearchPi(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPi && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPi("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear PI search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Position # / Sticker Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search Position # (e.g. 1, 2)..."
+                    value={searchPos}
+                    onChange={(e) => setSearchPos(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPos && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPos("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear Pos search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3">Batch No</th>
@@ -1413,12 +1696,73 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </tbody>
             </table>
           </div>
+          </div>
         )}
 
         {/* 2. GLASS ITEMS TAB */}
         {activeTab === "items" && (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse min-w-[1350px]">
+          <div>
+            {/* Tab Search Toolbar */}
+            <div className="p-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-[320px] max-w-xl">
+                {/* 1. PI / Batch Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <FileText className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search PI # / Batch #..."
+                    value={searchPi}
+                    onChange={(e) => setSearchPi(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPi && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPi("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear PI search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Position # / Sticker Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search Position # (e.g. 1, 2)..."
+                    value={searchPos}
+                    onChange={(e) => setSearchPos(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPos && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPos("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear Pos search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border-collapse min-w-[1350px]">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3 text-center w-14">SL NO.</th>
@@ -1545,7 +1889,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         {/* 15. CURRENT STAGE */}
                         <td className="p-3 text-center whitespace-nowrap">
                           <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
-                            {i.currentStage}
+                            {getDisplayStage(i, i.currentStage)}
                           </span>
                         </td>
 
@@ -1570,7 +1914,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 <Tag className="w-3.5 h-3.5 text-slate-700" />
                               </button>
                             )}
-                            {onReject && i.status !== "Rejected" && (
+                            {onReject && i.status !== "Rejected" && i.status !== "Completed" && i.currentStage !== "Finished" && i.currentStage !== "Cutting" && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1583,7 +1927,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 <AlertCircle className="w-3.5 h-3.5 text-red-600" />
                               </button>
                             )}
-                            {onRework && (
+                            {onRework && i.currentStage !== "Cutting" && (i.status === "Rejected" || i.status === "Reworking" || Boolean(reworkMap.get(i.serialNumber)) || Boolean(rejectMap.get(i.serialNumber))) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1605,12 +1949,73 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </tbody>
             </table>
           </div>
+          </div>
         )}
 
         {/* 3. AUDIT HISTORY TAB */}
         {activeTab === "history" && (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left text-xs border-collapse">
+          <div>
+            {/* Tab Search Toolbar */}
+            <div className="p-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-[320px] max-w-xl">
+                {/* 1. PI / Batch Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <FileText className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search PI # / Batch #..."
+                    value={searchPi}
+                    onChange={(e) => setSearchPi(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPi && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPi("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear PI search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Position # / Sticker Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search Position # (e.g. 1, 2)..."
+                    value={searchPos}
+                    onChange={(e) => setSearchPos(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPos && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPos("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear Pos search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3">Timestamp (GST)</th>
@@ -1640,16 +2045,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         : h.status === "Rejected"
                         ? "Item Rejected"
                         : h.status === "Reworking"
-                        ? "Rework Initiated"
-                        : "Activity Logged");
+                        ? "Sent to Rework"
+                        : "Production Log");
 
                     const prev = h.prevStatus || "Pending";
-                    const next = h.newStatus || h.status || "Completed";
+                    const next = h.newStatus || h.status || "In Production";
                     const cust = getCustomerNameForItem(h.piNumber || h.itemOrBatch);
-                    const hasItemTarget = Boolean(h.serialNumber || (h.itemOrBatch && !h.itemOrBatch.includes("Batch")));
-                    const targetItem = hasItemTarget
-                      ? getGlassItemForActions(h.serialNumber || h.itemOrBatch, undefined, h.piNumber, h.stage as any, h.status as any, h.remarks)
-                      : null;
+                    const targetItem = (reportData?.items || []).find(
+                      (i) => (h.serialNumber && i.serialNumber === h.serialNumber) || (h.itemId && i.id === h.itemId)
+                    );
 
                     return (
                       <tr key={h.id} className="hover:bg-slate-50/80 transition-colors">
@@ -1657,40 +2061,27 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           {formatDubaiDateTime(h.timestamp)}
                         </td>
                         <td className="p-3 font-semibold text-slate-900 whitespace-nowrap">
-                          <div className="truncate max-w-[140px]" title={cust}>{cust}</div>
+                          <div className="truncate max-w-[150px]" title={cust}>{cust}</div>
                         </td>
-                        <td className="p-3 font-semibold text-slate-900 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                            <span>{h.user || h.operator || "Operator"}</span>
-                          </div>
+                        <td className="p-3 font-medium text-slate-700 whitespace-nowrap">
+                          {h.operator || h.user || "System"}
                         </td>
                         <td className="p-3 whitespace-nowrap">
                           <span
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold inline-flex items-center gap-1 ${
+                            className={`px-2 py-0.5 rounded text-[10.5px] font-bold border ${
                               actionName.includes("Reject")
-                                ? "bg-red-50 text-red-700 border border-red-200"
+                                ? "bg-red-50 text-red-700 border-red-200"
                                 : actionName.includes("Rework")
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : actionName.includes("Upload")
-                                ? "bg-purple-50 text-purple-700 border border-purple-200"
-                                : actionName.includes("Finished") || actionName.includes("Dispatched")
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
                             }`}
                           >
                             {actionName}
                           </span>
                         </td>
-                        <td className="p-3 font-mono whitespace-nowrap">
-                          {h.itemOrBatch ? (
-                            <span className="font-bold text-slate-900">{h.itemOrBatch}</span>
-                          ) : h.serialNumber ? (
-                            <span className="font-bold text-slate-900">{h.serialNumber}</span>
-                          ) : (
-                            <span className="font-bold text-purple-700">{formatBatchNumber(h.piNumber) || h.piNumber || "—"}</span>
-                          )}
-                          {h.piNumber && !h.itemOrBatch?.includes("Batch") && (
+                        <td className="p-3 font-mono font-medium text-slate-900 whitespace-nowrap">
+                          {h.itemOrBatch || h.serialNumber || h.piNumber || "—"}
+                          {h.piNumber && (
                             <span className="text-[10px] text-slate-400 block font-normal">
                               Batch: {formatBatchNumber(h.piNumber)}
                             </span>
@@ -1725,7 +2116,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                   <Tag className="w-3.5 h-3.5 text-slate-700" />
                                 </button>
                               )}
-                              {onReject && targetItem.status !== "Rejected" && (
+                              {onReject && targetItem.status !== "Rejected" && targetItem.status !== "Completed" && targetItem.currentStage !== "Finished" && targetItem.currentStage !== "Cutting" && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1738,7 +2129,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                   <AlertCircle className="w-3.5 h-3.5 text-red-600" />
                                 </button>
                               )}
-                              {onRework && (
+                              {onRework && targetItem.currentStage !== "Cutting" && (targetItem.status === "Rejected" || targetItem.status === "Reworking" || Boolean(reworkMap.get(targetItem.serialNumber)) || Boolean(rejectMap.get(targetItem.serialNumber))) && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1762,6 +2153,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
           </div>
         )}
 
@@ -1802,28 +2194,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
               </div>
 
-              {/* Dedicated Search Input & Button for Stickers / Details */}
-              <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              {/* Dual Search Toolbar: PI # and Pos # */}
+              <div className="flex items-center gap-2 flex-1 min-w-[320px] max-w-xl">
+                {/* 1. PI / Batch Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <FileText className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-500" />
                   <Input
                     type="text"
-                    placeholder="Search sticker #, PI #, batch #, pos #, glass type, defect, operator..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-slate-50/60 focus:bg-white rounded-lg"
+                    placeholder="Search PI # / Batch #..."
+                    value={searchPi}
+                    onChange={(e) => setSearchPi(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
                   />
-                  {searchTerm && (
+                  {searchPi && (
                     <button
                       type="button"
-                      onClick={() => setSearchTerm("")}
+                      onClick={() => setSearchPi("")}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
-                      title="Clear search"
+                      title="Clear PI search"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   )}
                 </div>
+
+                {/* 2. Position # / Sticker Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search Position # (e.g. 1, 2)..."
+                    value={searchPos}
+                    onChange={(e) => setSearchPos(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPos && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPos("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear Pos search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
                 <Button
                   type="button"
                   size="sm"
@@ -1911,217 +2327,328 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Customer Items Table */}
+                    {/* Customer Batch & Raw Sheet Cards */}
                     {isExpanded && (
-                      <div className="overflow-x-auto w-full">
-                        <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
-                          <thead>
-                            <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
-                              <th className="p-3 w-12 text-center">SL</th>
-                              <th className="p-3">SERIAL NUMBER</th>
-                              <th className="p-3">BATCH NO</th>
-                              <th className="p-3">PI NUMBER</th>
-                              <th className="p-3 text-center">POS NO</th>
-                              <th className="p-3 text-center">FINISH</th>
-                              <th className="p-3 text-center">WIDTH x HEIGHT</th>
-                              <th className="p-3 text-right">SQM</th>
-                              <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
-                              <th className="p-3 text-center">STAGE</th>
-                              <th className="p-3 text-center">QUALITY STATUS</th>
-                              <th className="p-3">DEFECT DETAILS</th>
-                              <th className="p-3">OPERATOR</th>
-                              <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 text-slate-800">
-                            {group.items.map(({ item, rejectRecord, isRejected }, idx) => {
-                              const eff = getDguEffectiveQtyAndSqm(item);
-                              const finish = getItemFinish(item);
-                              const actionItem = getGlassItemForActions(
-                                item.serialNumber,
-                                item.barcode,
-                                item.piNumber,
-                                rejectRecord?.stage || item.currentStage,
-                                isRejected ? "Rejected" : (item.status as any) || "Pending",
-                                rejectRecord?.reason || item.remarks
-                              );
+                      <div className="p-3 bg-slate-50/50 space-y-3">
+                        {groupItemsByBatchAndSheet(group.items).map((sheetGroup, sheetIdx) => {
+                          const cardKey = `rej_${group.customerName}_${sheetGroup.key}`;
+                          const isSheetExpanded = isBatchCardExpanded(cardKey);
 
-                              return (
-                                <tr
-                                  key={item.id || item.serialNumber}
-                                  className={`transition-colors ${
-                                    isRejected
-                                      ? "bg-red-50/40 hover:bg-red-50/70"
-                                      : "hover:bg-slate-50/80"
-                                  }`}
-                                >
-                                  {/* SL */}
-                                  <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
-                                    {idx + 1}
-                                  </td>
-
-                                  {/* Serial Number & Barcode */}
-                                  <td className="p-3 font-mono whitespace-nowrap">
-                                    <div className={`font-bold ${isRejected ? "text-red-700" : "text-blue-700"}`}>
-                                      {item.serialNumber}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-medium">
-                                      {item.barcode}
-                                    </div>
-                                  </td>
-
-                                  {/* Batch No */}
-                                  <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                                    {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
-                                  </td>
-
-                                  {/* PI Number */}
-                                  <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                    {item.orderNo || item.piNumber || item.sfoNo || "—"}
-                                  </td>
-
-                                  {/* POS NO */}
-                                  <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
-                                    {item.posNo || "—"}
-                                  </td>
-
-                                  {/* Finish */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    <span
-                                      className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
-                                        finish === "Colour"
-                                          ? "bg-purple-100 text-purple-800 border-purple-200"
-                                          : "bg-cyan-100 text-cyan-800 border-cyan-200"
-                                      }`}
-                                    >
-                                      {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
-                                    </span>
-                                  </td>
-
-                                  {/* Dimensions */}
-                                  <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
-                                    {item.width} × {item.height} mm
-                                  </td>
-
-                                  {/* SQM */}
-                                  <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
-                                    {formatAENumber(eff.sqm, 2)} m²
-                                  </td>
-
-                                  {/* Glass Type / Spec */}
-                                  <td className="p-3 text-slate-700">
-                                    <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
-                                      {item.glassType}
-                                    </div>
-                                    {item.glassCode && (
-                                      <div className="text-[10px] font-mono text-slate-400">
-                                        Code: {item.glassCode}
-                                      </div>
-                                    )}
-                                  </td>
-
-                                  {/* Stage */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
-                                      {rejectRecord?.stage || item.currentStage}
-                                    </span>
-                                  </td>
-
-                                  {/* Quality Status */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    {isRejected ? (
-                                      <span className="px-2.5 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
-                                        <AlertCircle className="w-3 h-3 text-red-600" />
-                                        REJECTED
+                          return (
+                            <div
+                              key={sheetGroup.key}
+                              className="bg-white rounded-xl border border-purple-100/90 shadow-2xs overflow-hidden transition-all"
+                            >
+                              {/* Raw Sheet Header */}
+                              <div
+                                onClick={() => toggleBatchCardExpanded(cardKey)}
+                                className="p-3 bg-gradient-to-r from-purple-50/70 via-white to-slate-50/60 hover:from-purple-100/70 border-b border-purple-100/80 flex items-center justify-between cursor-pointer select-none transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                  <div className="w-7 h-7 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black text-xs shadow-2xs shrink-0">
+                                    {sheetGroup.rackNo || (sheetIdx + 1)}
+                                  </div>
+                                  <div>
+                                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 flex items-center gap-2 flex-wrap">
+                                      <span>{sheetGroup.sheetTitle}</span>
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                                        {sheetGroup.totalPieces} {sheetGroup.totalPieces === 1 ? "Piece" : "Pieces"} • {formatAENumber(sheetGroup.totalSqm, 2)} m²
                                       </span>
-                                    ) : (
-                                      <StatusBadge status={item.status || "In Production"} />
-                                    )}
-                                  </td>
-
-                                  {/* Defect Details */}
-                                  <td className="p-3">
-                                    {isRejected ? (
-                                      <div>
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                          {rejectRecord?.defectivePane && (
-                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${
-                                              rejectRecord.defectivePane === "OP"
-                                                ? "bg-purple-100 text-purple-800 border-purple-200"
-                                                : rejectRecord.defectivePane === "IP"
-                                                ? "bg-cyan-100 text-cyan-800 border-cyan-200"
-                                                : "bg-red-100 text-red-800 border-red-200"
-                                            }`}>
-                                              {rejectRecord.defectivePane === "OP"
-                                                ? "OP • Outer Pane"
-                                                : rejectRecord.defectivePane === "IP"
-                                                ? "IP • Inner Pane"
-                                                : rejectRecord.defectivePane === "ASSEMBLY"
-                                                ? "Assembly Defect"
-                                                : rejectRecord.defectivePane}
-                                            </span>
-                                          )}
-                                          <span className="text-red-700 font-extrabold text-xs">
-                                            {rejectRecord?.reason || item.remarks || "Defect Scrap"}
-                                          </span>
-                                        </div>
-                                        {rejectRecord?.date && (
-                                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                                            {formatDubaiDateTime(rejectRecord.date)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <span className="text-slate-400 font-medium text-xs">No Defects</span>
-                                    )}
-                                  </td>
-
-                                  {/* Operator */}
-                                  <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
-                                    {rejectRecord?.operator || "Operator"}
-                                  </td>
-
-                                  {/* Actions: Sticker, Reject, Rework */}
-                                  <td className="p-3 text-right whitespace-nowrap">
-                                    <div className="flex items-center justify-end gap-1.5">
-                                      {/* Sticker Button */}
-                                      {onPrintSticker && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onPrintSticker(actionItem);
-                                          }}
-                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
-                                          title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
-                                        >
-                                          <Tag className="w-3.5 h-3.5 text-slate-700" />
-                                          <span>Sticker</span>
-                                        </button>
-                                      )}
-
-                                      {/* Reject Button - Only visible if item is NOT already rejected */}
-                                      {!isRejected && item.status !== "Rejected" && onReject && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onReject(actionItem);
-                                          }}
-                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:border-red-300 transition-colors shadow-2xs cursor-pointer"
-                                          title={`Report Defect / Reject Glass #${item.serialNumber}`}
-                                        >
-                                          <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                                          <span>Reject</span>
-                                        </button>
+                                      <span
+                                        className={`text-[9.5px] font-black px-1.5 py-0.5 rounded border ${
+                                          sheetGroup.finish === "Colour"
+                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                            : sheetGroup.finish === "Clear"
+                                            ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                            : "bg-slate-100 text-slate-800 border-slate-200"
+                                        }`}
+                                      >
+                                        {sheetGroup.finish === "Colour" ? "Colour" : sheetGroup.finish === "Clear" ? "Clear" : "Mixed"}
+                                      </span>
+                                      {sheetGroup.defectCount > 0 && (
+                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-300 inline-flex items-center gap-1 shadow-2xs">
+                                          <AlertCircle className="w-3 h-3 text-red-600" />
+                                          {sheetGroup.defectCount} {sheetGroup.defectCount === 1 ? "Reject" : "Rejects"}
+                                        </span>
                                       )}
                                     </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                                    <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+                                      {sheetGroup.piNumber && (
+                                        <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-bold">
+                                          PI: {formatBatchNumber(sheetGroup.piNumber)}
+                                        </span>
+                                      )}
+                                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
+                                        Batch: {sheetGroup.batchNo || "—"}
+                                      </span>
+                                      {sheetGroup.sfoList.length > 0 && (
+                                        <span>
+                                          SFO: <strong className="text-purple-700">{sheetGroup.sfoList.join(", ")}</strong>
+                                        </span>
+                                      )}
+                                      {sheetGroup.obList.length > 0 && <span>(OB: {sheetGroup.obList.join(", ")})</span>}
+                                      <span className="text-slate-300">•</span>
+                                      <span className="truncate max-w-[280px] sm:max-w-md text-slate-700 font-sans font-medium">
+                                        {sheetGroup.glassType || "Standard Float"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-wrap ml-auto">
+                                  <div className="flex items-center gap-1 text-xs font-bold text-purple-700 bg-white border border-purple-200 px-2.5 py-1 rounded-xl shadow-2xs">
+                                    <span>{isSheetExpanded ? "Hide Data" : `Show All Data (${sheetGroup.totalPieces})`}</span>
+                                    <ChevronDown
+                                      className={`w-3.5 h-3.5 text-purple-600 transition-transform duration-200 ${
+                                        isSheetExpanded ? "rotate-180" : ""
+                                      }`}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Sheet Table */}
+                              {isSheetExpanded && (
+                                <div className="overflow-x-auto w-full">
+                                  <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+                                    <thead>
+                                      <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
+                                        <th className="p-3 w-12 text-center">SL</th>
+                                        <th className="p-3">SERIAL NUMBER</th>
+                                        <th className="p-3">BATCH NO</th>
+                                        <th className="p-3">PI NUMBER</th>
+                                        <th className="p-3 text-center">POS NO</th>
+                                        <th className="p-3 text-center">FINISH</th>
+                                        <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                                        <th className="p-3 text-right">SQM</th>
+                                        <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
+                                        <th className="p-3 text-center">STAGE</th>
+                                        <th className="p-3 text-center">QUALITY STATUS</th>
+                                        <th className="p-3 min-w-[260px]">DEFECT DETAILS</th>
+                                        <th className="p-3">OPERATOR</th>
+                                        <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 text-slate-800">
+                                      {sheetGroup.items.map(({ item, rejectRecord, isRejected }, idx) => {
+                                        const eff = getDguEffectiveQtyAndSqm(item);
+                                        const finish = getItemFinish(item);
+                                        const actionItem = getGlassItemForActions(
+                                          item.serialNumber,
+                                          item.barcode,
+                                          item.piNumber,
+                                          rejectRecord?.stage || item.currentStage,
+                                          isRejected ? "Rejected" : (item.status as any) || "Pending",
+                                          rejectRecord?.reason || item.remarks
+                                        );
+
+                                        return (
+                                          <tr
+                                            key={item.id || item.serialNumber}
+                                            className={`transition-colors ${
+                                              isRejected
+                                                ? "bg-red-50/40 hover:bg-red-50/70"
+                                                : "hover:bg-slate-50/80"
+                                            }`}
+                                          >
+                                            {/* SL */}
+                                            <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
+                                              {idx + 1}
+                                            </td>
+
+                                            {/* Serial Number & Barcode */}
+                                            <td className="p-3 font-mono whitespace-nowrap">
+                                              <div className={`font-bold ${isRejected ? "text-red-700" : "text-blue-700"}`}>
+                                                {item.serialNumber}
+                                              </div>
+                                              <div className="text-[10px] text-slate-400 font-medium">
+                                                {item.barcode}
+                                              </div>
+                                            </td>
+
+                                            {/* Batch No */}
+                                            <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                              {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                            </td>
+
+                                            {/* PI Number */}
+                                            <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                                              {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                            </td>
+
+                                            {/* POS NO */}
+                                            <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
+                                              {item.posNo || "—"}
+                                            </td>
+
+                                            {/* Finish */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              <span
+                                                className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
+                                                  finish === "Colour"
+                                                    ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                    : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                }`}
+                                              >
+                                                {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
+                                              </span>
+                                            </td>
+
+                                            {/* Dimensions */}
+                                            <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                                              {item.width} × {item.height} mm
+                                            </td>
+
+                                            {/* SQM */}
+                                            <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
+                                              {formatAENumber(eff.sqm, 2)} m²
+                                            </td>
+
+                                            {/* Glass Type / Spec */}
+                                            <td className="p-3 text-slate-700">
+                                              <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
+                                                {item.glassType}
+                                              </div>
+                                              {item.glassCode && (
+                                                <div className="text-[10px] font-mono text-slate-400">
+                                                  Code: {item.glassCode}
+                                                </div>
+                                              )}
+                                            </td>
+
+                                            {/* Stage */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
+                                                {getDisplayStage(item, rejectRecord?.stage || item.currentStage)}
+                                              </span>
+                                            </td>
+
+                                            {/* Quality Status */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              {isRejected ? (
+                                                <span className="px-2.5 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
+                                                  <AlertCircle className="w-3 h-3 text-red-600" />
+                                                  REJECTED
+                                                </span>
+                                              ) : (
+                                                <StatusBadge status={item.status || "In Production"} />
+                                              )}
+                                            </td>
+
+                                            {/* Defect Details */}
+                                            <td className="p-3">
+                                              {isRejected ? (
+                                                <div className="space-y-1 min-w-[240px]">
+                                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                                    {rejectRecord?.defectStation && (
+                                                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 whitespace-nowrap inline-flex items-center gap-1 shadow-2xs">
+                                                        <span>🏭</span>
+                                                        <span>{rejectRecord.defectStation}</span>
+                                                      </span>
+                                                    )}
+                                                    {rejectRecord?.defectivePane && (
+                                                      <span
+                                                        className={`px-2 py-0.5 rounded text-[10px] font-black border whitespace-nowrap shadow-2xs ${
+                                                          rejectRecord.defectivePane === "OP"
+                                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                            : rejectRecord.defectivePane === "IP_PLY1"
+                                                            ? "bg-cyan-100 text-cyan-900 border-cyan-300"
+                                                            : rejectRecord.defectivePane === "IP_PLY2"
+                                                            ? "bg-teal-100 text-teal-900 border-teal-300"
+                                                            : rejectRecord.defectivePane === "IP"
+                                                            ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                            : "bg-red-100 text-red-800 border-red-200"
+                                                        }`}
+                                                      >
+                                                        {rejectRecord.defectivePane === "OP"
+                                                          ? "OP • Outer Pane"
+                                                          : rejectRecord.defectivePane === "IP_PLY1"
+                                                          ? "IP • Lami Ply 1"
+                                                          : rejectRecord.defectivePane === "IP_PLY2"
+                                                          ? "IP • Lami Ply 2"
+                                                          : rejectRecord.defectivePane === "IP"
+                                                          ? "IP • Inner Pane"
+                                                          : rejectRecord.defectivePane === "ASSEMBLY"
+                                                          ? "Assembly Defect"
+                                                          : rejectRecord.defectivePane}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <div className="text-red-700 font-extrabold text-xs leading-snug">
+                                                    {(rejectRecord?.reason || item.remarks || "Defect Scrap").replace(
+                                                      /^\[Station:[^\]]+\]\s*/i,
+                                                      ""
+                                                    )}
+                                                  </div>
+                                                  {rejectRecord?.date && (
+                                                    <div className="text-[10px] font-mono text-slate-400">
+                                                      {formatDubaiDateTime(rejectRecord.date)}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                <span className="text-slate-400 font-medium text-xs whitespace-nowrap">
+                                                  No Defects
+                                                </span>
+                                              )}
+                                            </td>
+
+                                            {/* Operator */}
+                                            <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
+                                              {rejectRecord?.operator || "Operator"}
+                                            </td>
+
+                                            {/* Actions: Sticker, Reject, Rework */}
+                                            <td className="p-3 text-right whitespace-nowrap">
+                                              <div className="flex items-center justify-end gap-1.5">
+                                                {/* Sticker Button */}
+                                                {onPrintSticker && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      onPrintSticker(actionItem);
+                                                    }}
+                                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
+                                                    title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
+                                                  >
+                                                    <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                                    <span>Sticker</span>
+                                                  </button>
+                                                )}
+
+                                                {/* Reject Button - Only visible if item is post-Cutting, NOT already rejected, and NOT completed at Finished stage */}
+                                                {!isRejected &&
+                                                  item.status !== "Rejected" &&
+                                                  item.status !== "Completed" &&
+                                                  item.currentStage !== "Finished" &&
+                                                  item.currentStage !== "Cutting" &&
+                                                  onReject && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onReject(actionItem);
+                                                      }}
+                                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:border-red-300 transition-colors shadow-2xs cursor-pointer"
+                                                      title={`Report Defect / Reject Glass #${item.serialNumber}`}
+                                                    >
+                                                      <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                                      <span>Reject</span>
+                                                    </button>
+                                                  )}
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2151,7 +2678,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    All Glass Stickers ({summaryMetrics.totalItems})
+                    All Glass Stickers
                   </button>
                   <button
                     type="button"
@@ -2168,28 +2695,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
               </div>
 
-              {/* Dedicated Search Input & Button for Stickers / Details */}
-              <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              {/* Dual Search Toolbar: PI # and Pos # */}
+              <div className="flex items-center gap-2 flex-1 min-w-[320px] max-w-xl">
+                {/* 1. PI / Batch Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <FileText className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-blue-500" />
                   <Input
                     type="text"
-                    placeholder="Search sticker #, PI #, batch #, pos #, glass type, rework details, operator..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-slate-50/60 focus:bg-white rounded-lg"
+                    placeholder="Search PI # / Batch #..."
+                    value={searchPi}
+                    onChange={(e) => setSearchPi(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
                   />
-                  {searchTerm && (
+                  {searchPi && (
                     <button
                       type="button"
-                      onClick={() => setSearchTerm("")}
+                      onClick={() => setSearchPi("")}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
-                      title="Clear search"
+                      title="Clear PI search"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   )}
                 </div>
+
+                {/* 2. Position # / Sticker Search Input */}
+                <div className="relative flex-1 min-w-[140px]">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-500" />
+                  <Input
+                    type="text"
+                    placeholder="Search Position # (e.g. 1, 2)..."
+                    value={searchPos}
+                    onChange={(e) => setSearchPos(e.target.value)}
+                    className="pl-8 pr-7 h-8 text-xs font-medium border-slate-200 bg-white focus:bg-white rounded-lg"
+                  />
+                  {searchPos && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchPos("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                      title="Clear Pos search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
                 <Button
                   type="button"
                   size="sm"
@@ -2277,227 +2828,341 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Customer Items Table */}
+                    {/* Customer Batch & Raw Sheet Cards */}
                     {isExpanded && (
-                      <div className="overflow-x-auto w-full">
-                        <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
-                          <thead>
-                            <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
-                              <th className="p-3 w-12 text-center">SL</th>
-                              <th className="p-3">SERIAL NUMBER</th>
-                              <th className="p-3">BATCH NO</th>
-                              <th className="p-3">PI NUMBER</th>
-                              <th className="p-3 text-center">POS NO</th>
-                              <th className="p-3 text-center">FINISH</th>
-                              <th className="p-3 text-center">WIDTH x HEIGHT</th>
-                              <th className="p-3 text-right">SQM</th>
-                              <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
-                              <th className="p-3 text-center">REWORK ROUTE</th>
-                              <th className="p-3 text-center">STATUS</th>
-                              <th className="p-3">REWORK DETAILS</th>
-                              <th className="p-3">OPERATOR</th>
-                              <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 text-slate-800">
-                            {group.items.map(({ item, reworkRecord, isReworking }, idx) => {
-                              const eff = getDguEffectiveQtyAndSqm(item);
-                              const finish = getItemFinish(item);
-                              const actionItem = getGlassItemForActions(
-                                item.serialNumber,
-                                item.barcode,
-                                item.piNumber,
-                                reworkRecord?.targetStage || item.currentStage,
-                                isReworking ? "Reworking" : (item.status as any) || "Pending",
-                                reworkRecord?.reason || item.remarks
-                              );
+                      <div className="p-3 bg-slate-50/50 space-y-3">
+                        {groupItemsByBatchAndSheet(group.items).map((sheetGroup, sheetIdx) => {
+                          const cardKey = `rw_${group.customerName}_${sheetGroup.key}`;
+                          const isSheetExpanded = isBatchCardExpanded(cardKey);
 
-                              return (
-                                <tr
-                                  key={item.id || item.serialNumber}
-                                  className={`transition-colors ${
-                                    isReworking
-                                      ? "bg-amber-50/40 hover:bg-amber-50/70"
-                                      : "hover:bg-slate-50/80"
-                                  }`}
-                                >
-                                  {/* SL */}
-                                  <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
-                                    {idx + 1}
-                                  </td>
-
-                                  {/* Serial Number & Barcode */}
-                                  <td className="p-3 font-mono whitespace-nowrap">
-                                    <div className={`font-bold ${isReworking ? "text-amber-700" : "text-blue-700"}`}>
-                                      {item.serialNumber}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-medium">
-                                      {item.barcode}
-                                    </div>
-                                  </td>
-
-                                  {/* Batch No */}
-                                  <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                                    {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
-                                  </td>
-
-                                  {/* PI Number */}
-                                  <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                    {item.orderNo || item.piNumber || item.sfoNo || "—"}
-                                  </td>
-
-                                  {/* POS NO */}
-                                  <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
-                                    {item.posNo || "—"}
-                                  </td>
-
-                                  {/* Finish */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    <span
-                                      className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
-                                        finish === "Colour"
-                                          ? "bg-purple-100 text-purple-800 border-purple-200"
-                                          : "bg-cyan-100 text-cyan-800 border-cyan-200"
-                                      }`}
-                                    >
-                                      {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
-                                    </span>
-                                  </td>
-
-                                  {/* Dimensions */}
-                                  <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
-                                    {item.width} × {item.height} mm
-                                  </td>
-
-                                  {/* SQM */}
-                                  <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
-                                    {formatAENumber(eff.sqm, 2)} m²
-                                  </td>
-
-                                  {/* Glass Type / Spec */}
-                                  <td className="p-3 text-slate-700">
-                                    <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
-                                      {item.glassType}
-                                    </div>
-                                    {item.glassCode && (
-                                      <div className="text-[10px] font-mono text-slate-400">
-                                        Code: {item.glassCode}
-                                      </div>
-                                    )}
-                                  </td>
-
-                                  {/* Rework Route */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    {isReworking && reworkRecord ? (
-                                      <div className="inline-flex items-center gap-1 text-[10px] font-bold">
-                                        <span className="text-slate-600">{reworkRecord.fromStage}</span>
-                                        <span className="text-slate-400">→</span>
-                                        <span className="px-1.5 py-0.5 rounded bg-amber-100 border border-amber-200 text-amber-800">
-                                          {reworkRecord.targetStage}
+                          return (
+                            <div
+                              key={sheetGroup.key}
+                              className="bg-white rounded-xl border border-amber-100/90 shadow-2xs overflow-hidden transition-all"
+                            >
+                              {/* Raw Sheet Header */}
+                              <div
+                                onClick={() => toggleBatchCardExpanded(cardKey)}
+                                className="p-3 bg-gradient-to-r from-amber-50/70 via-white to-slate-50/60 hover:from-amber-100/70 border-b border-amber-100/80 flex items-center justify-between cursor-pointer select-none transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                  <div className="w-7 h-7 rounded-xl bg-amber-600 text-white flex items-center justify-center font-black text-xs shadow-2xs shrink-0">
+                                    {sheetGroup.rackNo || (sheetIdx + 1)}
+                                  </div>
+                                  <div>
+                                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 flex items-center gap-2 flex-wrap">
+                                      <span>{sheetGroup.sheetTitle}</span>
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                                        {sheetGroup.totalPieces} {sheetGroup.totalPieces === 1 ? "Piece" : "Pieces"} • {formatAENumber(sheetGroup.totalSqm, 2)} m²
+                                      </span>
+                                      <span
+                                        className={`text-[9.5px] font-black px-1.5 py-0.5 rounded border ${
+                                          sheetGroup.finish === "Colour"
+                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                            : sheetGroup.finish === "Clear"
+                                            ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                            : "bg-slate-100 text-slate-800 border-slate-200"
+                                        }`}
+                                      >
+                                        {sheetGroup.finish === "Colour" ? "Colour" : sheetGroup.finish === "Clear" ? "Clear" : "Mixed"}
+                                      </span>
+                                      {sheetGroup.defectCount > 0 && (
+                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1 shadow-2xs">
+                                          <RotateCcw className="w-3 h-3 text-amber-700" />
+                                          {sheetGroup.defectCount} {sheetGroup.defectCount === 1 ? "Rework" : "Reworks"}
                                         </span>
-                                      </div>
-                                    ) : (
-                                      <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
-                                        {item.currentStage}
-                                      </span>
-                                    )}
-                                  </td>
-
-                                  {/* Status */}
-                                  <td className="p-3 text-center whitespace-nowrap">
-                                    {isReworking ? (
-                                      <span className="px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
-                                        <RotateCcw className="w-3 h-3 text-amber-700" />
-                                        REWORKING
-                                      </span>
-                                    ) : (
-                                      <StatusBadge status={item.status || "In Production"} />
-                                    )}
-                                  </td>
-
-                                  {/* Rework Details */}
-                                  <td className="p-3">
-                                    {isReworking ? (
-                                      <div>
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                          {reworkRecord?.defectivePane && (
-                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${
-                                              reworkRecord.defectivePane === "OP"
-                                                ? "bg-purple-100 text-purple-800 border-purple-200"
-                                                : reworkRecord.defectivePane === "IP"
-                                                ? "bg-cyan-100 text-cyan-800 border-cyan-200"
-                                                : "bg-amber-100 text-amber-800 border-amber-200"
-                                            }`}>
-                                              {reworkRecord.defectivePane === "OP"
-                                                ? "OP • Outer Pane"
-                                                : reworkRecord.defectivePane === "IP"
-                                                ? "IP • Inner Pane"
-                                                : reworkRecord.defectivePane === "ASSEMBLY"
-                                                ? "Assembly Defect"
-                                                : reworkRecord.defectivePane}
-                                            </span>
-                                          )}
-                                          <span className="text-amber-800 font-extrabold text-xs">
-                                            {reworkRecord?.reason || item.remarks || "Workstation Reprocess"}
-                                          </span>
-                                        </div>
-                                        {reworkRecord?.date && (
-                                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                                            {formatDubaiDateTime(reworkRecord.date)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <span className="text-slate-400 font-medium text-xs">Standard Route</span>
-                                    )}
-                                  </td>
-
-                                  {/* Operator */}
-                                  <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
-                                    {reworkRecord?.operator || "Operator"}
-                                  </td>
-
-                                  {/* Actions: Sticker, Reject, Rework */}
-                                  <td className="p-3 text-right whitespace-nowrap">
-                                    <div className="flex items-center justify-end gap-1.5">
-                                      {/* Sticker Button */}
-                                      {onPrintSticker && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onPrintSticker(actionItem);
-                                          }}
-                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
-                                          title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
-                                        >
-                                          <Tag className="w-3.5 h-3.5 text-slate-700" />
-                                          <span>Sticker</span>
-                                        </button>
-                                      )}
-
-                                      {/* Rework Button */}
-                                      {onRework && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onRework(actionItem);
-                                          }}
-                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 hover:border-amber-400 transition-colors shadow-2xs cursor-pointer"
-                                          title={`Re-route Glass #${item.serialNumber} to Rework`}
-                                        >
-                                          <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-                                          <span>Rework</span>
-                                        </button>
                                       )}
                                     </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                                    <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+                                      {sheetGroup.piNumber && (
+                                        <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                                          PI: {formatBatchNumber(sheetGroup.piNumber)}
+                                        </span>
+                                      )}
+                                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
+                                        Batch: {sheetGroup.batchNo || "—"}
+                                      </span>
+                                      {sheetGroup.sfoList.length > 0 && (
+                                        <span>
+                                          SFO: <strong className="text-amber-800">{sheetGroup.sfoList.join(", ")}</strong>
+                                        </span>
+                                      )}
+                                      {sheetGroup.obList.length > 0 && <span>(OB: {sheetGroup.obList.join(", ")})</span>}
+                                      <span className="text-slate-300">•</span>
+                                      <span className="truncate max-w-[280px] sm:max-w-md text-slate-700 font-sans font-medium">
+                                        {sheetGroup.glassType || "Standard Float"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-wrap ml-auto">
+                                  <div className="flex items-center gap-1 text-xs font-bold text-amber-800 bg-white border border-amber-200 px-2.5 py-1 rounded-xl shadow-2xs">
+                                    <span>{isSheetExpanded ? "Hide Data" : `Show All Data (${sheetGroup.totalPieces})`}</span>
+                                    <ChevronDown
+                                      className={`w-3.5 h-3.5 text-amber-700 transition-transform duration-200 ${
+                                        isSheetExpanded ? "rotate-180" : ""
+                                      }`}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Sheet Table */}
+                              {isSheetExpanded && (
+                                <div className="overflow-x-auto w-full">
+                                  <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+                                    <thead>
+                                      <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
+                                        <th className="p-3 w-12 text-center">SL</th>
+                                        <th className="p-3">SERIAL NUMBER</th>
+                                        <th className="p-3">BATCH NO</th>
+                                        <th className="p-3">PI NUMBER</th>
+                                        <th className="p-3 text-center">POS NO</th>
+                                        <th className="p-3 text-center">FINISH</th>
+                                        <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                                        <th className="p-3 text-right">SQM</th>
+                                        <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
+                                        <th className="p-3 text-center">REWORK ROUTE</th>
+                                        <th className="p-3 text-center">STATUS</th>
+                                        <th className="p-3 min-w-[260px]">REWORK DETAILS</th>
+                                        <th className="p-3">OPERATOR</th>
+                                        <th className="p-3 text-right min-w-[210px]">ACTIONS</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 text-slate-800">
+                                      {sheetGroup.items.map(({ item, reworkRecord, isReworking }, idx) => {
+                                        const eff = getDguEffectiveQtyAndSqm(item);
+                                        const finish = getItemFinish(item);
+                                        const isItemRejectedOrReworking =
+                                          isReworking ||
+                                          item.status === "Rejected" ||
+                                          item.status === "Reworking" ||
+                                          Boolean(reworkRecord) ||
+                                          Boolean(rejectMap.get(item.serialNumber));
+                                        const actionItem = getGlassItemForActions(
+                                          item.serialNumber,
+                                          item.barcode,
+                                          item.piNumber,
+                                          reworkRecord?.targetStage || item.currentStage,
+                                          isReworking ? "Reworking" : (item.status as any) || "Pending",
+                                          reworkRecord?.reason || item.remarks
+                                        );
+
+                                        return (
+                                          <tr
+                                            key={item.id || item.serialNumber}
+                                            className={`transition-colors ${
+                                              isReworking
+                                                ? "bg-amber-50/40 hover:bg-amber-50/70"
+                                                : "hover:bg-slate-50/80"
+                                            }`}
+                                          >
+                                            {/* SL */}
+                                            <td className="p-3 font-mono font-bold text-slate-500 text-center whitespace-nowrap">
+                                              {idx + 1}
+                                            </td>
+
+                                            {/* Serial Number & Barcode */}
+                                            <td className="p-3 font-mono whitespace-nowrap">
+                                              <div className={`font-bold ${isReworking ? "text-amber-700" : "text-blue-700"}`}>
+                                                {item.serialNumber}
+                                              </div>
+                                              <div className="text-[10px] text-slate-400 font-medium">
+                                                {item.barcode}
+                                              </div>
+                                            </td>
+
+                                            {/* Batch No */}
+                                            <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                              {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                            </td>
+
+                                            {/* PI Number */}
+                                            <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
+                                              {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                            </td>
+
+                                            {/* POS NO */}
+                                            <td className="p-3 font-mono font-black text-slate-800 text-center whitespace-nowrap">
+                                              {item.posNo || "—"}
+                                            </td>
+
+                                            {/* Finish */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              <span
+                                                className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[10px] font-black border ${
+                                                  finish === "Colour"
+                                                    ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                    : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                }`}
+                                              >
+                                                {finish === "Colour" ? "OP • Colour" : "IP • Clear"}
+                                              </span>
+                                            </td>
+
+                                            {/* Dimensions */}
+                                            <td className="p-3 font-mono font-bold text-slate-900 text-center whitespace-nowrap">
+                                              {item.width} × {item.height} mm
+                                            </td>
+
+                                            {/* SQM */}
+                                            <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
+                                              {formatAENumber(eff.sqm, 2)} m²
+                                            </td>
+
+                                            {/* Glass Type / Spec */}
+                                            <td className="p-3 text-slate-700">
+                                              <div className="font-semibold text-slate-900 line-clamp-1" title={item.glassType}>
+                                                {item.glassType}
+                                              </div>
+                                              {item.glassCode && (
+                                                <div className="text-[10px] font-mono text-slate-400">
+                                                  Code: {item.glassCode}
+                                                </div>
+                                              )}
+                                            </td>
+
+                                            {/* Rework Route */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              {isReworking && reworkRecord ? (
+                                                <div className="inline-flex items-center gap-1 text-[10px] font-bold">
+                                                  <span className="text-slate-600">
+                                                    {getDisplayStage(item, reworkRecord.fromStage)}
+                                                  </span>
+                                                  <span className="text-slate-400">→</span>
+                                                  <span className="px-1.5 py-0.5 rounded bg-amber-100 border border-amber-200 text-amber-800">
+                                                    {getDisplayStage(item, reworkRecord.targetStage)}
+                                                  </span>
+                                                </div>
+                                              ) : (
+                                                <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
+                                                  {getDisplayStage(item, item.currentStage)}
+                                                </span>
+                                              )}
+                                            </td>
+
+                                            {/* Status */}
+                                            <td className="p-3 text-center whitespace-nowrap">
+                                              {isReworking ? (
+                                                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
+                                                  <RotateCcw className="w-3 h-3 text-amber-700" />
+                                                  REWORKING
+                                                </span>
+                                              ) : (
+                                                <StatusBadge status={item.status || "In Production"} />
+                                              )}
+                                            </td>
+
+                                            {/* Rework Details */}
+                                            <td className="p-3">
+                                              {isReworking ? (
+                                                <div className="space-y-1 min-w-[240px]">
+                                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                                    {reworkRecord?.defectStation && (
+                                                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 whitespace-nowrap inline-flex items-center gap-1 shadow-2xs">
+                                                        <span>🏭</span>
+                                                        <span>{reworkRecord.defectStation}</span>
+                                                      </span>
+                                                    )}
+                                                    {reworkRecord?.defectivePane && (
+                                                      <span
+                                                        className={`px-2 py-0.5 rounded text-[10px] font-black border whitespace-nowrap shadow-2xs ${
+                                                          reworkRecord.defectivePane === "OP"
+                                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                            : reworkRecord.defectivePane === "IP_PLY1"
+                                                            ? "bg-cyan-100 text-cyan-900 border-cyan-300"
+                                                            : reworkRecord.defectivePane === "IP_PLY2"
+                                                            ? "bg-teal-100 text-teal-900 border-teal-300"
+                                                            : reworkRecord.defectivePane === "IP"
+                                                            ? "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                            : "bg-amber-100 text-amber-800 border-amber-200"
+                                                        }`}
+                                                      >
+                                                        {reworkRecord.defectivePane === "OP"
+                                                          ? "OP • Outer Pane"
+                                                          : reworkRecord.defectivePane === "IP_PLY1"
+                                                          ? "IP • Lami Ply 1"
+                                                          : reworkRecord.defectivePane === "IP_PLY2"
+                                                          ? "IP • Lami Ply 2"
+                                                          : reworkRecord.defectivePane === "IP"
+                                                          ? "IP • Inner Pane"
+                                                          : reworkRecord.defectivePane === "ASSEMBLY"
+                                                          ? "Assembly Defect"
+                                                          : reworkRecord.defectivePane}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <div className="text-amber-800 font-extrabold text-xs leading-snug">
+                                                    {(reworkRecord?.reason || item.remarks || "Workstation Reprocess").replace(
+                                                      /^\[Station:[^\]]+\]\s*/i,
+                                                      ""
+                                                    )}
+                                                  </div>
+                                                  {reworkRecord?.date && (
+                                                    <div className="text-[10px] font-mono text-slate-400">
+                                                      {formatDubaiDateTime(reworkRecord.date)}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                <span className="text-slate-400 font-medium text-xs whitespace-nowrap">
+                                                  Standard Route
+                                                </span>
+                                              )}
+                                            </td>
+
+                                            {/* Operator */}
+                                            <td className="p-3 text-slate-700 font-semibold whitespace-nowrap">
+                                              {reworkRecord?.operator || "Operator"}
+                                            </td>
+
+                                            {/* Actions: Sticker, Reject, Rework */}
+                                            <td className="p-3 text-right whitespace-nowrap">
+                                              <div className="flex items-center justify-end gap-1.5">
+                                                {/* Sticker Button */}
+                                                {onPrintSticker && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      onPrintSticker(actionItem);
+                                                    }}
+                                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs cursor-pointer"
+                                                    title={`View & Print Barcode Sticker for Glass #${item.serialNumber}`}
+                                                  >
+                                                    <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                                    <span>Sticker</span>
+                                                  </button>
+                                                )}
+
+                                                {/* Rework Button - ONLY visible for glass items that are rejected or in rework, post-Cutting */}
+                                                {onRework && item.currentStage !== "Cutting" && isItemRejectedOrReworking && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      onRework(actionItem);
+                                                    }}
+                                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 hover:border-amber-400 transition-colors shadow-2xs cursor-pointer"
+                                                    title={`Re-route Glass #${item.serialNumber} to Rework`}
+                                                  >
+                                                    <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                                                    <span>Rework</span>
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

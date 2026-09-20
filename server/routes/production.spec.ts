@@ -618,7 +618,9 @@ describe("DLGU (Double Glazed Laminated Unit) Workflow Verification", () => {
 
     handleRejectItem(req, res, () => {});
 
-    expect(cuttingPane1.status).toBe("Rejected");
+    // Auto-rework routes item to Cutting with Reworking status
+    expect(cuttingPane1.status).toBe("Reworking");
+    expect(cuttingPane1.currentStage).toBe("Cutting");
     expect(cuttingPane2.status).toBe("In Production"); // Must NOT be rejected
     expect(responseData?.items?.length).toBe(1);
     expect(responseData?.items?.[0]?.serialNumber).toBe("CUT-REJ-01");
@@ -664,9 +666,11 @@ describe("DLGU (Double Glazed Laminated Unit) Workflow Verification", () => {
 
     handleRejectItem(req, res, () => {});
 
-    // Pair 1 must be Rejected
-    expect(p1A.status).toBe("Rejected");
-    expect(p1B.status).toBe("Rejected");
+    // Pair 1 must be in Reworking (routed to Cutting for auto-remake)
+    expect(p1A.status).toBe("Reworking");
+    expect(p1B.status).toBe("Reworking");
+    expect(p1A.currentStage).toBe("Cutting");
+    expect(p1B.currentStage).toBe("Cutting");
 
     // Pair 2 and Pair 3 must REMAIN In Production (NOT rejected!)
     expect(p2A.status).toBe("In Production");

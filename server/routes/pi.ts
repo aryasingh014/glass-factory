@@ -290,6 +290,39 @@ export function loadDatabaseFromDisk(force = false): void {
         reworkDatabase.splice(0, reworkDatabase.length, ...(Array.isArray(parsed.reworkDatabase) ? parsed.reworkDatabase : []));
         notificationsDatabase.splice(0, notificationsDatabase.length, ...(Array.isArray(parsed.notificationsDatabase) ? parsed.notificationsDatabase : []));
 
+        // Auto-sync: Ensure all rejected glass items automatically exist in reworkDatabase with remake tickets to Cutting
+        let autoSyncReworkAdded = false;
+        rejectDatabase.forEach((rej) => {
+          const alreadyInRework = reworkDatabase.some((rw) => rw.serialNumber === rej.serialNumber);
+          if (!alreadyInRework && rej.serialNumber) {
+            reworkDatabase.push({
+              id: `rew-${rej.id || Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              serialNumber: rej.serialNumber,
+              barcode: rej.barcode,
+              piNumber: rej.piNumber,
+              fromStage: rej.stage || "Cutting",
+              targetStage: "Cutting",
+              reason: `[Auto-Remake after Rejection] ${rej.reason}`,
+              defectivePane: rej.defectivePane,
+              defectiveSerialNumber: rej.defectiveSerialNumber,
+              partnerSerialNumber: rej.partnerSerialNumber,
+              date: rej.date || new Date().toISOString(),
+              operator: rej.operator || "Operator",
+            });
+            autoSyncReworkAdded = true;
+
+            const item = glassItemsDatabase.find((g) => g.serialNumber === rej.serialNumber);
+            if (item && item.status !== "Completed") {
+              item.status = "Reworking";
+              item.currentStage = "Cutting";
+            }
+          }
+        });
+
+        if (autoSyncReworkAdded) {
+          saveDatabaseToDisk();
+        }
+
         // If no persisted notifications yet, seed from real historical production actions
         if (notificationsDatabase.length === 0) {
           productionHistoryDatabase.slice(0, 15).forEach((h, idx) => {

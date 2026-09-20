@@ -247,9 +247,27 @@ export function isDlguGlass(item: { processRoute?: string[]; glassType?: string;
     if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("laminated") || str.includes("pvb") || str.includes("sgp");
-  return hasSpacer && hasLam;
+  const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu") || str.includes("dlgu");
+  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("laminated") || str.includes("pvb") || str.includes("sgp") || str.includes("dlgu");
+  return (hasSpacer && hasLam) || str.includes("dlgu");
+}
+
+/**
+ * Returns human-readable display stage for a glass item.
+ * For DLGU items at DGU workstation, displays "DLGU" instead of "DGU".
+ */
+export function getDisplayStage(
+  item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string; currentStage?: string; dlguPhase?: string; completedStages?: string[] } | null | undefined,
+  rawStage?: string
+): string {
+  const stage = rawStage || item?.currentStage || "Cutting";
+  if (!item) return stage;
+  const isDlgu = isDlguGlass(item) || (item as any).glassCategory === "DLGU";
+  if (isDlgu) {
+    if (stage === "DGU") return "DLGU";
+    if (stage === "Pairing") return (item.dlguPhase === "DguPairing" || item.completedStages?.includes("Lamination")) ? "DLGU Pairing" : "Lam Pairing";
+  }
+  return stage;
 }
 
 /**

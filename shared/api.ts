@@ -110,6 +110,7 @@ export interface RejectRecord {
   barcode?: string;
   piNumber?: string;
   stage: ProductionStage;
+  defectStation?: string;
   reason: string;
   defectType?: string;
   defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
@@ -130,6 +131,7 @@ export interface ReworkRecord {
   fromStage: ProductionStage;
   toStage?: ProductionStage;
   targetStage?: ProductionStage;
+  defectStation?: string;
   reason: string;
   defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
   defectiveSerialNumber?: string;

@@ -310,12 +310,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const completedCount =
         stageItemsPieces === 0 && totalCount > 0
           ? totalCount
-          : b.items.filter(
-              (i) =>
-                i.completedStages?.includes(stage) ||
-                (stage === "Cutting" && i.currentStage !== "Cutting") ||
-                i.status === "Completed"
-            ).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+          : Math.max(0, totalCount - stageItemsPieces);
 
       const totalSqmVal = parentPI?.totalSqm || (allSqm > 0 ? allSqm : stageSqm > 0 ? stageSqm : 0);
 
@@ -338,7 +333,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         sfoNo: b.sfoNo,
         totalItems: totalCount,
         stageItemsCount: stageItemsPieces,
-        completedCount: completedCount || parentPI?.completedItemsCount || 0,
+        completedCount: completedCount,
         totalSqm: totalSqmVal,
         finish,
         glassCategory,
@@ -347,7 +342,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         lamPieces,
         clearCount: clearItems,
         colourCount: colourItems,
-        status: parentPI?.status || (stageItemsPieces === 0 && totalCount > 0 ? "Completed" : "In Production"),
+        status: stageItemsPieces > 0 ? "In Production" : (parentPI?.status || (stageItemsPieces === 0 && totalCount > 0 ? "Completed" : "In Production")),
         createdAt,
         issueDate,
       };
@@ -502,9 +497,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       });
 
       const isAllCompleted =
-        (stageItemsCount === 0 && totalPieces > 0) ||
-        (completedPieces >= totalPieces && totalPieces > 0) ||
-        batches.every((b) => b.status === "Completed");
+        stageItemsCount === 0 &&
+        totalPieces > 0 &&
+        completedPieces >= totalPieces &&
+        batches.every((b) => b.stageItemsCount === 0 && b.completedCount >= b.totalItems);
 
       const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
 
@@ -2187,9 +2183,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               groupedCustomerBatches.map((customer) => {
                 const isExpanded = isBatchCustomerExpanded(customer.customerName);
                 const isCompleted =
-                  customer.isAllCompleted ||
-                  customer.status === "Completed" ||
-                  (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces);
+                  customer.stageItemsCount === 0 &&
+                  (customer.isAllCompleted ||
+                    customer.status === "Completed" ||
+                    (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces));
 
                 return (
                   <div
@@ -2350,9 +2347,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             <tbody className="divide-y divide-slate-100">
                               {customer.batches.map((b) => {
                                 const isBatchCompleted =
-                                  (b.stageItemsCount === 0 && b.totalItems > 0) ||
-                                  (b.completedCount >= b.totalItems && b.totalItems > 0) ||
-                                  b.status === "Completed";
+                                  b.stageItemsCount === 0 &&
+                                  b.totalItems > 0 &&
+                                  (b.completedCount >= b.totalItems || b.status === "Completed");
 
                                 return (
                                   <tr
@@ -2526,9 +2523,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {filteredBatches.map((b) => {
                       const isBatchCompleted =
-                        (b.stageItemsCount === 0 && b.totalItems > 0) ||
-                        (b.completedCount >= b.totalItems && b.totalItems > 0) ||
-                        b.status === "Completed";
+                        b.stageItemsCount === 0 &&
+                        b.totalItems > 0 &&
+                        (b.completedCount >= b.totalItems || b.status === "Completed");
 
                       return (
                         <tr
@@ -4268,28 +4265,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         title="Print Barcode / QR Sticker"
                                       >
                                         <Tag className="w-3.5 h-3.5 text-slate-700" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onReject(item);
-                                        }}
-                                        className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                        title="Reject Item / Report Defect"
-                                      >
-                                        <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onRework(item);
-                                        }}
-                                        className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                        title="Send Item to Rework"
-                                      >
-                                        <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
                                       </button>
                                       <button
                                         type="button"

@@ -1057,9 +1057,21 @@ export const handleAdvanceDlguLamination: RequestHandler = (req, res) => {
 // Reject item with reason (supports single item or paired DLGU / Lamination / DGU assembly)
 // Reject item with reason (supports single piece before pairing, or strictly 1 paired unit after pairing)
 export const handleRejectItem: RequestHandler = (req, res) => {
-  const { serialNumber, serialNumbers, piNumber, reason, defectivePane, defectiveSerialNumber, operator = "Operator" } = req.body;
+  const {
+    serialNumber,
+    serialNumbers,
+    piNumber,
+    reason,
+    defectStation,
+    defectivePane,
+    defectiveSerialNumber,
+    autoRework = true,
+    reworkTargetStage = "Cutting",
+    operator = "Operator",
+  } = req.body;
   const cleanReason = sanitizeString(reason, 500);
   const cleanOperator = sanitizeString(operator || "Operator", 100);
+  const cleanDefectStation = defectStation ? sanitizeString(defectStation, 100) : undefined;
 
   if ((!serialNumber && (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0)) || !cleanReason) {
     res.status(400).json({ message: "serialNumber and reason are required" });
@@ -1087,6 +1099,17 @@ export const handleRejectItem: RequestHandler = (req, res) => {
 
   if (targetItems.length === 0) {
     res.status(404).json({ message: "Glass item(s) not found" });
+    return;
+  }
+
+  // Check if any target item is already completed at Finished stage
+  const completedItem = targetItems.find(
+    (t) => t.status === "Completed" || t.currentStage === "Finished"
+  );
+  if (completedItem) {
+    res.status(400).json({
+      message: `Item ${completedItem.serialNumber} is completed at Finished stage and cannot be rejected.`,
+    });
     return;
   }
 
@@ -1163,11 +1186,10 @@ export const handleRejectItem: RequestHandler = (req, res) => {
 
   const allItemsToReject = [...targetItems, ...partnerItems];
   const rejectEntries: RejectRecord[] = [];
+  const reworkEntries: ReworkRecord[] = [];
 
   allItemsToReject.forEach((targetItem) => {
-    targetItem.status = "Rejected";
-    targetItem.updatedAt = new Date().toISOString();
-
+    const prevStage = targetItem.currentStage;
     const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
 
     const rejectEntry: RejectRecord = {
@@ -1175,7 +1197,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       serialNumber: targetItem.serialNumber,
       barcode: targetItem.barcode,
       piNumber: finalPiNumber,
-      stage: targetItem.currentStage,
+      stage: prevStage,
+      defectStation: cleanDefectStation,
       reason: cleanReason,
       defectivePane: defectivePane ? String(defectivePane) : undefined,
       defectiveSerialNumber: defectiveSerialNumber ? String(defectiveSerialNumber) : undefined,
@@ -1190,24 +1213,87 @@ export const handleRejectItem: RequestHandler = (req, res) => {
     const isPairedUnit = allItemsToReject.length > 1;
     const partnerSerialNames = allItemsToReject.map((t) => `#${t.serialNumber}`).join(" + ");
 
-    productionHistoryDatabase.unshift({
-      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      serialNumber: targetItem.serialNumber,
-      barcode: targetItem.barcode,
-      piNumber: finalPiNumber,
-      itemOrBatch: targetItem.serialNumber,
-      action: isPairedUnit ? "Paired Unit Rejected" : "Item Rejected",
-      prevStatus: targetItem.currentStage,
-      newStatus: "Rejected",
-      stage: targetItem.currentStage,
-      status: "Rejected",
-      operator: cleanOperator,
-      user: cleanOperator,
-      timestamp: new Date().toISOString(),
-      remarks: isPairedUnit
-        ? `Quality rejection for paired assembly (${partnerSerialNames}) at ${targetItem.currentStage}: ${cleanReason}`
-        : `Quality rejection at ${targetItem.currentStage}: ${cleanReason}`,
-    });
+    if (autoRework) {
+      const targetStage = (reworkTargetStage as ProductionStage) || "Cutting";
+      targetItem.currentStage = targetStage;
+      targetItem.status = "Reworking";
+      targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
+      targetItem.updatedAt = new Date().toISOString();
+
+      const reworkEntry: ReworkRecord = {
+        id: `rew-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: targetItem.serialNumber,
+        barcode: targetItem.barcode,
+        piNumber: finalPiNumber,
+        fromStage: prevStage,
+        targetStage: targetStage,
+        defectStation: cleanDefectStation,
+        reason: `[Auto-Remake after Rejection] ${cleanReason}`,
+        defectivePane: defectivePane ? String(defectivePane) : undefined,
+        defectiveSerialNumber: defectiveSerialNumber ? String(defectiveSerialNumber) : undefined,
+        partnerSerialNumber: allItemsToReject.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
+        date: new Date().toISOString(),
+        operator: cleanOperator,
+      };
+
+      reworkDatabase.unshift(reworkEntry);
+      reworkEntries.push(reworkEntry);
+
+      productionHistoryDatabase.unshift({
+        id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: targetItem.serialNumber,
+        barcode: targetItem.barcode,
+        piNumber: finalPiNumber,
+        itemOrBatch: targetItem.serialNumber,
+        action: isPairedUnit ? "Paired Unit Rejected & Dispatched to Remake" : "Item Rejected & Dispatched to Remake",
+        prevStatus: prevStage,
+        newStatus: "Reworking",
+        stage: targetStage,
+        status: "Reworking",
+        operator: cleanOperator,
+        user: cleanOperator,
+        timestamp: new Date().toISOString(),
+        remarks: isPairedUnit
+          ? `Quality rejection for paired assembly (${partnerSerialNames}) at ${prevStage} -> Auto-dispatched Remake to ${targetStage}: ${cleanReason}`
+          : `Quality rejection at ${prevStage} -> Auto-dispatched Remake to ${targetStage}: ${cleanReason}`,
+      });
+    } else {
+      targetItem.status = "Rejected";
+      targetItem.updatedAt = new Date().toISOString();
+
+      productionHistoryDatabase.unshift({
+        id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: targetItem.serialNumber,
+        barcode: targetItem.barcode,
+        piNumber: finalPiNumber,
+        itemOrBatch: targetItem.serialNumber,
+        action: isPairedUnit ? "Paired Unit Rejected" : "Item Rejected",
+        prevStatus: prevStage,
+        newStatus: "Rejected",
+        stage: targetItem.currentStage,
+        status: "Rejected",
+        operator: cleanOperator,
+        user: cleanOperator,
+        timestamp: new Date().toISOString(),
+        remarks: isPairedUnit
+          ? `Quality rejection for paired assembly (${partnerSerialNames}) at ${targetItem.currentStage}: ${cleanReason}`
+          : `Quality rejection at ${targetItem.currentStage}: ${cleanReason}`,
+      });
+    }
+  });
+
+  // Update parent PI status and counts
+  const affectedPiKeys = new Set(allItemsToReject.map((i) => i.piNumber).concat(allItemsToReject.map((i) => i.piId)).filter(Boolean));
+  affectedPiKeys.forEach((piKey) => {
+    const parentPi = piDatabase.find((p) => p.id === piKey || p.piNumber === piKey);
+    if (parentPi) {
+      const piItems = glassItemsDatabase.filter((i) => i.piId === parentPi.id || i.piNumber === parentPi.piNumber);
+      const completedItems = piItems.filter((i) => i.status === "Completed").length;
+      parentPi.completedItemsCount = completedItems;
+      if (piItems.some((i) => i.status !== "Completed")) {
+        parentPi.status = "In Production";
+      }
+    }
   });
 
   saveDatabaseToDisk();
@@ -1219,16 +1305,35 @@ export const handleRejectItem: RequestHandler = (req, res) => {
     reason: cleanReason,
   });
 
+  if (autoRework) {
+    broadcastUpdate("item_reworked", {
+      serialNumber: allItemsToReject[0].serialNumber,
+      serialNumbers: allItemsToReject.map((t) => t.serialNumber),
+      targetStage: reworkTargetStage || "Cutting",
+      reason: cleanReason,
+    });
+  }
+
   const isPair = allItemsToReject.length > 1;
   const serialList = allItemsToReject.map((t) => `#${t.serialNumber}`).join(", ");
   createAndBroadcastNotification({
-    title: isPair ? `Quality Reject: Paired Unit (${serialList})` : `Quality Reject: Item #${allItemsToReject[0].serialNumber}`,
+    title: isPair
+      ? autoRework
+        ? `Quality Reject & Auto-Remake: Paired Unit (${serialList})`
+        : `Quality Reject: Paired Unit (${serialList})`
+      : autoRework
+      ? `Quality Reject & Auto-Remake: Item #${allItemsToReject[0].serialNumber}`
+      : `Quality Reject: Item #${allItemsToReject[0].serialNumber}`,
     message: isPair
-      ? `DLGU / Paired unit (${serialList}) marked as REJECTED at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`
+      ? autoRework
+        ? `DLGU / Paired unit (${serialList}) rejected at ${allItemsToReject[0].currentStage} -> Remake auto-routed to ${reworkTargetStage || "Cutting"} by ${cleanOperator}. Reason: ${cleanReason}`
+        : `DLGU / Paired unit (${serialList}) marked as REJECTED at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`
+      : autoRework
+      ? `Rejected at ${allItemsToReject[0].currentStage} -> Remake auto-routed to ${reworkTargetStage || "Cutting"} by ${cleanOperator}. Reason: ${cleanReason}`
       : `Rejected at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`,
-    category: "REJECTION",
-    type: "destructive",
-    stage: allItemsToReject[0].currentStage,
+    category: autoRework ? "REWORK" : "REJECTION",
+    type: autoRework ? "warning" : "destructive",
+    stage: autoRework ? reworkTargetStage || "Cutting" : allItemsToReject[0].currentStage,
     serialNumber: allItemsToReject[0].serialNumber,
     piNumber: allItemsToReject[0].piNumber,
     operator: cleanOperator,
@@ -1236,18 +1341,34 @@ export const handleRejectItem: RequestHandler = (req, res) => {
 
   res.json({
     message: isPair
-      ? `Paired unit (${serialList}) marked as rejected`
+      ? autoRework
+        ? `Paired unit (${serialList}) marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
+        : `Paired unit (${serialList}) marked as rejected`
+      : autoRework
+      ? `Item ${allItemsToReject[0].serialNumber} marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
       : `Item ${allItemsToReject[0].serialNumber} marked as rejected`,
     rejectEntries,
+    reworkEntries: autoRework ? reworkEntries : undefined,
     items: allItemsToReject,
   });
 };
 
 // Send item to rework (supports single piece before pairing, or strictly 1 paired unit after pairing)
 export const handleReworkItem: RequestHandler = (req, res) => {
-  const { serialNumber, serialNumbers, piNumber, targetStage, reason, defectivePane, defectiveSerialNumber, operator = "Operator" } = req.body;
+  const {
+    serialNumber,
+    serialNumbers,
+    piNumber,
+    targetStage,
+    defectStation,
+    reason,
+    defectivePane,
+    defectiveSerialNumber,
+    operator = "Operator",
+  } = req.body;
   const cleanReason = sanitizeString(reason, 500);
   const cleanOperator = sanitizeString(operator || "Operator", 100);
+  const cleanDefectStation = defectStation ? sanitizeString(defectStation, 100) : undefined;
 
   if ((!serialNumber && (!serialNumbers || !Array.isArray(serialNumbers) || serialNumbers.length === 0)) || !targetStage || !cleanReason) {
     res.status(400).json({ message: "serialNumber, targetStage, and reason are required" });
@@ -1345,9 +1466,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
 
   allItemsToRework.forEach((targetItem) => {
     const prevStage = targetItem.currentStage;
-    if (!targetItem.completedStages.includes(prevStage)) {
-      targetItem.completedStages.push(prevStage);
-    }
+    targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
     targetItem.currentStage = targetStage as ProductionStage;
     targetItem.status = "Reworking";
     targetItem.updatedAt = new Date().toISOString();
@@ -1361,6 +1480,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       piNumber: finalPiNumber,
       fromStage: prevStage,
       targetStage: targetStage as ProductionStage,
+      defectStation: cleanDefectStation,
       reason: cleanReason,
       defectivePane: defectivePane ? String(defectivePane) : undefined,
       defectiveSerialNumber: defectiveSerialNumber ? String(defectiveSerialNumber) : undefined,
@@ -1393,6 +1513,20 @@ export const handleReworkItem: RequestHandler = (req, res) => {
         ? `Rework routed for paired assembly (${partnerSerialNames}) from ${prevStage} to ${targetStage}: ${cleanReason}`
         : `Rework routed from ${prevStage} to ${targetStage}: ${cleanReason}`,
     });
+  });
+
+  // Update parent PI status and counts
+  const affectedReworkPiKeys = new Set(allItemsToRework.map((i) => i.piNumber).concat(allItemsToRework.map((i) => i.piId)).filter(Boolean));
+  affectedReworkPiKeys.forEach((piKey) => {
+    const parentPi = piDatabase.find((p) => p.id === piKey || p.piNumber === piKey);
+    if (parentPi) {
+      const piItems = glassItemsDatabase.filter((i) => i.piId === parentPi.id || i.piNumber === parentPi.piNumber);
+      const completedItems = piItems.filter((i) => i.status === "Completed").length;
+      parentPi.completedItemsCount = completedItems;
+      if (piItems.some((i) => i.status !== "Completed")) {
+        parentPi.status = "In Production";
+      }
+    }
   });
 
   saveDatabaseToDisk();
@@ -2110,6 +2244,39 @@ export const handleClearAllNotifications: RequestHandler = (_req, res) => {
 export const handleGetReports: RequestHandler = (req, res) => {
   const page = parseInt(req.query.page as string, 10);
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+
+  // Auto-sync: Ensure all rejected glass items automatically exist in reworkDatabase with remake tickets to Cutting
+  let syncChanged = false;
+  rejectDatabase.forEach((rej) => {
+    const alreadyInRework = reworkDatabase.some((rw) => rw.serialNumber === rej.serialNumber);
+    if (!alreadyInRework && rej.serialNumber) {
+      reworkDatabase.push({
+        id: `rew-${rej.id || Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: rej.serialNumber,
+        barcode: rej.barcode,
+        piNumber: rej.piNumber,
+        fromStage: rej.stage || "Cutting",
+        targetStage: "Cutting",
+        reason: `[Auto-Remake after Rejection] ${rej.reason}`,
+        defectivePane: rej.defectivePane,
+        defectiveSerialNumber: rej.defectiveSerialNumber,
+        partnerSerialNumber: rej.partnerSerialNumber,
+        date: rej.date || new Date().toISOString(),
+        operator: rej.operator || "Operator",
+      });
+      syncChanged = true;
+
+      const item = glassItemsDatabase.find((g) => g.serialNumber === rej.serialNumber);
+      if (item && item.status !== "Completed") {
+        item.status = "Reworking";
+        item.currentStage = "Cutting";
+      }
+    }
+  });
+
+  if (syncChanged) {
+    saveDatabaseToDisk(false);
+  }
 
   // If no page param, return all (backward compatible)
   if (isNaN(page) || page < 1) {
