@@ -404,7 +404,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         let primaryPane = "";
         if (cutBlock) {
           const candidates = textBlocks.filter(
-            (b) => b.y > cutBlock.y && b.y <= cutBlock.y + 30 && b.x < 80 && !/PROJECT|FITOUT|ALUMINIUM|CUSTOMER|ORDER/i.test(b.text)
+            (b) => b.text.trim().length > 0 && b.y > cutBlock.y && b.y <= cutBlock.y + 30 && b.x < 80 && !/PROJECT|FITOUT|ALUMINIUM|CUSTOMER|ORDER/i.test(b.text)
           );
           candidates.sort((a, b) => a.y - b.y);
           primaryPane = candidates[0]?.text?.trim() || "";
@@ -412,7 +412,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
         if (!primaryPane) {
           const directPane = textBlocks.find(
-            (b) => b.y >= 70 && b.y <= 110 && b.x < 80 && /\b(\d+MM|CLEAR|STOPRAY|SYP|TINT|TEMPERED|LAM|FLOAT)\b/i.test(b.text)
+            (b) => b.text.trim().length > 0 && b.y >= 70 && b.y <= 110 && b.x < 80 && /\b(\d+MM|CLEAR|STOPRAY|SUNGUARD|SN\b|SYP|YKN|YBR|TINT|TEMPERED|LAM|FLOAT)\b/i.test(b.text)
           );
           primaryPane = directPane?.text?.trim() || "";
         }
@@ -427,14 +427,33 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         const primaryLower = primaryPane.toLowerCase();
         const isPrimaryColour =
           primaryLower.includes("stopray") ||
+          primaryLower.includes("sunguard") ||
+          primaryLower.includes("sn ") ||
+          primaryLower.includes("sn40") ||
+          primaryLower.includes("sn50") ||
+          primaryLower.includes("sn70") ||
           primaryLower.includes("syp") ||
+          primaryLower.includes("ykn") ||
+          primaryLower.includes("ybr") ||
+          primaryLower.includes("guardian") ||
           primaryLower.includes("grey") ||
           primaryLower.includes("gray") ||
           primaryLower.includes("bronze") ||
+          primaryLower.includes("bronz") ||
           primaryLower.includes("blue") ||
           primaryLower.includes("green") ||
           primaryLower.includes("tint") ||
+          primaryLower.includes("sunergy") ||
+          primaryLower.includes("cool-lite") ||
+          primaryLower.includes("cool lite") ||
+          primaryLower.includes("solar") ||
+          primaryLower.includes("reflective") ||
+          primaryLower.includes("antelio") ||
+          primaryLower.includes("planibel") ||
           primaryLower.includes("coat") ||
+          primaryLower.includes("frosted") ||
+          primaryLower.includes("ceramic") ||
+          primaryLower.includes("frit") ||
           primaryLower.includes("colour") ||
           primaryLower.includes("color");
 
@@ -767,9 +786,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           fileName: file?.name || "Stickers.pdf",
           batchTitle: batchTitle ? batchTitle.replace(/^STK-/i, "").replace(/^B(?=\d)/i, "") : (batchNo || "1"),
           colorOrClear: glassCategory,
+          finish: glassCategory,
           glassColor: finalBatchColor,
           glassCategory: productCategory,
-          items: itemsToImport.map((i) => ({ ...i, glassCategory: productCategory })),
+          items: itemsToImport.map((i) => ({ ...i, glassCategory: productCategory, finish: glassCategory })),
         }),
       });
 
@@ -830,254 +850,248 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         </DialogHeader>
 
         {/* Scrollable Modal Body Container */}
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 my-1">
-          {/* Glass Sticker Type Question Card: CLEAR vs COLOUR */}
-          <div className="p-3 sm:p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-blue-50 rounded-xl border-2 border-purple-200/90 shadow-2xs space-y-2">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                  ?
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-1 my-1">
+          {/* Top Options Grid: Finish (Clear vs Coloured) & Process Category (DGU vs Lamination vs DLGU) side-by-side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+            {/* Glass Sticker Type Question Card: CLEAR vs COLOUR */}
+            <div className="p-2.5 sm:p-3 bg-gradient-to-r from-purple-50/90 via-indigo-50/50 to-blue-50/80 rounded-xl border-2 border-purple-200 shadow-2xs space-y-2 flex flex-col justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    ?
+                  </div>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
+                      <span>Glass Sticker Finish</span>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-purple-200 text-purple-900 uppercase tracking-wide">Required</span>
+                    </h4>
+                    <p className="text-[10.5px] text-slate-500 font-medium">
+                      Select whether this batch is Clear or Coloured
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-2">
-                    <span>Which Glass Sticker Finish is this?</span>
-                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-purple-200 text-purple-900 uppercase tracking-wide">Required</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 font-medium">
-                    Specify if this sticker batch is for Clear Glass or Coloured Glass.
-                  </p>
-                </div>
+
+                {autoDetectedMessage && (
+                  <div className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-white/90 border border-purple-200 text-purple-800 shadow-2xs">
+                    🤖 {autoDetectedMessage}
+                  </div>
+                )}
               </div>
 
-              {autoDetectedMessage && (
-                <div className="text-[11px] font-bold px-2.5 py-0.5 rounded-lg bg-white/90 border border-purple-200 text-purple-800 shadow-2xs">
-                  🤖 {autoDetectedMessage}
-                </div>
-              )}
-            </div>
+              {/* Clear vs Colour Interactive Selection Cards */}
+              <div className="grid grid-cols-2 gap-2 pt-0.5">
+                {/* CLEAR GLASS CARD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGlassCategory("Clear");
+                    if (parsedRows.length > 0) applyFinishToAllRows("Clear");
+                  }}
+                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-2 relative cursor-pointer ${
+                    glassCategory === "Clear"
+                      ? "border-cyan-500 bg-white ring-2 ring-cyan-200 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    glassCategory === "Clear" ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex-1 min-w-0 pr-4">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-xs text-slate-900 truncate">Clear Glass</span>
+                      {glassCategory === "Clear" && (
+                        <span className="text-[8px] font-extrabold px-1 py-0.2 rounded bg-cyan-100 text-cyan-800">Selected</span>
+                      )}
+                    </div>
+                    <p className="text-[9.5px] text-slate-500 leading-tight truncate">
+                      Float / Ultra Clear / Low-Iron
+                    </p>
+                  </div>
+                  {glassCategory === "Clear" && (
+                    <div className="absolute right-2 top-2 w-3.5 h-3.5 rounded-full bg-cyan-600 text-white flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </button>
 
-            {/* Clear vs Colour Interactive Selection Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-0.5">
-              {/* CLEAR GLASS CARD */}
-              <button
-                type="button"
-                onClick={() => {
-                  setGlassCategory("Clear");
-                  if (parsedRows.length > 0) applyFinishToAllRows("Clear");
-                }}
-                className={`p-2.5 sm:p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                  glassCategory === "Clear"
-                    ? "border-cyan-500 bg-white ring-2 ring-cyan-200 shadow-md scale-[1.005]"
-                    : "border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  glassCategory === "Clear" ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div className="flex-1 pr-5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-slate-900">Clear Glass</span>
-                    {glassCategory === "Clear" && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-cyan-100 text-cyan-800">Selected</span>
-                    )}
+                {/* COLOURED GLASS CARD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGlassCategory("Colour");
+                    if (parsedRows.length > 0) applyFinishToAllRows("Colour");
+                  }}
+                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-2 relative cursor-pointer ${
+                    glassCategory === "Colour"
+                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    glassCategory === "Colour" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Palette className="w-3.5 h-3.5" />
                   </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
-                    Standard Clear Float, Ultra Clear / Low-Iron, Extra Clear
-                  </p>
-                </div>
-                {glassCategory === "Clear" && (
-                  <div className="absolute right-2.5 top-2.5 w-4 h-4 rounded-full bg-cyan-600 text-white flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5" />
+                  <div className="flex-1 min-w-0 pr-4">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-xs text-slate-900 truncate">Coloured Glass</span>
+                      {glassCategory === "Colour" && (
+                        <span className="text-[8px] font-extrabold px-1 py-0.2 rounded bg-purple-100 text-purple-800">Selected</span>
+                      )}
+                    </div>
+                    <p className="text-[9.5px] text-slate-500 leading-tight truncate">
+                      Grey, Bronze, Stopray, Tinted
+                    </p>
                   </div>
-                )}
-              </button>
-
-              {/* COLOURED GLASS CARD */}
-              <button
-                type="button"
-                onClick={() => {
-                  setGlassCategory("Colour");
-                  if (parsedRows.length > 0) applyFinishToAllRows("Colour");
-                }}
-                className={`p-2.5 sm:p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                  glassCategory === "Colour"
-                    ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-md scale-[1.005]"
-                    : "border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  glassCategory === "Colour" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Palette className="w-4 h-4" />
-                </div>
-                <div className="flex-1 pr-5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-slate-900">Coloured Glass</span>
-                    {glassCategory === "Colour" && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800">Selected</span>
-                    )}
-                  </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
-                    Grey, Bronze, Blue, Green, Stopray Coated, Tinted Glass
-                  </p>
-                </div>
-                {glassCategory === "Colour" && (
-                  <div className="absolute right-2.5 top-2.5 w-4 h-4 rounded-full bg-purple-600 text-white flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5" />
-                  </div>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Glass Process Category Question Card: DGU vs LAMINATION */}
-          <div className="p-3 sm:p-3.5 bg-gradient-to-r from-teal-50/70 via-indigo-50/50 to-amber-50/70 rounded-xl border-2 border-indigo-200/90 shadow-2xs space-y-2">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                  <Layers className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-2">
-                    <span>Which Process Category is this?</span>
-                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-200 text-indigo-900 uppercase tracking-wide">Required</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 font-medium">
-                    Specify whether these stickers belong to DGU (Double Glazing), Laminated Glass, or DLGU (Double Laminated Glazed Unit).
-                  </p>
-                </div>
+                  {glassCategory === "Colour" && (
+                    <div className="absolute right-2 top-2 w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* DGU vs LAMINATION vs DLGU Interactive Selection Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-0.5">
-              {/* DGU / IGU CARD */}
-              <button
-                type="button"
-                onClick={() => {
-                  setProductCategory("DGU");
-                  setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "DGU" })));
-                  setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DGU" })));
-                  toast.info("Process category set to DGU / IGU (Double Glazing)");
-                }}
-                className={`p-2.5 sm:p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                  productCategory === "DGU"
-                    ? "border-teal-600 bg-white ring-2 ring-teal-200 shadow-md scale-[1.005]"
-                    : "border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  productCategory === "DGU" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Boxes className="w-4 h-4" />
-                </div>
-                <div className="flex-1 pr-5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-slate-900">DGU / IGU</span>
-                    {productCategory === "DGU" && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-teal-100 text-teal-800">Selected</span>
-                    )}
+            {/* Glass Process Category Question Card: DGU vs LAMINATION vs DLGU */}
+            <div className="p-2.5 sm:p-3 bg-gradient-to-r from-teal-50/80 via-indigo-50/50 to-amber-50/80 rounded-xl border-2 border-indigo-200 shadow-2xs space-y-2 flex flex-col justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    <Layers className="w-3.5 h-3.5" />
                   </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
-                    Standard Double Glazing with spacer & seals • Routes to DGU
-                  </p>
-                </div>
-                {productCategory === "DGU" && (
-                  <div className="absolute right-2.5 top-2.5 w-4 h-4 rounded-full bg-teal-600 text-white flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5" />
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
+                      <span>Process Category</span>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-indigo-200 text-indigo-900 uppercase tracking-wide">Required</span>
+                    </h4>
+                    <p className="text-[10.5px] text-slate-500 font-medium">
+                      Select DGU, Lamination, or DLGU unit route
+                    </p>
                   </div>
-                )}
-              </button>
+                </div>
+              </div>
 
-              {/* LAMINATION CARD */}
-              <button
-                type="button"
-                onClick={() => {
-                  setProductCategory("Lamination");
-                  setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "Lamination" })));
-                  setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "Lamination" })));
-                  toast.info("Process category set to Laminated Glass");
-                }}
-                className={`p-2.5 sm:p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                  productCategory === "Lamination"
-                    ? "border-amber-600 bg-white ring-2 ring-amber-200 shadow-md scale-[1.005]"
-                    : "border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  productCategory === "Lamination" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Layers className="w-4 h-4" />
-                </div>
-                <div className="flex-1 pr-5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-slate-900">Laminated Glass</span>
-                    {productCategory === "Lamination" && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">Selected</span>
-                    )}
+              {/* DGU vs LAMINATION vs DLGU Interactive Selection Cards */}
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 pt-0.5">
+                {/* DGU / IGU CARD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductCategory("DGU");
+                    setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "DGU" })));
+                    setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DGU" })));
+                    toast.info("Process category set to DGU / IGU (Double Glazing)");
+                  }}
+                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                    productCategory === "DGU"
+                      ? "border-teal-600 bg-white ring-2 ring-teal-200 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    productCategory === "DGU" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Boxes className="w-3.5 h-3.5" />
                   </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
-                    Multi-layer with PVB/SGP film & autoclave • Routes to Lamination
-                  </p>
-                </div>
-                {productCategory === "Lamination" && (
-                  <div className="absolute right-2.5 top-2.5 w-4 h-4 rounded-full bg-amber-600 text-white flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5" />
+                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">DGU / IGU</span>
+                    </div>
+                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                      Double Glazing
+                    </p>
                   </div>
-                )}
-              </button>
+                  {productCategory === "DGU" && (
+                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-teal-600 text-white flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </button>
 
-              {/* DLGU CARD */}
-              <button
-                type="button"
-                onClick={() => {
-                  setProductCategory("DLGU");
-                  setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "DLGU" })));
-                  setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DLGU" })));
-                  toast.info("Process category set to DLGU (Double Laminated Glazed Unit)");
-                }}
-                className={`p-2.5 sm:p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                  productCategory === "DLGU"
-                    ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-md scale-[1.005]"
-                    : "border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                  productCategory === "DLGU" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div className="flex-1 pr-5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-slate-900">DLGU (Double Laminated)</span>
-                    {productCategory === "DLGU" && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800">Selected</span>
-                    )}
+                {/* LAMINATION CARD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductCategory("Lamination");
+                    setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "Lamination" })));
+                    setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "Lamination" })));
+                    toast.info("Process category set to Laminated Glass");
+                  }}
+                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                    productCategory === "Lamination"
+                      ? "border-amber-600 bg-white ring-2 ring-amber-200 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    productCategory === "Lamination" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Layers className="w-3.5 h-3.5" />
                   </div>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5 leading-snug">
-                    2-Stage Assembly: 6mm pairs ➔ Lamination (Autoclave) ➔ DGU pairing with 8mm
-                  </p>
-                </div>
-                {productCategory === "DLGU" && (
-                  <div className="absolute right-2.5 top-2.5 w-4 h-4 rounded-full bg-purple-600 text-white flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5" />
+                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">Laminated</span>
+                    </div>
+                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                      PVB / Autoclave
+                    </p>
                   </div>
-                )}
-              </button>
+                  {productCategory === "Lamination" && (
+                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-amber-600 text-white flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </button>
+
+                {/* DLGU CARD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductCategory("DLGU");
+                    setParsedRows((prev) => prev.map((r) => ({ ...r, glassCategory: "DLGU" })));
+                    setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DLGU" })));
+                    toast.info("Process category set to DLGU (Double Laminated Glazed Unit)");
+                  }}
+                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                    productCategory === "DLGU"
+                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    productCategory === "DLGU" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">DLGU</span>
+                    </div>
+                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                      2-Stage Double Lam
+                    </p>
+                  </div>
+                  {productCategory === "DLGU" && (
+                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Sticker Batch Header Information (Editable) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-purple-50/60 p-3 rounded-xl border border-purple-200/80">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-purple-50/60 p-2.5 sm:p-3 rounded-xl border border-purple-200/80">
             <div>
               <Label className="text-purple-900 text-[10px] font-extrabold uppercase tracking-wider">Customer Name</Label>
               <Input
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 placeholder="e.g. BRIGHT PLUS FITOUT"
-                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7 text-xs font-bold"
+                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7.5 text-xs font-bold"
               />
             </div>
             <div>
@@ -1086,7 +1100,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 placeholder="e.g. PROJECT; VAL_BY_KAS"
-                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7 text-xs font-bold"
+                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7.5 text-xs font-bold"
               />
             </div>
             <div>
@@ -1095,19 +1109,19 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                 value={batchNo}
                 onChange={(e) => setBatchNo(e.target.value)}
                 placeholder="e.g. 5442"
-                className="bg-white border-purple-200 text-purple-700 font-mono font-bold mt-0.5 h-7 text-xs"
+                className="bg-white border-purple-200 text-purple-700 font-mono font-bold mt-0.5 h-7.5 text-xs"
               />
             </div>
           </div>
 
-          {/* Upload Dropzone (Compact when file loaded) */}
+          {/* Upload Dropzone (Prominent, sleek & visible immediately) */}
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             className={`border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
-              file ? "p-3 bg-emerald-50/40 border-emerald-500" : "p-5 bg-slate-50/70 hover:bg-purple-50/30 border-slate-300 hover:border-purple-500"
+              file ? "p-2.5 sm:p-3 bg-emerald-50/40 border-emerald-500" : "p-3.5 sm:p-4 bg-slate-50/80 hover:bg-purple-50/40 border-slate-300 hover:border-purple-500 shadow-2xs"
             }`}
           >
             <input
@@ -1124,17 +1138,17 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                 </div>
                 <div className="text-left">
                   <p className="text-xs font-black text-slate-800">
-                    {file ? file.name : "Drop Sticker PDF File (.pdf) here or click to browse"}
+                    {file ? file.name : "Drop Factory Sticker PDF File (.pdf) here or click to browse"}
                   </p>
                   <p className="text-[10px] text-slate-500 font-medium">
-                    {file ? `File loaded (${(file.size / 1024).toFixed(1)} KB)` : "Supports multi-page barcode sticker PDF files"}
+                    {file ? `File loaded (${(file.size / 1024).toFixed(1)} KB)` : "Supports multi-page barcode sticker PDF files with auto dimension and barcode extraction"}
                   </p>
                 </div>
               </div>
               <Button
                 type="button"
                 size="sm"
-                className={`h-7 text-xs font-bold pointer-events-auto shadow-2xs rounded-lg ${file ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-purple-600 hover:bg-purple-700 text-white"}`}
+                className={`h-7.5 text-xs font-bold pointer-events-auto shadow-2xs rounded-lg px-3 ${file ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-purple-600 hover:bg-purple-700 text-white"}`}
               >
                 {file ? "Change PDF" : "Select PDF"}
               </Button>

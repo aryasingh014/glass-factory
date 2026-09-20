@@ -272,43 +272,52 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
     let defectiveCode = "SINGLE";
     let defectiveSerial: string | undefined = item.serialNumber;
-    let prefix = "";
+    let targetSerialsToProcess: string[] = [item.serialNumber];
+    let isSinglePane = true;
 
     if (!isPairUnit) {
       defectiveCode = primaryRole.code || "SINGLE";
       defectiveSerial = item.serialNumber;
-      prefix = "";
+      targetSerialsToProcess = [item.serialNumber];
+      isSinglePane = true;
     } else if (isDlgu) {
       if (selectedDefectivePane === "OP") {
         defectiveCode = "OP";
         defectiveSerial = opItem?.serialNumber || item.serialNumber;
-        prefix = `[Defect on OP • Outer Pane #${defectiveSerial}] `;
+        targetSerialsToProcess = [defectiveSerial];
+        isSinglePane = true;
       } else if (selectedDefectivePane === "IP_PLY1") {
         defectiveCode = "IP_PLY1";
         defectiveSerial = ipItem?.serialNumber || item.serialNumber;
-        prefix = `[Defect on Inner Lami Ply 1 (Front Clear) #${defectiveSerial}] `;
+        targetSerialsToProcess = [defectiveSerial];
+        isSinglePane = true;
       } else if (selectedDefectivePane === "IP_PLY2") {
         defectiveCode = "IP_PLY2";
         defectiveSerial = ipItem ? `${ipItem.serialNumber}-B` : "IP-Ply2";
-        prefix = `[Defect on Inner Lami Ply 2 (Back Clear) #${defectiveSerial}] `;
+        targetSerialsToProcess = [ipItem?.serialNumber || item.serialNumber];
+        isSinglePane = true;
       } else {
         defectiveCode = "ASSEMBLY";
         defectiveSerial = undefined;
-        prefix = `[Defect on Unit Assembly / Spacer / PVB] `;
+        targetSerialsToProcess = allSerials;
+        isSinglePane = false;
       }
     } else {
       if (selectedDefectivePane === "PRIMARY") {
         defectiveCode = primaryRole.code;
         defectiveSerial = item.serialNumber;
-        prefix = `[Defect on ${primaryRole.code} • ${primaryFinish} #${item.serialNumber}] `;
+        targetSerialsToProcess = [item.serialNumber];
+        isSinglePane = true;
       } else if (selectedDefectivePane === "PARTNER") {
         defectiveCode = partnerRole?.code || (primaryRole.code === "OP" ? "IP" : "OP");
         defectiveSerial = partnerItem?.serialNumber || "PARTNER";
-        prefix = `[Defect on ${defectiveCode} • #${defectiveSerial}] `;
+        targetSerialsToProcess = partnerItem?.serialNumber ? [partnerItem.serialNumber] : [item.serialNumber];
+        isSinglePane = true;
       } else {
         defectiveCode = "ASSEMBLY";
         defectiveSerial = undefined;
-        prefix = `[Defect on Assembly / Sealant / PVB] `;
+        targetSerialsToProcess = allSerials;
+        isSinglePane = false;
       }
     }
 
@@ -321,8 +330,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            serialNumber: item.serialNumber,
-            serialNumbers: allSerials,
+            serialNumber: targetSerialsToProcess[0] || item.serialNumber,
+            serialNumbers: targetSerialsToProcess,
+            singlePaneOnly: isSinglePane,
             piNumber: item.piNumber,
             defectStation,
             reason: finalReason,
@@ -336,16 +346,16 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
         if (!res.ok) throw new Error("Failed to reject item");
         if (autoReworkEnabled) {
-          if (isPairUnit) {
+          if (!isSinglePane && isPairUnit) {
             toast.error(`Paired Unit (${allSerials.join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
           } else {
-            toast.error(`Item ${item.serialNumber} marked as REJECTED & Remake dispatched to Cutting`);
+            toast.error(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) marked as REJECTED & Remake dispatched to Cutting`);
           }
         } else {
-          if (isPairUnit) {
+          if (!isSinglePane && isPairUnit) {
             toast.error(`Paired Unit (${allSerials.join(" + ")}) marked as REJECTED (${defectiveCode})`);
           } else {
-            toast.error(`Item ${item.serialNumber} marked as REJECTED`);
+            toast.error(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) marked as REJECTED`);
           }
         }
       } else {
@@ -353,8 +363,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            serialNumber: item.serialNumber,
-            serialNumbers: allSerials,
+            serialNumber: targetSerialsToProcess[0] || item.serialNumber,
+            serialNumbers: targetSerialsToProcess,
+            singlePaneOnly: isSinglePane,
             piNumber: item.piNumber,
             targetStage,
             defectStation,
@@ -366,10 +377,10 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
         });
 
         if (!res.ok) throw new Error("Failed to send item to rework");
-        if (isPairUnit) {
+        if (!isSinglePane && isPairUnit) {
           toast.warning(`Paired Unit (${allSerials.join(" + ")}) sent to REWORK at ${targetStage} stage`);
         } else {
-          toast.warning(`Item ${item.serialNumber} sent to REWORK at ${targetStage} stage`);
+          toast.warning(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) sent to REWORK at ${targetStage} stage`);
         }
       }
 

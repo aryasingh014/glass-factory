@@ -798,4 +798,98 @@ describe("DLGU (Double Glazed Laminated Unit) Workflow Verification", () => {
     expect(responseData?.items?.length).toBe(2);
     expect(responseData?.reworkEntries?.length).toBe(2);
   });
+
+  it("should reject ONLY Ply 1 / IP when singlePaneOnly is true and leave good OP partner in pairing buffer", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const pairA: any = {
+      id: "single-test-op",
+      piId: "PI-SINGLE",
+      piNumber: "PI-SINGLE",
+      serialNumber: "SN-SINGLE-OP",
+      barcode: "SN-SINGLE-OP",
+      qrId: "QR-SN-SINGLE-OP",
+      itemCode: "OP-LITE",
+      glassType: "8MM GUARDIAN SUNGUARD SN GREY 50 T",
+      glassCategory: "DLGU",
+      width: 1000,
+      height: 2000,
+      qty: 1,
+      sqm: 2.0,
+      delLocation: "FACTORY",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+      currentStage: "Lamination",
+      completedStages: ["Cutting", "Pairing"],
+      status: "In Production",
+      colorOrClear: "Colour",
+      updatedAt: new Date().toISOString(),
+    };
+    (pairA as any).lamPairId = "lam-single-pair-1";
+
+    const pairB: any = {
+      id: "single-test-ip",
+      piId: "PI-SINGLE",
+      piNumber: "PI-SINGLE",
+      serialNumber: "SN-SINGLE-IP",
+      barcode: "SN-SINGLE-IP",
+      qrId: "QR-SN-SINGLE-IP",
+      itemCode: "IP-LITE",
+      glassType: "6MM CLEAR (Front Laminated Pane)",
+      glassCategory: "DLGU",
+      width: 1000,
+      height: 2000,
+      qty: 1,
+      sqm: 2.0,
+      delLocation: "FACTORY",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+      currentStage: "Lamination",
+      completedStages: ["Cutting", "Pairing"],
+      status: "In Production",
+      colorOrClear: "Clear",
+      updatedAt: new Date().toISOString(),
+    };
+    (pairB as any).lamPairId = "lam-single-pair-1";
+
+    glassItemsDatabase.push(pairA, pairB);
+
+    // Request rejecting ONLY Ply 1 (Inner Lite IP)
+    const req: any = {
+      body: {
+        serialNumber: "SN-SINGLE-IP",
+        serialNumbers: ["SN-SINGLE-IP"],
+        singlePaneOnly: true,
+        defectivePane: "IP_PLY1",
+        defectiveSerialNumber: "SN-SINGLE-IP",
+        reason: "Scratch on Ply 1 front clear lite",
+        operator: "Lami QC Operator",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({
+        json: (d: any) => {
+          responseData = { code, ...d };
+        },
+      }),
+      json: (d: any) => {
+        responseData = d;
+      },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // Defective Ply 1 (pairB) MUST be in Reworking / Cutting for remake
+    expect(pairB.status).toBe("Reworking");
+    expect(pairB.currentStage).toBe("Cutting");
+
+    // Good Outer Pane (pairA) MUST NOT be rejected! It should be unlinked & back in Pairing buffer
+    expect(pairA.status).toBe("Pending");
+    expect(pairA.currentStage).toBe("Pairing");
+    expect((pairA as any).lamPairId).toBeUndefined();
+
+    expect(responseData?.items?.length).toBe(1);
+    expect(responseData?.rejectEntries?.length).toBe(1);
+  });
 });

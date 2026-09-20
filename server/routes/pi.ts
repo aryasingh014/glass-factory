@@ -59,33 +59,48 @@ export function loadDatabaseFromDisk(force = false): void {
         });
 
         // Normalize batches: 1 PDF is strictly 100% Colour or 100% Clear (never Mixed)
+        const colourRegex = /colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
         let dataChanged = false;
         piDatabase.forEach((pi) => {
           const batchItems = glassItemsDatabase.filter(
             (item) => item.piId === pi.id || (item.piNumber && item.piNumber === pi.piNumber)
           );
-          
+
+          const batchFullText = (
+            (pi.fileName || "") + " " +
+            (pi.glassDescription || "") + " " +
+            ((pi as any).remarks || "") + " " +
+            batchItems.map((i) => `${i.glassType || ""} ${i.glassCode || ""} ${i.category || ""} ${i.glassColor || ""} ${i.remarks || ""}`).join(" ")
+          ).toLowerCase();
+
+          const hasBatchColourKeyword = colourRegex.test(batchFullText);
+          const hasBatchClearKeyword = /clear/i.test(batchFullText);
+
           let batchFinish: "Colour" | "Clear" = "Clear";
-          if (pi.colorOrClear === "Colour" || (pi.colorOrClear as any) === "Color") {
+          if (hasBatchColourKeyword) {
             batchFinish = "Colour";
-          } else if (pi.colorOrClear === "Clear") {
+          } else if (pi.colorOrClear === "Colour" || (pi.colorOrClear as any) === "Color" || pi.finish === "Colour") {
+            batchFinish = "Colour";
+          } else if (pi.colorOrClear === "Clear" || pi.finish === "Clear") {
             batchFinish = "Clear";
-          } else if (String((pi as any).glassColor || "").toLowerCase().includes("colour")) {
-            batchFinish = "Colour";
+          } else if (hasBatchClearKeyword) {
+            batchFinish = "Clear";
           } else {
             const clearCount = batchItems.filter((item) => item.colorOrClear === "Clear" || /clear/i.test(item.glassColor || "")).length;
-            const colourCount = batchItems.filter((item) => item.colorOrClear === "Colour" || (item.colorOrClear as any) === "Color" || (/colour|color|tint|grey|gray|bronze|blue|green/i.test(item.glassColor || "") && !/clear/i.test(item.glassColor || ""))).length;
+            const colourCount = batchItems.filter((item) => item.colorOrClear === "Colour" || (item.colorOrClear as any) === "Color" || (colourRegex.test(item.glassColor || "") && !/clear/i.test(item.glassColor || ""))).length;
             batchFinish = colourCount > clearCount ? "Colour" : "Clear";
           }
 
-          if (pi.colorOrClear !== batchFinish) {
+          if (pi.colorOrClear !== batchFinish || pi.finish !== batchFinish) {
             pi.colorOrClear = batchFinish;
+            pi.finish = batchFinish;
             dataChanged = true;
           }
 
           batchItems.forEach((item) => {
-            if (item.colorOrClear !== batchFinish) {
+            if (item.colorOrClear !== batchFinish || item.finish !== batchFinish) {
               item.colorOrClear = batchFinish;
+              item.finish = batchFinish;
               dataChanged = true;
             }
             if (batchFinish === "Colour" && (!item.glassColor || item.glassColor === "Clear Glass" || item.glassColor === "Clear Float")) {
@@ -181,13 +196,16 @@ export function loadDatabaseFromDisk(force = false): void {
           orphanBatches.get(key)!.push(item);
         });
         orphanBatches.forEach((items) => {
+          const batchText = items.map((i) => `${i.glassType || ""} ${i.glassCode || ""} ${i.glassColor || ""}`).join(" ").toLowerCase();
+          const hasColour = colourRegex.test(batchText);
           const clearCount = items.filter((item) => item.colorOrClear === "Clear" || /clear/i.test(item.glassColor || "")).length;
-          const colourCount = items.filter((item) => item.colorOrClear === "Colour" || (item.colorOrClear as any) === "Color" || (/colour|color|tint|grey|gray|bronze|blue|green/i.test(item.glassColor || "") && !/clear/i.test(item.glassColor || ""))).length;
-          const finish: "Colour" | "Clear" = colourCount > clearCount ? "Colour" : "Clear";
+          const colourCount = items.filter((item) => item.colorOrClear === "Colour" || (item.colorOrClear as any) === "Color" || (colourRegex.test(item.glassColor || "") && !/clear/i.test(item.glassColor || ""))).length;
+          const finish: "Colour" | "Clear" = hasColour || colourCount > clearCount ? "Colour" : "Clear";
 
           items.forEach((item) => {
-            if (item.colorOrClear !== finish) {
+            if (item.colorOrClear !== finish || item.finish !== finish) {
               item.colorOrClear = finish;
+              item.finish = finish;
               dataChanged = true;
             }
             if (finish === "Clear" && item.glassColor === "Coloured Glass") {

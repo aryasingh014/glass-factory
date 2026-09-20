@@ -1,12 +1,15 @@
 import crypto from "crypto";
 import { UserRole } from "@shared/api";
 import { env } from "./env";
+import { UserProfile } from "./users";
 
 const JWT_SECRET = env.JWT_SECRET;
 
 export interface AuthPayload {
   userId: string;
   username: string;
+  email?: string;
+  name?: string;
   role: UserRole;
   exp: number;
 }
@@ -16,7 +19,27 @@ export function generateToken(role: UserRole, username = "User"): string {
   const payload: AuthPayload = {
     userId: `user-${role.toLowerCase()}`,
     username: `${role} User`,
+    email: `${role.toLowerCase()}@sejalglass.com`,
+    name: `${role} User`,
     role,
+    exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days expiration
+  };
+  const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", JWT_SECRET)
+    .update(`${header}.${payloadEncoded}`)
+    .digest("base64url");
+  return `${header}.${payloadEncoded}.${signature}`;
+}
+
+export function generateUserToken(user: UserProfile): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload: AuthPayload = {
+    userId: user.id,
+    username: user.username,
+    email: user.email,
+    name: user.name,
+    role: user.role,
     exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days expiration
   };
   const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString("base64url");

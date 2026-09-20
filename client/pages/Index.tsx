@@ -52,10 +52,11 @@ import {
   CheckCircle2,
   AlertCircle,
   Calendar,
-  Users,
   FolderOpen,
   Folder,
   ExternalLink,
+  LogOut,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +75,7 @@ import { ProductionOverviewView } from "@/components/ProductionOverviewView";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
-import { UniversalSearchResults } from "@/lib/UniversalSearchResults";
+import { useAuth } from "@/context/AuthContext";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
 
 export default function Index() {
@@ -105,47 +106,11 @@ export default function Index() {
       localStorage.setItem("sejal_active_module", activeTab);
     } catch {}
   }, [activeTab]);
-  const [userRole, setUserRole] = useState<UserRole>(() => {
-    const saved = localStorage.getItem("user_role") as UserRole;
-    return saved === "Admin" || saved === "Supervisor" || saved === "Operator" ? saved : "Admin";
-  });
+  const { user, role: userRole, logout, getAuthHeaders } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  const handleRoleChange = async (role: UserRole) => {
-    setUserRole(role);
-    localStorage.setItem("user_role", role);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.token) {
-          localStorage.setItem("auth_token", data.token);
-        }
-      }
-    } catch (e) {
-      console.error("Login token fetch failed:", e);
-    }
-    toast.success(`Active role changed to ${role}`);
-  };
-
-  const getAuthHeaders = (): Record<string, string> => {
-    const token = localStorage.getItem("auth_token");
-    const headers: Record<string, string> = { "x-user-role": userRole };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-    return headers;
-  };
 
   const navigate = useNavigate();
   // Interactive UI states
-  const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const searchContainerRef = React.useRef<HTMLDivElement>(null);
-  const [searchFocused, setSearchFocused] = useState(false);
   const notificationsRef = React.useRef<HTMLDivElement>(null);
   const userMenuRef = React.useRef<HTMLDivElement>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -171,28 +136,11 @@ export default function Index() {
       ) {
         setUserMenuOpen(false);
       }
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(event.target as Node)
-      ) {
-        setSearchFocused(false);
-      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, []);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "/" || e.key === "k" || e.key === "K")) {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Data states
@@ -1132,44 +1080,8 @@ export default function Index() {
           </div>
         </div>
 
-        {/* Right Side: Interactive Search Bar, Notifications & User Profile */}
+        {/* Right Side: Sync Button, Weather, Notifications & User Profile */}
         <div className="flex items-center gap-4">
-          <div className="relative hidden md:block w-72" ref={searchContainerRef}>
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <Input
-              ref={searchInputRef}
-              placeholder="Universal Search (PI, Barcode, Serial)..."
-              value={piSearchTerm}
-              onFocus={() => setSearchFocused(true)}
-              onChange={(e) => {
-                setPiSearchTerm(e.target.value);
-                setSearchFocused(true);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setSearchFocused(false);
-              }}
-              className="pl-8 pr-12 h-8 text-xs bg-slate-50 border-slate-200 rounded-lg focus-visible:ring-1 focus-visible:ring-purple-600"
-            />
-            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs">
-              Ctrl /
-            </span>
-
-            {/* Universal Search Results Popover Dropdown */}
-            {searchFocused && piSearchTerm.trim().length > 0 && (
-              <UniversalSearchResults
-                searchTerm={piSearchTerm}
-                pis={pis}
-                items={items}
-                onSelectPI={(pi) => openPIDetails(pi)}
-                onSelectItem={(item) => handleOpenSticker(item)}
-                onSelectModule={(tabId) => {
-                  setActiveTab(tabId as any);
-                }}
-                onClose={() => setSearchFocused(false)}
-              />
-            )}
-          </div>
-
           {/* Single Global Sync Now Button */}
           <Button
             size="sm"
@@ -1391,11 +1303,11 @@ export default function Index() {
                 className="flex items-center gap-2 pl-2 border-l border-slate-200 hover:opacity-80 transition-opacity text-left"
               >
                 <div className="w-8 h-8 rounded-full bg-[#1a3a6b] text-white font-bold text-xs flex items-center justify-center shadow-xs">
-                  {userRole.charAt(0)}
+                  {user?.name ? user.name.charAt(0).toUpperCase() : userRole.charAt(0)}
                 </div>
                 <div className="hidden sm:block">
                   <div className="text-xs font-bold text-slate-900 leading-tight flex items-center gap-1">
-                    {userRole} <ChevronDown className="w-3 h-3 text-slate-400" />
+                    {user?.name || userRole} <ChevronDown className="w-3 h-3 text-slate-400" />
                   </div>
                   <div className="text-[10px] text-slate-500 font-medium leading-tight">
                     {userRole === "Admin" ? "Administrator" : userRole === "Supervisor" ? "Production Supervisor" : "Station Operator"}
@@ -1404,45 +1316,48 @@ export default function Index() {
               </button>
 
               {userMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-2">
-                  <div className="px-3 py-2 border-b border-slate-100">
-                    <div className="font-bold text-xs text-slate-900">{userRole} User</div>
-                    <div className="text-[10px] text-slate-500">{userRole.toLowerCase()}@sejalglass.com</div>
-                    <div className="mt-1">
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-900">
-                        Active Role: {userRole}
+                <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-2">
+                  <div className="px-3 py-2.5 border-b border-slate-100 bg-slate-50/60 rounded-lg mb-1">
+                    <div className="font-bold text-xs text-slate-900">{user?.name || `${userRole} User`}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{user?.email || `${userRole.toLowerCase()}@sejalglass.com`}</div>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold ${
+                        userRole === "Admin" 
+                          ? "bg-purple-100 text-purple-900 border border-purple-200" 
+                          : userRole === "Supervisor" 
+                          ? "bg-blue-100 text-blue-900 border border-blue-200" 
+                          : "bg-emerald-100 text-emerald-900 border border-emerald-200"
+                      }`}>
+                        <ShieldCheck className="w-2.5 h-2.5" />
+                        {userRole} Account
                       </span>
                     </div>
                   </div>
+
                   <div className="py-1 text-xs space-y-0.5">
-                    <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Switch Active Role</div>
-                    {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
-                      <button
-                        key={r}
-                        onClick={() => {
-                          handleRoleChange(r);
-                          setUserMenuOpen(false);
-                        }}
-                        className={`w-full text-left px-3 py-1.5 rounded-lg font-medium flex items-center justify-between transition-all ${userRole === r ? "bg-blue-50 text-blue-900 font-bold" : "text-slate-700 hover:bg-slate-50"
-                          }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <ShieldCheck className="w-3.5 h-3.5 text-[#1a3a6b]" /> {r}
-                        </span>
-                        {userRole === r && <Check className="w-3.5 h-3.5 text-[#1a3a6b]" />}
-                      </button>
-                    ))}
                     {userRole === "Admin" && (
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           handleClearDatabase();
                         }}
-                        className="w-full text-left px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 font-bold flex items-center gap-2 transition-all mt-1 border-t border-slate-100 pt-2"
+                        className="w-full text-left px-3 py-1.5 rounded-lg text-amber-700 hover:bg-amber-50 font-medium flex items-center gap-2 transition-all"
                       >
-                        <Trash2 className="w-3.5 h-3.5 text-red-600" /> Clear System Database
+                        <Trash2 className="w-3.5 h-3.5 text-amber-600" /> Clear System Database
                       </button>
                     )}
+
+                    <button
+                      onClick={async () => {
+                        setUserMenuOpen(false);
+                        await logout();
+                        toast.success("Signed out successfully");
+                        navigate("/login");
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 font-bold flex items-center gap-2 transition-all border-t border-slate-100 mt-1 pt-2"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-red-600" /> Sign Out
+                    </button>
                   </div>
                 </div>
               )}

@@ -1975,10 +1975,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     return (
       <div className="space-y-4 animate-in fade-in duration-200">
         {/* ── Filter Bar with FINISH Tabs (Clear / Colour / All) & Search ── */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-3.5">
+          {/* Top Row: Queue Tabs (Left) & Export Batches Button (Right) */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             {/* DLGU vs DGU vs LAMINATION PROCESS QUEUE TABS */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200">
+            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setBatchCategoryFilter("ALL")}
@@ -2061,53 +2062,59 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </button>
             </div>
 
-            {/* View Mode Switcher Toggle */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setBatchViewMode("CUSTOMER")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  batchViewMode === "CUSTOMER"
-                    ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Group by Customer</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {groupedCustomerBatches.length}
-                </span>
-              </button>
+            {/* Export Batches Excel Button (Top Row - Right Side) */}
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const exportData = filteredBatches.map((b, idx) => ({
+                  "Sr No": idx + 1,
+                  "Batch Number": formatBatchNumber(b.piNumber),
+                  "Customer": b.customerName,
+                  "Project": b.projectName,
+                  "Job Order No": b.jobOrderNumber || "—",
+                  "SFO No": b.sfoNo || "—",
+                  "Finish": b.finish,
+                  "Completed Items": b.completedCount,
+                  "Total Items": b.totalItems,
+                  "Total SQM": b.totalSqm.toFixed(2),
+                  "Uploaded Date": formatPlatformDate(b.createdAt),
+                  "Status": b.status,
+                }));
+                exportStageWipToExcel("Cutting", items, "Cutting_Batches_Summary");
+              }}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Export Batches (.xlsx)</span>
+            </Button>
+          </div>
 
-              <button
-                type="button"
-                onClick={() => setBatchViewMode("FLAT")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  batchViewMode === "FLAT"
-                    ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <ClipboardList className="w-3.5 h-3.5" />
-                <span>All Batches (Flat)</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                  }`}
+          {/* Bottom Row: Search Bar (Left Side) & View Mode Switcher (Right Side - Parallel) */}
+          <div className="flex items-center justify-between flex-wrap gap-3 pt-2.5 border-t border-slate-100">
+            {/* Search Input (Left side) */}
+            <div className="relative flex-1 min-w-[260px] max-w-md">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+              <Input
+                value={batchSearchTerm}
+                onChange={(e) => setBatchSearchTerm(e.target.value)}
+                placeholder="Search batch by Customer, Job Order, Project..."
+                className="pl-9 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white"
+              />
+              {batchSearchTerm && (
+                <button
+                  onClick={() => setBatchSearchTerm("")}
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
                 >
-                  {filteredBatches.length}
-                </span>
-              </button>
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
-            {/* Search Input & Controls */}
-            <div className="flex items-center gap-2 flex-1 max-w-xl w-full justify-end flex-wrap">
+            {/* View Mode Switcher Toggle (Right side, parallel to search bar) */}
+            <div className="flex items-center gap-2 flex-wrap">
               {batchViewMode === "CUSTOMER" && groupedCustomerBatches.length > 0 && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 mr-1">
                   <Button
                     size="sm"
                     variant="ghost"
@@ -2128,50 +2135,47 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </div>
               )}
 
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <Input
-                  value={batchSearchTerm}
-                  onChange={(e) => setBatchSearchTerm(e.target.value)}
-                  placeholder="Search batch by Customer, Job Order, Project..."
-                  className="pl-9 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white"
-                />
-                {batchSearchTerm && (
-                  <button
-                    onClick={() => setBatchSearchTerm("")}
-                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setBatchViewMode("CUSTOMER")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                    batchViewMode === "CUSTOMER"
+                      ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Group by Customer</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                    }`}
                   >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+                    {groupedCustomerBatches.length}
+                  </span>
+                </button>
 
-              {/* Export Batches Excel Button */}
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  const exportData = filteredBatches.map((b, idx) => ({
-                    "Sr No": idx + 1,
-                    "Batch Number": formatBatchNumber(b.piNumber),
-                    "Customer": b.customerName,
-                    "Project": b.projectName,
-                    "Job Order No": b.jobOrderNumber || "—",
-                    "SFO No": b.sfoNo || "—",
-                    "Finish": b.finish,
-                    "Completed Items": b.completedCount,
-                    "Total Items": b.totalItems,
-                    "Total SQM": b.totalSqm.toFixed(2),
-                    "Uploaded Date": formatPlatformDate(b.createdAt),
-                    "Status": b.status,
-                  }));
-                  exportStageWipToExcel("Cutting", items, "Cutting_Batches_Summary");
-                }}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Export Batches (.xlsx)</span>
-              </Button>
+                <button
+                  type="button"
+                  onClick={() => setBatchViewMode("FLAT")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                    batchViewMode === "FLAT"
+                      ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <ClipboardList className="w-3.5 h-3.5" />
+                  <span>All Batches (Flat)</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
+                    }`}
+                  >
+                    {filteredBatches.length}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3233,6 +3237,110 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               )}
             </div>
 
+            {/* Primary Action Button in Top Right (e.g. DGU Send to Dispatch / Lamination Advance) */}
+            {stage === "DGU" && (
+              selectedRowIds.length > 0 ? (
+                <Button
+                  size="sm"
+                  onClick={handleBatchComplete}
+                  disabled={
+                    loading ||
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                  }
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in ${
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                  }`}
+                  title={
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                      ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
+                      : "Send ready paired DGU units to Dispatch"
+                  }
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>
+                    Send Selected to Dispatch (
+                    {
+                      stageRows
+                        .filter((r) => selectedRowIds.includes(r.id))
+                        .filter((r) => r.dguPairReady).length
+                    } Paired)
+                  </span>
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={handleSendAllDguToDispatch}
+                  disabled={loading || displayedRows.filter((r) => r.dguPairReady).length === 0}
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 ${
+                    displayedRows.filter((r) => r.dguPairReady).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                  }`}
+                  title="Send all ready paired DGU units to Dispatch"
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>Send All to Dispatch ({displayedRows.filter((r) => r.dguPairReady).length} Paired)</span>
+                </Button>
+              )
+            )}
+
+            {stage === "Lamination" && (
+              selectedRowIds.length > 0 ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleBatchComplete}
+                  disabled={
+                    loading ||
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                  }
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all ${
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                  }`}
+                  title={
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
+                      : "Advance selected ready items from Lamination"
+                  }
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>
+                    Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
+                  </span>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSendAllToFinished}
+                  disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
+                    displayedRows.filter((r) => !r.isHolding).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white"
+                  }`}
+                  title={
+                    displayedRows.filter((r) => !r.isHolding).length === 0
+                      ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
+                      : "Advance ready items from Lamination"
+                  }
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
+                </Button>
+              )
+            )}
+
             {/* EXPORT EXCEL DROPDOWN BUTTON (Header Position) */}
             <div className="relative inline-block text-left shrink-0" ref={exportMenuRef}>
               <Button
@@ -3677,20 +3785,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             )}
 
             {stage === "Lamination" ? (
-              <span className="font-black text-slate-900">
-                Lamination Queue ({displayedRows.length} {displayedRows.length === 1 ? "Unit" : "Units"})
-              </span>
-            ) : stage === "DGU" ? (
-              <span className="font-black text-slate-900">
-                All DGU Units in Queue ({displayedRows.length} {displayedRows.length === 1 ? "Unit" : "Units"})
-              </span>
-            ) : stage === "Finished" ? (
-              <span className="font-black text-slate-900">
-                Finished Products in Warehouse ({displayedRows.length} {displayedRows.length === 1 ? "Unit" : "Units"})
-              </span>
-            ) : null}
-
-            {stage === "Lamination" ? (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-black border bg-amber-100 text-amber-900 border-amber-300">
                 {displayedRows.length} {displayedRows.length === 1 ? "Laminated Unit" : "Laminated Units"} ({lamDirectCount} Direct / {lamDlguCount} DLGU)
               </span>
@@ -3819,109 +3913,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               >
                 <CheckCircle className="w-3.5 h-3.5 text-amber-100" /> Cut & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
               </Button>
-            )}
-
-            {stage === "DGU" && (
-              selectedRowIds.length > 0 ? (
-                <Button
-                  size="sm"
-                  onClick={handleBatchComplete}
-                  disabled={
-                    loading ||
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                  }
-                  className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs animate-in fade-in ${
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                      ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
-                      : "Send ready paired DGU units to Dispatch"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>
-                    Send Selected to Dispatch (
-                    {
-                      stageRows
-                        .filter((r) => selectedRowIds.includes(r.id))
-                        .filter((r) => r.dguPairReady).length
-                    } Paired)
-                  </span>
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={handleSendAllDguToDispatch}
-                  disabled={loading || displayedRows.filter((r) => r.dguPairReady).length === 0}
-                  className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs ${
-                    displayedRows.filter((r) => r.dguPairReady).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title="Send all ready paired DGU units to Dispatch"
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>Send All to Dispatch ({displayedRows.filter((r) => r.dguPairReady).length} Paired)</span>
-                </Button>
-              )
-            )}
-
-            {stage === "Lamination" && (
-              selectedRowIds.length > 0 ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleBatchComplete}
-                  disabled={
-                    loading ||
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                  }
-                  className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs animate-in fade-in transition-all ${
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                      ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
-                      : "Advance selected ready items from Lamination"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>
-                    Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
-                  </span>
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleSendAllToFinished}
-                  disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
-                  className={`font-black text-xs h-7 px-3 gap-1.5 rounded-xl shadow-xs transition-all ${
-                    displayedRows.filter((r) => !r.isHolding).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    displayedRows.filter((r) => !r.isHolding).length === 0
-                      ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
-                      : "Advance ready items from Lamination"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
-                </Button>
-              )
             )}
 
 

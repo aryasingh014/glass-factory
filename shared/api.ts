@@ -35,6 +35,7 @@ export interface GlassItem {
   glassCategory?: "DGU" | "Lamination" | "DLGU"; // Process product category (DGU, Lamination, or DLGU)
   dlguPhase?: "LamPairing" | "DguPairing"; // Active pairing phase for DLGU items
   colorOrClear?: "Clear" | "Colour"; // Glass sticker finish/type
+  finish?: "Clear" | "Colour";
   glassColor?: string;  // e.g. Euro Grey, Bronze, Blue, Green, Clear Float, etc.
   delLocation: string;  // FACTORY / SITE
   sketch?: string;      // SKETCH-01

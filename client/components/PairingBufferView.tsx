@@ -1176,158 +1176,248 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Sub-tabs (Pending Breakdown vs Colour/Clear) on Left + PI, Search, Refresh on Right */}
-        <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-slate-100">
-          {/* Sub-tabs when Pending Glass is selected */}
-          {categoryFilter === "ALL_PENDING" ? (
-            <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap animate-in fade-in zoom-in-95 duration-150">
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("ALL")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  pendingSubFilter === "ALL"
-                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                }`}
-              >
-                <span>All Pending</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800">
-                  {pendingPiecesCount} pcs
+        {/* Row 2: Sub-tabs, Search & Filters on Left + View Mode Switcher on Right */}
+        <div className="flex items-center justify-between flex-wrap gap-2.5 pt-2 border-t border-slate-100">
+          {/* Left Side: Sub-tabs + Search Bar + Client / PI Dropdowns */}
+          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
+            {/* Sub-tabs when Pending Glass is selected */}
+            {categoryFilter === "ALL_PENDING" ? (
+              <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("ALL")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    pendingSubFilter === "ALL"
+                      ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                  }`}
+                >
+                  <span>All Pending</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800">
+                    {pendingPiecesCount} pcs
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("CUTTING")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    pendingSubFilter === "CUTTING"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "text-amber-800 hover:bg-amber-100/60"
+                  }`}
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>Pending Cutting</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    pendingSubFilter === "CUTTING" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                  }`}>
+                    {pendingCuttingPiecesCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("BUFFER")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    pendingSubFilter === "BUFFER"
+                      ? "bg-purple-600 text-white shadow-xs"
+                      : "text-purple-800 hover:bg-purple-100/60"
+                  }`}
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>Waiting Partner (In Buffer)</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    pendingSubFilter === "BUFFER" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                  }`}>
+                    {pendingBufferPiecesCount}
+                  </span>
+                </button>
+
+                <div className="h-4 w-px bg-slate-300 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("DGU")}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                    pendingSubFilter === "DGU"
+                      ? "bg-teal-600 text-white shadow-xs"
+                      : "text-teal-700 hover:bg-teal-50"
+                  }`}
+                >
+                  <span>DGU ({pendingDguPiecesCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("LAMINATION")}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                    pendingSubFilter === "LAMINATION"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "text-amber-700 hover:bg-amber-50"
+                  }`}
+                >
+                  <span>Lam ({pendingLamPiecesCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPendingSubFilter("DLGU")}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                    pendingSubFilter === "DLGU"
+                      ? "bg-purple-600 text-white shadow-xs"
+                      : "text-purple-700 hover:bg-purple-50"
+                  }`}
+                >
+                  <span>DLGU ({pendingDlguPiecesCount})</span>
+                </button>
+              </div>
+            ) : (categoryFilter === "DGU" || categoryFilter === "LAMINATION") ? (
+              <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={() => setFinishFilter("ALL")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    finishFilter === "ALL"
+                      ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                  }`}
+                >
+                  <span>All</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                  }`}>
+                    {scopedAllStickerCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFinishFilter("COLOUR")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    finishFilter === "COLOUR"
+                      ? "bg-purple-600 text-white shadow-xs"
+                      : "text-purple-800 hover:bg-purple-100/60"
+                  }`}
+                >
+                  <span>Colour Glass</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                  }`}>
+                    {scopedColourStickerCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFinishFilter("CLEAR")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    finishFilter === "CLEAR"
+                      ? "bg-cyan-600 text-white shadow-xs"
+                      : "text-cyan-800 hover:bg-cyan-100/60"
+                  }`}
+                >
+                  <span>Clear Glass</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    finishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                  }`}>
+                    {scopedClearStickerCount}
+                  </span>
+                </button>
+              </div>
+            ) : <div />}
+
+            {/* Client Filter */}
+            {availableCustomers.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Client:
                 </span>
-              </button>
+                <select
+                  value={selectedCustomerFilter}
+                  onChange={(e) => {
+                    setSelectedCustomerFilter(e.target.value);
+                    setSelectedRowIds([]);
+                  }}
+                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[135px] truncate"
+                  title="Filter by Customer / Client Name"
+                >
+                  <option value="ALL">All Clients ({availableCustomers.length})</option>
+                  {availableCustomers.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.totalItems} pcs)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("CUTTING")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  pendingSubFilter === "CUTTING"
-                    ? "bg-amber-600 text-white shadow-xs"
-                    : "text-amber-800 hover:bg-amber-100/60"
-                }`}
+            {/* PI Filter */}
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
+              <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-slate-400" /> PI:
+              </span>
+              <select
+                value={selectedPIFilter}
+                onChange={(e) => {
+                  setSelectedPIFilter(e.target.value);
+                  setSelectedRowIds([]);
+                }}
+                className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[115px] sm:w-[125px] truncate"
               >
-                <Clock className="w-3 h-3" />
-                <span>Pending Cutting</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  pendingSubFilter === "CUTTING" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
-                }`}>
-                  {pendingCuttingPiecesCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("BUFFER")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  pendingSubFilter === "BUFFER"
-                    ? "bg-purple-600 text-white shadow-xs"
-                    : "text-purple-800 hover:bg-purple-100/60"
-                }`}
-              >
-                <Layers className="w-3 h-3" />
-                <span>Waiting Partner (In Buffer)</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  pendingSubFilter === "BUFFER" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
-                }`}>
-                  {pendingBufferPiecesCount}
-                </span>
-              </button>
-
-              <div className="h-4 w-px bg-slate-300 mx-0.5" />
-
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("DGU")}
-                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
-                  pendingSubFilter === "DGU"
-                    ? "bg-teal-600 text-white shadow-xs"
-                    : "text-teal-700 hover:bg-teal-50"
-                }`}
-              >
-                <span>DGU ({pendingDguPiecesCount})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("LAMINATION")}
-                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
-                  pendingSubFilter === "LAMINATION"
-                    ? "bg-amber-600 text-white shadow-xs"
-                    : "text-amber-700 hover:bg-amber-50"
-                }`}
-              >
-                <span>Lam ({pendingLamPiecesCount})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPendingSubFilter("DLGU")}
-                className={`px-2 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer ${
-                  pendingSubFilter === "DLGU"
-                    ? "bg-purple-600 text-white shadow-xs"
-                    : "text-purple-700 hover:bg-purple-50"
-                }`}
-              >
-                <span>DLGU ({pendingDlguPiecesCount})</span>
-              </button>
+                <option value="ALL">All PIs ({availablePIs.length})</option>
+                {availablePIs.map((p) => (
+                  <option key={p.id} value={p.id || p.piNumber}>
+                    PI {formatBatchNumber(p.piNumber)} — {p.customerName}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : (categoryFilter === "DGU" || categoryFilter === "LAMINATION") ? (
-            <div className="flex items-center gap-1 p-0.5 bg-slate-100/90 rounded-xl border border-slate-200/80 animate-in fade-in zoom-in-95 duration-150">
-              <button
-                type="button"
-                onClick={() => setFinishFilter("ALL")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  finishFilter === "ALL"
-                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                }`}
-              >
-                <span>All</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
-                }`}>
-                  {scopedAllStickerCount}
-                </span>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => setFinishFilter("COLOUR")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  finishFilter === "COLOUR"
-                    ? "bg-purple-600 text-white shadow-xs"
-                    : "text-purple-800 hover:bg-purple-100/60"
-                }`}
-              >
-                <span>Colour Glass</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
-                }`}>
-                  {scopedColourStickerCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFinishFilter("CLEAR")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  finishFilter === "CLEAR"
-                    ? "bg-cyan-600 text-white shadow-xs"
-                    : "text-cyan-800 hover:bg-cyan-100/60"
-                }`}
-              >
-                <span>Clear Glass</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  finishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
-                }`}>
-                  {scopedClearStickerCount}
-                </span>
-              </button>
+            {/* Search Input */}
+            <div className="relative min-w-[170px] max-w-xs flex-1">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search POS, Code, Spec..."
+                className="pl-7 pr-7 text-xs bg-slate-50 border-slate-200 h-8 rounded-xl focus:bg-white w-full"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
-          ) : <div />}
+          </div>
 
-          {/* Right Customer Filter, PI Filter, Search Input & Refresh */}
-          <div className="flex items-center gap-2 shrink-0 flex-nowrap ml-auto">
-            {/* View Mode Switcher Toggle */}
+          {/* Right Side: View Mode Switcher Toggle (Parallel on Right Side) */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {bufferViewMode === "CUSTOMER" && groupedCustomerRows.length > 0 && (
+              <div className="flex items-center gap-1 shrink-0 mr-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAllBufferCustomersExpanded(true)}
+                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
+                >
+                  Expand All
+                </Button>
+                <span className="text-slate-300">|</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAllBufferCustomersExpanded(false)}
+                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
+                >
+                  Collapse All
+                </Button>
+              </div>
+            )}
+
             <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
               <button
                 type="button"
@@ -1368,91 +1458,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                   {filteredRows.length}
                 </span>
               </button>
-            </div>
-
-            {bufferViewMode === "CUSTOMER" && groupedCustomerRows.length > 0 && (
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setAllBufferCustomersExpanded(true)}
-                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
-                >
-                  Expand All
-                </Button>
-                <span className="text-slate-300">|</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setAllBufferCustomersExpanded(false)}
-                  className="text-[11px] font-bold text-slate-600 hover:text-indigo-700 h-8 px-2"
-                >
-                  Collapse All
-                </Button>
-              </div>
-            )}
-
-            {availableCustomers.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
-                <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Client:
-                </span>
-                <select
-                  value={selectedCustomerFilter}
-                  onChange={(e) => {
-                    setSelectedCustomerFilter(e.target.value);
-                    setSelectedRowIds([]);
-                  }}
-                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[140px] lg:w-[160px] truncate"
-                  title="Filter by Customer / Client Name"
-                >
-                  <option value="ALL">All Clients ({availableCustomers.length})</option>
-                  {availableCustomers.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name} ({c.totalItems} pcs)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
-              <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
-                <FileText className="w-3.5 h-3.5 text-slate-400" /> PI:
-              </span>
-              <select
-                value={selectedPIFilter}
-                onChange={(e) => {
-                  setSelectedPIFilter(e.target.value);
-                  setSelectedRowIds([]);
-                }}
-                className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[130px] lg:w-[145px] truncate"
-              >
-                <option value="ALL">All PIs ({availablePIs.length})</option>
-                {availablePIs.map((p) => (
-                  <option key={p.id} value={p.id || p.piNumber}>
-                    PI {formatBatchNumber(p.piNumber)} — {p.customerName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="relative w-36 sm:w-44 lg:w-48 shrink">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search POS, Code, Spec..."
-                className="pl-7 pr-7 text-xs bg-slate-50 border-slate-200 h-8 rounded-xl focus:bg-white"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
           </div>
         </div>

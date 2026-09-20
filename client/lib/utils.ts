@@ -131,7 +131,7 @@ export function formatExcelDate(val: string | number | undefined): string {
  * Determines whether a glass item is Clear or Coloured glass.
  * Prioritizes user's explicit selection (colorOrClear: 'Clear' | 'Colour').
  */
-export function getItemFinish(item: { colorOrClear?: string; category?: string; glassType?: string; glassColor?: string } | null | undefined): "Clear" | "Colour" {
+export function getItemFinish(item: { finish?: string; colorOrClear?: string; category?: string; glassType?: string; glassColor?: string } | null | undefined): "Clear" | "Colour" {
   if (!item) return "Clear";
 
   const typeStr = (item.glassType || "").toLowerCase();
@@ -142,17 +142,35 @@ export function getItemFinish(item: { colorOrClear?: string; category?: string; 
     typeStr.includes("grey") ||
     typeStr.includes("gray") ||
     typeStr.includes("bronze") ||
+    typeStr.includes("bronz") ||
     typeStr.includes("blue") ||
     typeStr.includes("green") ||
     typeStr.includes("stopray") ||
     typeStr.includes("sunguard") ||
-    typeStr.includes("sn grey") ||
+    typeStr.includes("sn ") ||
+    typeStr.includes("sn40") ||
+    typeStr.includes("sn50") ||
+    typeStr.includes("sn70") ||
     typeStr.includes("syp") ||
+    typeStr.includes("ykn") ||
+    typeStr.includes("ybr") ||
+    typeStr.includes("guardian") ||
+    typeStr.includes("sunergy") ||
+    typeStr.includes("cool-lite") ||
+    typeStr.includes("cool lite") ||
+    typeStr.includes("solar") ||
+    typeStr.includes("reflective") ||
+    typeStr.includes("antelio") ||
+    typeStr.includes("planibel") ||
     typeStr.includes("tint") ||
     typeStr.includes("coated") ||
+    typeStr.includes("frosted") ||
+    typeStr.includes("ceramic") ||
+    typeStr.includes("frit") ||
     colorStr.includes("colour") ||
     colorStr.includes("color") ||
     colorStr.includes("grey") ||
+    colorStr.includes("gray") ||
     colorStr.includes("bronze") ||
     colorStr.includes("blue") ||
     colorStr.includes("green") ||
@@ -167,7 +185,9 @@ export function getItemFinish(item: { colorOrClear?: string; category?: string; 
     return "Colour";
   }
 
+  if (item.finish === "Colour" || item.finish === "Color") return "Colour";
   if (item.colorOrClear === "Colour" || item.colorOrClear === "Color") return "Colour";
+  if (item.finish === "Clear") return "Clear";
   if (item.colorOrClear === "Clear") return "Clear";
 
   return "Clear";

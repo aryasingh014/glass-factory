@@ -1112,79 +1112,133 @@ export const handleRejectItem: RequestHandler = (req, res) => {
     });
     return;
   }
-
   // 3. Partner Detection Rules:
-  // RULE A: Before Pairing (at Cutting stage or unpaired buffer item) -> NEVER pair-reject. Reject ONLY the single piece.
-  // RULE B: After Pairing (in Lamination or DGU) -> Reject ONLY the 1 matching partner of this specific pair (Max 1 pair = 2 panes total).
+  // RULE A: If singlePaneOnly is true or defectivePane is a specific pane (OP, IP, IP_PLY1, IP_PLY2, PRIMARY, PARTNER),
+  //         reject ONLY that single piece. The good partner remains intact in the pairing buffer.
+  // RULE B: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, reject the whole paired assembly (both panes).
+  const isAssemblyReject =
+    !req.body.singlePaneOnly &&
+    (defectivePane === "ASSEMBLY" ||
+      defectivePane === "UNIT" ||
+      defectivePane === "WHOLE_UNIT" ||
+      defectivePane === "WHOLE" ||
+      !defectivePane ||
+      (isExplicitList && targetItems.length > 1));
+
+  let itemsToReject: GlassItem[] = targetItems;
+  if (!isAssemblyReject && targetItems.length > 1) {
+    if (defectiveSerialNumber) {
+      const match = targetItems.find(
+        (t) => t.serialNumber === defectiveSerialNumber || t.barcode === defectiveSerialNumber
+      );
+      if (match) itemsToReject = [match];
+    } else if (defectivePane === "OP") {
+      const op = targetItems.find((t) => t.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      if (op) itemsToReject = [op];
+    } else if (defectivePane === "IP" || defectivePane === "IP_PLY1" || defectivePane === "IP_PLY2") {
+      const ip = targetItems.find((t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      if (ip) itemsToReject = [ip];
+    } else {
+      itemsToReject = [targetItems[0]];
+    }
+  }
+
   const partnerItems: GlassItem[] = [];
 
-  // If explicit serial list was provided (e.g. from the UI modal which already contains the exact 2 serials of the pair), use them directly without searching.
-  if (!isExplicitList || targetItems.length === 1) {
-    targetItems.forEach((item) => {
-      // Before pairing (Cutting stage): strictly single piece only!
-      if (item.currentStage === "Cutting") {
-        return;
-      }
+  if (isAssemblyReject) {
+    if (!isExplicitList || itemsToReject.length === 1) {
+      itemsToReject.forEach((item) => {
+        // Before pairing (Cutting stage): strictly single piece only!
+        if (item.currentStage === "Cutting") {
+          return;
+        }
 
+        const itemLamPairId = (item as any).lamPairId;
+        const itemDguPairId = (item as any).dguPairId;
+
+        // 1. Matched by unique lamPairId (stamped during pairing)
+        if (itemLamPairId) {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              (other as any).lamPairId === itemLamPairId &&
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              !itemsToReject.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        }
+        // 2. Matched by unique dguPairId
+        else if (itemDguPairId) {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              (other as any).dguPairId === itemDguPairId &&
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              !itemsToReject.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        }
+        // 3. Fallback for Lamination stage (find ONLY 1 matching partner pane)
+        else if (item.currentStage === "Lamination") {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.currentStage === "Lamination" &&
+              (isDlguItem(item)
+                ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
+                : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
+              !itemsToReject.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        }
+        // 4. Fallback for DGU stage (find ONLY 1 matching partner pane)
+        else if (item.currentStage === "DGU") {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.currentStage === "DGU" &&
+              isStickerPairMatch(item, other) &&
+              !itemsToReject.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        }
+      });
+    }
+  } else {
+    // Single pane rejection: un-link surviving partner so it returns to pairing buffer waiting for remake piece
+    itemsToReject.forEach((item) => {
       const itemLamPairId = (item as any).lamPairId;
       const itemDguPairId = (item as any).dguPairId;
-
-      // 1. Matched by unique lamPairId (stamped during pairing)
       if (itemLamPairId) {
         const partner = glassItemsDatabase.find(
-          (other) =>
-            (other as any).lamPairId === itemLamPairId &&
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
+          (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id
         );
-        if (partner) partnerItems.push(partner);
+        if (partner) {
+          delete (partner as any).lamPairId;
+          partner.currentStage = "Pairing";
+          partner.status = "Pending";
+        }
       }
-      // 2. Matched by unique dguPairId
-      else if (itemDguPairId) {
+      if (itemDguPairId) {
         const partner = glassItemsDatabase.find(
-          (other) =>
-            (other as any).dguPairId === itemDguPairId &&
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
+          (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id
         );
-        if (partner) partnerItems.push(partner);
-      }
-      // 3. Fallback for Lamination stage (find ONLY 1 matching partner pane)
-      else if (item.currentStage === "Lamination") {
-        const partner = glassItemsDatabase.find(
-          (other) =>
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            other.currentStage === "Lamination" &&
-            (isDlguItem(item)
-              ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
-              : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
-        );
-        if (partner) partnerItems.push(partner);
-      }
-      // 4. Fallback for DGU stage (find ONLY 1 matching partner pane)
-      else if (item.currentStage === "DGU") {
-        const partner = glassItemsDatabase.find(
-          (other) =>
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            other.currentStage === "DGU" &&
-            isStickerPairMatch(item, other) &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
-        );
-        if (partner) partnerItems.push(partner);
+        if (partner) {
+          delete (partner as any).dguPairId;
+          partner.currentStage = "Pairing";
+          partner.status = "Pending";
+        }
       }
     });
   }
 
-  const allItemsToReject = [...targetItems, ...partnerItems];
+  const allItemsToReject = [...itemsToReject, ...partnerItems];
   const rejectEntries: RejectRecord[] = [];
   const reworkEntries: ReworkRecord[] = [];
 
@@ -1400,68 +1454,124 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   }
 
   // 3. Partner Detection Rules:
-  // RULE A: Before Pairing (at Cutting stage or unpaired buffer item) -> NEVER pair-rework. Rework ONLY the single piece.
-  // RULE B: After Pairing (in Lamination or DGU) -> Rework ONLY the 1 matching partner of this specific pair (Max 1 pair = 2 panes total).
+  // RULE A: If singlePaneOnly is true or defectivePane is a specific pane (OP, IP, IP_PLY1, IP_PLY2, PRIMARY, PARTNER),
+  //         rework ONLY that single piece. The good partner remains intact in the pairing buffer.
+  // RULE B: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, rework the whole paired assembly (both panes).
+  const isAssemblyRework =
+    !req.body.singlePaneOnly &&
+    (defectivePane === "ASSEMBLY" ||
+      defectivePane === "UNIT" ||
+      defectivePane === "WHOLE_UNIT" ||
+      defectivePane === "WHOLE" ||
+      !defectivePane ||
+      (isExplicitList && targetItems.length > 1));
+
+  let itemsToRework: GlassItem[] = targetItems;
+  if (!isAssemblyRework && targetItems.length > 1) {
+    if (defectiveSerialNumber) {
+      const match = targetItems.find(
+        (t) => t.serialNumber === defectiveSerialNumber || t.barcode === defectiveSerialNumber
+      );
+      if (match) itemsToRework = [match];
+    } else if (defectivePane === "OP") {
+      const op = targetItems.find((t) => t.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      if (op) itemsToRework = [op];
+    } else if (defectivePane === "IP" || defectivePane === "IP_PLY1" || defectivePane === "IP_PLY2") {
+      const ip = targetItems.find((t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      if (ip) itemsToRework = [ip];
+    } else {
+      itemsToRework = [targetItems[0]];
+    }
+  }
+
   const partnerItems: GlassItem[] = [];
 
-  if (!isExplicitList || targetItems.length === 1) {
-    targetItems.forEach((item) => {
-      if (item.currentStage === "Cutting") {
-        return;
-      }
+  if (isAssemblyRework) {
+    if (!isExplicitList || itemsToRework.length === 1) {
+      itemsToRework.forEach((item) => {
+        if (item.currentStage === "Cutting") {
+          return;
+        }
 
+        const itemLamPairId = (item as any).lamPairId;
+        const itemDguPairId = (item as any).dguPairId;
+
+        if (itemLamPairId) {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              (other as any).lamPairId === itemLamPairId &&
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              !itemsToRework.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        } else if (itemDguPairId) {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              (other as any).dguPairId === itemDguPairId &&
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              !itemsToRework.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        } else if (item.currentStage === "Lamination") {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.currentStage === "Lamination" &&
+              (isDlguItem(item)
+                ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
+                : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
+              !itemsToRework.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        } else if (item.currentStage === "DGU") {
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.currentStage === "DGU" &&
+              isStickerPairMatch(item, other) &&
+              !itemsToRework.some((t) => t.id === other.id) &&
+              !partnerItems.some((p) => p.id === other.id)
+          );
+          if (partner) partnerItems.push(partner);
+        }
+      });
+    }
+  } else {
+    // Single pane rework: un-link surviving partner so it returns to pairing buffer waiting for rework to complete
+    itemsToRework.forEach((item) => {
       const itemLamPairId = (item as any).lamPairId;
       const itemDguPairId = (item as any).dguPairId;
-
       if (itemLamPairId) {
         const partner = glassItemsDatabase.find(
-          (other) =>
-            (other as any).lamPairId === itemLamPairId &&
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
+          (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id
         );
-        if (partner) partnerItems.push(partner);
-      } else if (itemDguPairId) {
+        if (partner) {
+          delete (partner as any).lamPairId;
+          partner.currentStage = "Pairing";
+          partner.status = "Pending";
+        }
+      }
+      if (itemDguPairId) {
         const partner = glassItemsDatabase.find(
-          (other) =>
-            (other as any).dguPairId === itemDguPairId &&
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
+          (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id
         );
-        if (partner) partnerItems.push(partner);
-      } else if (item.currentStage === "Lamination") {
-        const partner = glassItemsDatabase.find(
-          (other) =>
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            other.currentStage === "Lamination" &&
-            (isDlguItem(item)
-              ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
-              : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
-        );
-        if (partner) partnerItems.push(partner);
-      } else if (item.currentStage === "DGU") {
-        const partner = glassItemsDatabase.find(
-          (other) =>
-            other.id !== item.id &&
-            other.status !== "Rejected" &&
-            other.currentStage === "DGU" &&
-            isStickerPairMatch(item, other) &&
-            !targetItems.some((t) => t.id === other.id) &&
-            !partnerItems.some((p) => p.id === other.id)
-        );
-        if (partner) partnerItems.push(partner);
+        if (partner) {
+          delete (partner as any).dguPairId;
+          partner.currentStage = "Pairing";
+          partner.status = "Pending";
+        }
       }
     });
   }
 
-  const allItemsToRework = [...targetItems, ...partnerItems];
+  const allItemsToRework = [...itemsToRework, ...partnerItems];
   const reworkEntries: ReworkRecord[] = [];
 
   allItemsToRework.forEach((targetItem) => {
@@ -1863,17 +1973,18 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
   let totalQty = 0;
 
   // In one PDF, it is strictly 100% full Colour or 100% Clear (never Mixed)
+  const colourRegex = /colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
   let isColourBatch = false;
-  if (colorOrClear === "Colour" || colorOrClear === "Color") {
+  if (colorOrClear === "Colour" || colorOrClear === "Color" || (req.body as any).finish === "Colour") {
     isColourBatch = true;
-  } else if (colorOrClear === "Clear") {
+  } else if (colorOrClear === "Clear" || (req.body as any).finish === "Clear") {
     isColourBatch = false;
-  } else if (glassColor && /colour|color|tint|grey|gray|bronze|blue|green|stopray|syp/i.test(glassColor) && !/clear/i.test(glassColor)) {
+  } else if (glassColor && colourRegex.test(glassColor) && !/clear/i.test(glassColor)) {
     isColourBatch = true;
   } else {
-    // Determine from items' explicit colorOrClear property or glassColor
-    const clearItemCount = items.filter((raw: any) => raw.colorOrClear === "Clear" || /clear/i.test(raw.glassColor || "")).length;
-    const colourItemCount = items.filter((raw: any) => raw.colorOrClear === "Colour" || raw.colorOrClear === "Color" || (/colour|color|tint|grey|gray|bronze|blue|green|stopray|syp/i.test(raw.glassColor || "") && !/clear/i.test(raw.glassColor || ""))).length;
+    // Determine from items' explicit colorOrClear property or glassColor / glassType
+    const clearItemCount = items.filter((raw: any) => raw.colorOrClear === "Clear" || (/clear/i.test(raw.glassColor || "") && !colourRegex.test(raw.glassType || ""))).length;
+    const colourItemCount = items.filter((raw: any) => raw.colorOrClear === "Colour" || raw.colorOrClear === "Color" || ((colourRegex.test(raw.glassColor || "") || colourRegex.test(raw.glassType || "")) && !/clear/i.test(raw.glassColor || ""))).length;
     isColourBatch = colourItemCount > clearItemCount;
   }
 
@@ -2025,6 +2136,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
     glassDescription: newItems[0]?.glassType || (defaultColorOrClear === "Colour" ? "Coloured Glass" : "6MM CLEAR TEMPERED"),
     glassCategory: defaultGlassCategory,
     colorOrClear: defaultColorOrClear,
+    finish: defaultColorOrClear,
     glassColor: defaultGlassColor,
     status: "In Production",
     itemsCount: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0) || newItems.length,

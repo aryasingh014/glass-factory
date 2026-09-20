@@ -24,8 +24,6 @@ import {
   Activity,
   ChevronLeft,
   CircleDot,
-  ExternalLink,
-  Globe,
 } from "lucide-react";
 import {
   Tooltip,
@@ -34,7 +32,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DashboardStats } from "@shared/api";
-import { cn, formatPlatformTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 interface NavItem {
   id: string;
@@ -81,13 +79,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     if (e) e.stopPropagation();
     setOpenDropdowns((prev) => ({ ...prev, [id]: !prev[id] }));
   };
-
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const navGroups: { title: string; subtitle?: string; items: NavItem[] }[] = [
     {
@@ -423,67 +414,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           </div>
         ))}
       </div>
-
-      {/* ── BOTTOM ENTERPRISE PRODUCTION STATUS WIDGET ── */}
-      {sidebarOpen && (
-        <div className="space-y-2 shrink-0 pt-2 border-t border-slate-800/80">
-          {/* Glass Manufacturing Hero Widget */}
-          <div className="relative rounded-2xl overflow-hidden border border-slate-800/90 shadow-lg h-24 group select-none">
-            <img
-              src="/glass-building-hero.jpg"
-              alt="Precision Architectural Glass"
-              className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0a1120] via-slate-950/80 to-transparent/40" />
-
-            <div className="absolute inset-0 p-3 flex flex-col justify-end">
-              <div className="flex items-end justify-between">
-                <div>
-                  <span className="block text-[8px] uppercase tracking-wider text-blue-400 font-extrabold flex items-center gap-1">
-                    <Sparkles className="w-2.5 h-2.5 text-blue-400" />
-                    SEJAL GLASS SYSTEM
-                  </span>
-                  <span className="block text-[11px] font-black text-white leading-tight mt-0.5">
-                    Architectural Glass<br />Manufacturing
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleItemClick("production-overview")}
-                  className="w-6.5 h-6.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-md shadow-blue-600/30 transition-all group-hover:translate-x-0.5 cursor-pointer border border-blue-400/40"
-                  title="Explore Production Overview"
-                >
-                  <ArrowRight className="w-3.5 h-3.5 text-white" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Public Portal Showcase Link */}
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            className="w-full bg-slate-900/90 hover:bg-slate-800 text-slate-200 font-bold text-[11px] py-2 px-2.5 rounded-xl border border-slate-800 hover:border-slate-700 flex items-center justify-between transition-colors shadow-xs cursor-pointer"
-          >
-            <span className="flex items-center gap-1.5 text-amber-300">
-              <Globe className="w-3.5 h-3.5 text-amber-400" />
-              Public Portal & Specs
-            </span>
-            <ExternalLink className="w-3 h-3 text-slate-400" />
-          </button>
-
-          {/* Live System Clock & Status Pill */}
-          <div className="bg-[#070d18] p-2 rounded-xl border border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-            <div className="flex items-center gap-1.5 font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-slate-300">Plant Online (GST)</span>
-            </div>
-            <div className="font-mono font-bold text-blue-300">
-              {formatPlatformTime(currentTime)}
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 };

@@ -32,9 +32,9 @@ import {
 } from "./routes/production";
 
 import { handleGetPerformanceAnalytics } from "./routes/analytics";
+import { handleLogin, handleGetCurrentUser, handleLogout } from "./routes/auth";
 
-
-function requireRole(allowedRoles: UserRole[]) {
+export function requireRole(allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     let role: UserRole | null = null;
 
@@ -44,6 +44,7 @@ function requireRole(allowedRoles: UserRole[]) {
       const verified = verifyToken(token);
       if (verified) {
         role = verified.role;
+        (req as any).user = verified;
       }
     }
 
@@ -51,9 +52,12 @@ function requireRole(allowedRoles: UserRole[]) {
       const userRoleHeader = req.headers["x-user-role"] as string;
       if (userRoleHeader === "Admin" || userRoleHeader === "Supervisor" || userRoleHeader === "Operator") {
         role = userRoleHeader;
-      } else {
-        role = "Admin";
       }
+    }
+
+    if (!role) {
+      res.status(401).json({ error: "Unauthorized: Authentication token is required." });
+      return;
     }
 
     if (!allowedRoles.includes(role)) {
@@ -177,12 +181,9 @@ export function createServer() {
   });
 
   // Auth endpoints
-  apiV1.post("/auth/login", (req, res) => {
-    const { role = "Admin" } = req.body;
-    const userRole: UserRole = role === "Supervisor" || role === "Operator" ? role : "Admin";
-    const token = generateToken(userRole);
-    res.json({ token, role: userRole, username: `${userRole} User` });
-  });
+  apiV1.post("/auth/login", handleLogin);
+  apiV1.get("/auth/me", handleGetCurrentUser);
+  apiV1.post("/auth/logout", handleLogout);
 
   // PI endpoints
   apiV1.get("/pi", handleGetPIs);

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Building2,
@@ -11,9 +11,6 @@ import {
   ArrowRight,
   CheckCircle2,
   ScanLine,
-  Sliders,
-  Calculator,
-  Search,
   Check,
   Factory,
   Sparkles,
@@ -35,9 +32,11 @@ import {
   Scale,
   Users,
   BadgeCheck,
+  LogIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/context/AuthContext";
 
 // Types matching Sejal Glass Product Portfolio
 type GlassProductCategory =
@@ -368,64 +367,10 @@ const LANDMARK_PROJECTS = [
   },
 ];
 
-const SAMPLE_BARCODES = [
-  {
-    code: "1012627013490002",
-    pi: "PI/SG/262700468",
-    project: "ASTRA TWIN TOWER",
-    item: "CW-88G1 KOOL GLASS (8MM STOPRAY VISION 40 T)",
-    dim: "1850 × 2450 mm",
-    stage: "DGU Line (Argon Cavity Filling)",
-    status: "In Production",
-    rack: "Rack Lot #04",
-    qty: "24 / 24 Units",
-    progress: 75,
-  },
-  {
-    code: "1012627013490005",
-    pi: "PI/SG/262700384",
-    project: "MARINA BAY HORIZON",
-    item: "BAL-202 FORT GLASS SGP LAMINATED (10+1.52+10MM CLEAR)",
-    dim: "1200 × 1600 mm",
-    stage: "Finished & Inspected (HST Passed)",
-    status: "Ready for Dispatch",
-    rack: "Stillage #12",
-    qty: "18 / 18 Units",
-    progress: 100,
-  },
-  {
-    code: "1012627013490008",
-    pi: "PI/SG/262700512",
-    project: "SKYPOINT ATRIUM",
-    item: "SKY-04 DECOR GLASS CERAMIC FRITTED 12MM",
-    dim: "2100 × 3200 mm",
-    stage: "Pairing Buffer",
-    status: "In Production",
-    rack: "Rack Lot #01",
-    qty: "6 / 12 Units",
-    progress: 50,
-  },
-];
-
 export default function LandingPage() {
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
   const [selectedProduct, setSelectedProduct] = useState<GlassProductCategory>("kool");
-
-  // Spec Calculator state
-  const [calcType, setCalcType] = useState<"dgu" | "laminated" | "monolithic" | "dlgu">("dgu");
-  const [calcWidth, setCalcWidth] = useState<number>(1500);
-  const [calcHeight, setCalcHeight] = useState<number>(2400);
-  const [outerThickness, setOuterThickness] = useState<number>(8);
-  const [innerThickness, setInnerThickness] = useState<number>(6);
-  const [cavitySize, setCavitySize] = useState<number>(16);
-  const [gasType, setGasType] = useState<"argon" | "air">("argon");
-  const [interlayerType, setInterlayerType] = useState<"pvb" | "sgp">("pvb");
-  const [interlayerThick, setInterlayerThick] = useState<number>(1.52);
-
-  // Live Tracker Demo State
-  const [searchBarcode, setSearchBarcode] = useState<string>("");
-  const [trackedResult, setTrackedResult] = useState<typeof SAMPLE_BARCODES[0] | null>(SAMPLE_BARCODES[0]);
-  const [isSearching, setIsSearching] = useState<boolean>(false);
 
   // Quote Modal State
   const [quoteModalOpen, setQuoteModalOpen] = useState<boolean>(false);
@@ -440,66 +385,6 @@ export default function LandingPage() {
     estimatedSqm: "500",
     message: "",
   });
-
-  // Calculations
-  const calculatedSpecs = useMemo(() => {
-    const area = (calcWidth * calcHeight) / 1000000; // sqm
-    let uVal = 5.7;
-    let shgcVal = 0.82;
-    let rwVal = 32;
-    let vltVal = 88;
-
-    if (calcType === "dgu") {
-      const gasFactor = gasType === "argon" ? 0.85 : 1.15;
-      const cavityOpt = cavitySize >= 14 ? 1.0 : cavitySize >= 10 ? 1.25 : 1.5;
-      uVal = +(1.1 * gasFactor * cavityOpt).toFixed(2);
-      shgcVal = 0.28;
-      rwVal = Math.round(35 + (outerThickness + innerThickness) / 4);
-      vltVal = 65;
-    } else if (calcType === "laminated") {
-      uVal = 5.2;
-      shgcVal = 0.70;
-      rwVal = interlayerType === "sgp" ? 39 : 41;
-      vltVal = 85;
-    } else if (calcType === "dlgu") {
-      uVal = 0.95;
-      shgcVal = 0.22;
-      rwVal = 47;
-      vltVal = 52;
-    } else {
-      uVal = 5.7;
-      shgcVal = 0.82;
-      rwVal = Math.round(30 + outerThickness / 2);
-      vltVal = 89;
-    }
-
-    const totalGlass = calcType === "monolithic" ? outerThickness : outerThickness + innerThickness;
-    const weight = +(area * totalGlass * 2.5).toFixed(1);
-
-    return {
-      area: area.toFixed(2),
-      weight,
-      uValue: uVal,
-      shgc: shgcVal,
-      rw: rwVal,
-      vlt: vltVal,
-    };
-  }, [calcType, calcWidth, calcHeight, outerThickness, innerThickness, cavitySize, gasType, interlayerType, interlayerThick]);
-
-  const handleTrackSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSearching(true);
-    setTimeout(() => {
-      const match = SAMPLE_BARCODES.find(
-        (b) =>
-          b.code.toLowerCase().includes(searchBarcode.trim().toLowerCase()) ||
-          b.pi.toLowerCase().includes(searchBarcode.trim().toLowerCase()) ||
-          b.project.toLowerCase().includes(searchBarcode.trim().toLowerCase())
-      );
-      setTrackedResult(match || SAMPLE_BARCODES[0]);
-      setIsSearching(false);
-    }, 400);
-  };
 
   const handleQuoteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -553,16 +438,8 @@ export default function LandingPage() {
             <a href="#values" className="hover:text-[#e31e24] transition-colors">
               Values & SBUs
             </a>
-            <a href="#calculator" className="hover:text-[#e31e24] transition-colors flex items-center gap-1.5">
-              <Calculator className="h-3.5 w-3.5 text-[#e31e24]" />
-              Spec Calculator
-            </a>
             <a href="#factory" className="hover:text-[#e31e24] transition-colors">
               Manufacturing Process
-            </a>
-            <a href="#tracker" className="hover:text-[#e31e24] transition-colors flex items-center gap-1.5">
-              <ScanLine className="h-3.5 w-3.5 text-blue-600" />
-              Live Tracker
             </a>
             <a href="#portfolio" className="hover:text-[#e31e24] transition-colors">
               Projects
@@ -581,14 +458,25 @@ export default function LandingPage() {
             >
               Get Quote
             </Button>
-            <Button
-              onClick={() => navigate("/app")}
-              className="bg-gradient-to-r from-[#1a3a6b] to-[#254d8c] hover:from-[#132b4f] hover:to-[#1a3a6b] text-white font-extrabold text-xs h-10 px-5 rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-2"
-            >
-              <Cpu className="h-4 w-4 text-amber-300" />
-              Launch ERP OS
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Button>
+            {isAuthenticated ? (
+              <Button
+                onClick={() => navigate("/app")}
+                className="bg-gradient-to-r from-[#1a3a6b] to-[#254d8c] hover:from-[#132b4f] hover:to-[#1a3a6b] text-white font-extrabold text-xs h-10 px-5 rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-2"
+              >
+                <Cpu className="h-4 w-4 text-amber-300" />
+                Go to ERP OS ({user?.role})
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <Button
+                onClick={() => navigate("/login")}
+                className="bg-gradient-to-r from-[#1a3a6b] to-[#254d8c] hover:from-[#132b4f] hover:to-[#1a3a6b] text-white font-extrabold text-xs h-10 px-5 rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-2"
+              >
+                <LogIn className="h-4 w-4 text-amber-300" />
+                Portal Login
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -630,23 +518,32 @@ export default function LandingPage() {
 
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center gap-4 pt-2">
-                <Button
-                  onClick={() => navigate("/app")}
-                  className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
-                >
-                  <Cpu className="h-4 w-4 text-amber-300" />
-                  Launch Production ERP Portal
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-                <a href="#calculator">
+                {isAuthenticated ? (
                   <Button
-                    variant="outline"
-                    className="border-slate-300/90 bg-white/90 backdrop-blur-md hover:bg-white text-slate-800 font-bold text-sm h-12 px-6 rounded-xl shadow-sm hover:border-slate-400 flex items-center gap-2 transition-all hover:scale-[1.01]"
+                    onClick={() => navigate("/app")}
+                    className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
                   >
-                    <Sliders className="h-4 w-4 text-[#e31e24]" />
-                    Configurator & Spec Calc
+                    <Cpu className="h-4 w-4 text-amber-300" />
+                    Enter ERP Portal ({user?.name || user?.role})
+                    <ArrowRight className="h-4 w-4" />
                   </Button>
-                </a>
+                ) : (
+                  <Button
+                    onClick={() => navigate("/login")}
+                    className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
+                  >
+                    <LogIn className="h-4 w-4 text-amber-300" />
+                    Login to ERP Portal
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                )}
+                <Button
+                  onClick={() => setQuoteModalOpen(true)}
+                  variant="outline"
+                  className="border-slate-300/90 bg-white/90 backdrop-blur-md hover:bg-white text-slate-800 font-bold text-sm h-12 px-6 rounded-xl shadow-sm hover:border-slate-400 flex items-center gap-2 transition-all hover:scale-[1.01]"
+                >
+                  Request Official Quotation
+                </Button>
               </div>
 
               {/* Live Trust Metrics with Frosted Glass Realism */}
@@ -751,13 +648,22 @@ export default function LandingPage() {
                     </div>
                   </div>
 
-                  {/* Launch CTA */}
+                  {/* Launch / Login CTA */}
                   <Button
-                    onClick={() => navigate("/app")}
+                    onClick={() => navigate(isAuthenticated ? "/app" : "/login")}
                     className="w-full bg-[#1a3a6b] hover:bg-[#132b4f] text-white font-extrabold text-xs h-10 rounded-xl shadow-md flex items-center justify-center gap-2 transition-transform hover:scale-[1.01]"
                   >
-                    <Workflow className="h-4 w-4 text-amber-300" />
-                    Open Live Manufacturing Dashboard
+                    {isAuthenticated ? (
+                      <>
+                        <Workflow className="h-4 w-4 text-amber-300" />
+                        Open Live Manufacturing Dashboard
+                      </>
+                    ) : (
+                      <>
+                        <LogIn className="h-4 w-4 text-amber-300" />
+                        Login to Access Manufacturing Dashboard
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -994,255 +900,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* SECTION: INTERACTIVE SPEC & GLAZING CALCULATOR */}
-      <section id="calculator" className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200">
-        <div className="text-center max-w-3xl mx-auto space-y-4 mb-12">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-300 text-xs font-bold text-amber-800">
-            <Calculator className="h-3.5 w-3.5" /> Engineering & Thermal Simulation Tool
-          </div>
-          <h2 className="text-3xl sm:text-4xl font-black text-[#0a1628] tracking-tight">
-            Interactive Glazing & U-Value Calculator
-          </h2>
-          <p className="text-slate-600 text-sm sm:text-base">
-            Simulate custom glass dimensions, cavity gas fills, and interlayer specifications to instantly estimate thermal
-            insulation, weight, acoustic attenuation, and solar gain.
-          </p>
-        </div>
-
-        <div className="rounded-3xl bg-white border border-slate-200/90 p-6 sm:p-10 shadow-lg">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-            {/* Configurator Controls */}
-            <div className="lg:col-span-7 space-y-6">
-              {/* Select Glazing Type */}
-              <div>
-                <label className="text-xs font-extrabold uppercase tracking-wider text-slate-800 block mb-2">
-                  1. Glazing Composition Type
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[
-                    { id: "dgu", label: "Kool Glass™ (DGU)" },
-                    { id: "laminated", label: "Fort Glass™ (Lam)" },
-                    { id: "dlgu", label: "Double Laminated" },
-                    { id: "monolithic", label: "Solid Glass™ (FT)" },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setCalcType(t.id as any)}
-                      className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all ${
-                        calcType === t.id
-                          ? "bg-[#1a3a6b] text-white shadow-sm font-extrabold"
-                          : "bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Dimensions Sliders */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="flex justify-between text-xs font-medium">
-                    <span className="text-slate-600">Width (mm)</span>
-                    <span className="font-mono font-bold text-slate-900">{calcWidth} mm</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="400"
-                    max="3300"
-                    step="50"
-                    value={calcWidth}
-                    onChange={(e) => setCalcWidth(Number(e.target.value))}
-                    className="w-full accent-[#1a3a6b] bg-slate-200 cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>400 mm</span>
-                    <span>3300 mm (Jumbo)</span>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="flex justify-between text-xs font-medium">
-                    <span className="text-slate-600">Height (mm)</span>
-                    <span className="font-mono font-bold text-slate-900">{calcHeight} mm</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="400"
-                    max="6000"
-                    step="50"
-                    value={calcHeight}
-                    onChange={(e) => setCalcHeight(Number(e.target.value))}
-                    className="w-full accent-[#1a3a6b] bg-slate-200 cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>400 mm</span>
-                    <span>6000 mm</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Glass Panes Thickness */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                    Outer Glass Pane Thickness
-                  </label>
-                  <select
-                    value={outerThickness}
-                    onChange={(e) => setOuterThickness(Number(e.target.value))}
-                    className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                  >
-                    <option value={6}>6 mm Solid Glass™ Toughened</option>
-                    <option value={8}>8 mm Stopray Low-E Toughened</option>
-                    <option value={10}>10 mm Heavy Toughened Float</option>
-                    <option value={12}>12 mm Ultra-Clear Lunaro™</option>
-                  </select>
-                </div>
-
-                {calcType !== "monolithic" && (
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                      Inner Glass Pane Thickness
-                    </label>
-                    <select
-                      value={innerThickness}
-                      onChange={(e) => setInnerThickness(Number(e.target.value))}
-                      className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                    >
-                      <option value={6}>6 mm Clear Solid Glass™ (HST)</option>
-                      <option value={8}>8 mm Clear Toughened</option>
-                      <option value={10}>10 mm Clear Toughened</option>
-                      <option value={12}>12 mm Clear Toughened</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              {/* DGU Cavity & Gas Selection */}
-              {(calcType === "dgu" || calcType === "dlgu") && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">Spacer Cavity Width</label>
-                    <select
-                      value={cavitySize}
-                      onChange={(e) => setCavitySize(Number(e.target.value))}
-                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                    >
-                      <option value={12}>12 mm Warm Edge</option>
-                      <option value={16}>16 mm Warm Edge (Optimal)</option>
-                      <option value={20}>20 mm Warm Edge</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">Cavity Gas Filling</label>
-                    <select
-                      value={gasType}
-                      onChange={(e) => setGasType(e.target.value as any)}
-                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                    >
-                      <option value="argon">90% Argon Gas (Thermal Buffer)</option>
-                      <option value="air">Dry Dehydrated Air</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {/* Lamination Interlayer */}
-              {(calcType === "laminated" || calcType === "dlgu") && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">Interlayer Technology</label>
-                    <select
-                      value={interlayerType}
-                      onChange={(e) => setInterlayerType(e.target.value as any)}
-                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                    >
-                      <option value="pvb">Acoustic PVB (Polyvinyl Butyral)</option>
-                      <option value="sgp">SentryGlas (SGP Structural Ionoplast)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">Interlayer Thickness</label>
-                    <select
-                      value={interlayerThick}
-                      onChange={(e) => setInterlayerThick(Number(e.target.value))}
-                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#1a3a6b]"
-                    >
-                      <option value={0.76}>0.76 mm</option>
-                      <option value={1.52}>1.52 mm (Heavy Safety Standard)</option>
-                      <option value={2.28}>2.28 mm (Blast / Structural)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Live Calculation Output Card */}
-            <div className="lg:col-span-5 flex flex-col justify-between rounded-2xl bg-gradient-to-br from-[#1a3a6b] via-[#15315b] to-[#0f2444] text-white p-6 sm:p-7 shadow-xl">
-              <div className="space-y-5">
-                <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" /> Simulation Results
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-300">{calculatedSpecs.area} m² / Unit</span>
-                </div>
-
-                {/* Primary Metric Highlights */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-4 rounded-xl bg-white/10 border border-white/10 backdrop-blur-sm">
-                    <div className="text-[11px] font-medium text-slate-300">Thermal U-Value</div>
-                    <div className="text-2xl font-black text-white">{calculatedSpecs.uValue}</div>
-                    <div className="text-[10px] text-slate-300">W/m²·K (EN 673)</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-white/10 border border-white/10 backdrop-blur-sm">
-                    <div className="text-[11px] font-medium text-slate-300">Unit Weight</div>
-                    <div className="text-2xl font-black text-amber-300">{calculatedSpecs.weight}</div>
-                    <div className="text-[10px] text-slate-300">kg (Approx Total)</div>
-                  </div>
-                </div>
-
-                {/* Secondary Specs */}
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex justify-between p-2.5 rounded-lg bg-black/20 border border-white/10">
-                    <span className="text-slate-300">Solar Heat Gain (SHGC):</span>
-                    <span className="font-mono font-bold text-emerald-300">{calculatedSpecs.shgc}</span>
-                  </div>
-                  <div className="flex justify-between p-2.5 rounded-lg bg-black/20 border border-white/10">
-                    <span className="text-slate-300">Acoustic Reduction (Rw):</span>
-                    <span className="font-mono font-bold text-sky-300">{calculatedSpecs.rw} dB</span>
-                  </div>
-                  <div className="flex justify-between p-2.5 rounded-lg bg-black/20 border border-white/10">
-                    <span className="text-slate-300">Visible Light Transmission:</span>
-                    <span className="font-mono font-bold text-amber-300">{calculatedSpecs.vlt}%</span>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-300 bg-white/5 p-3 rounded-lg border border-white/10">
-                  ⚡ Calculations based on ISO 9050, IS 2553 and EN 410 optical simulation models.
-                </div>
-              </div>
-
-              <div className="pt-5 space-y-2">
-                <Button
-                  onClick={() => {
-                    setQuoteForm((prev) => ({
-                      ...prev,
-                      glassType: `${calcType.toUpperCase()} - ${calcWidth}x${calcHeight}mm (${calculatedSpecs.uValue} U-Val)`,
-                      estimatedSqm: String(Math.round(Number(calculatedSpecs.area) * 50)),
-                    }));
-                    setQuoteModalOpen(true);
-                  }}
-                  className="w-full bg-[#e31e24] hover:bg-[#c2191e] text-white font-black text-xs h-11 rounded-xl shadow-lg"
-                >
-                  Generate Official Spec Sheet & Quote
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* SECTION: 7-STAGE INTELLIGENT FACTORY LINE */}
       <section id="factory" className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200">
@@ -1311,140 +968,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* SECTION: LIVE ORDER & BARCODE TRACKER DEMO */}
-      <section id="tracker" className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200">
-        <div className="text-center max-w-3xl mx-auto space-y-4 mb-12">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-50 border border-cyan-300 text-xs font-bold text-cyan-800">
-            <ScanLine className="h-3.5 w-3.5" /> Real-Time Client Visibility Portal
-          </div>
-          <h2 className="text-3xl sm:text-4xl font-black text-[#0a1628] tracking-tight">
-            Live Order & Barcode Tracking Simulator
-          </h2>
-          <p className="text-slate-600 text-sm sm:text-base">
-            Every piece of architectural glass produced has a unique barcode identifier. Test our live lookup system below
-            or click any sample lot.
-          </p>
-        </div>
-
-        <div className="max-w-4xl mx-auto rounded-3xl bg-white border border-slate-200/90 p-6 sm:p-9 shadow-lg space-y-6">
-          {/* Search Form */}
-          <form onSubmit={handleTrackSearch} className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                type="text"
-                placeholder="Enter Barcode / PI No. (e.g. 1012627013490002 or PI/SG/262700468)"
-                value={searchBarcode}
-                onChange={(e) => setSearchBarcode(e.target.value)}
-                className="pl-11 h-12 bg-slate-50 border-slate-300 text-slate-900 rounded-xl text-xs font-mono placeholder:text-slate-400"
-              />
-            </div>
-            <Button
-              type="submit"
-              disabled={isSearching}
-              className="h-12 px-7 bg-[#1a3a6b] hover:bg-[#122b52] text-white font-bold text-xs rounded-xl shadow-xs"
-            >
-              {isSearching ? "Searching..." : "Track Unit"}
-            </Button>
-          </form>
-
-          {/* Quick Click Samples */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-            <span className="text-slate-500 font-medium">Quick Test Samples:</span>
-            {SAMPLE_BARCODES.map((sample) => (
-              <button
-                key={sample.code}
-                onClick={() => {
-                  setSearchBarcode(sample.code);
-                  setTrackedResult(sample);
-                }}
-                className={`px-3 py-1 rounded-lg font-mono text-[11px] transition-all ${
-                  trackedResult?.code === sample.code
-                    ? "bg-red-50 border border-red-300 text-[#e31e24] font-bold"
-                    : "bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200"
-                }`}
-              >
-                {sample.code} ({sample.project})
-              </button>
-            ))}
-          </div>
-
-          {/* Tracked Result Details Card */}
-          {trackedResult && (
-            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-500">BARCODE:</span>
-                    <span className="font-mono text-sm font-black text-slate-900 bg-white px-2.5 py-0.5 rounded border border-slate-300">
-                      {trackedResult.code}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-700 font-medium mt-1">
-                    Project: <strong className="text-slate-900">{trackedResult.project}</strong> · PI: {trackedResult.pi}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      trackedResult.progress === 100
-                        ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                        : "bg-blue-100 text-blue-800 border border-blue-300"
-                    }`}
-                  >
-                    ● {trackedResult.status}
-                  </span>
-                </div>
-              </div>
-
-              {/* Item Info Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                <div className="bg-white p-3.5 rounded-xl border border-slate-200">
-                  <div className="text-slate-500 text-[11px]">Glass Specification</div>
-                  <div className="font-bold text-slate-900 mt-0.5">{trackedResult.item}</div>
-                </div>
-                <div className="bg-white p-3.5 rounded-xl border border-slate-200">
-                  <div className="text-slate-500 text-[11px]">Dimensions & Stillage</div>
-                  <div className="font-bold text-slate-900 mt-0.5 font-mono">
-                    {trackedResult.dim} · {trackedResult.rack}
-                  </div>
-                </div>
-                <div className="bg-white p-3.5 rounded-xl border border-slate-200">
-                  <div className="text-slate-500 text-[11px]">Active Factory Stage</div>
-                  <div className="font-bold text-[#e31e24] mt-0.5">{trackedResult.stage}</div>
-                </div>
-              </div>
-
-              {/* Progress Milestones */}
-              <div className="space-y-2 pt-2">
-                <div className="flex justify-between text-xs text-slate-700 font-medium">
-                  <span>Production Stage Completion</span>
-                  <span className="font-mono font-bold text-slate-900">{trackedResult.progress}%</span>
-                </div>
-                <div className="h-2.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-600 via-[#e31e24] to-emerald-500 rounded-full transition-all duration-700"
-                    style={{ width: `${trackedResult.progress}%` }}
-                  />
-                </div>
-                <div className="grid grid-cols-4 text-center text-[10px] text-slate-600 font-medium pt-1">
-                  <span className="text-emerald-700 font-bold">✓ 1. Cutting</span>
-                  <span className={trackedResult.progress >= 50 ? "text-emerald-700 font-bold" : ""}>
-                    {trackedResult.progress >= 50 ? "✓" : "○"} 2. Pairing
-                  </span>
-                  <span className={trackedResult.progress >= 75 ? "text-emerald-700 font-bold" : ""}>
-                    {trackedResult.progress >= 75 ? "✓" : "○"} 3. DGU / Lam
-                  </span>
-                  <span className={trackedResult.progress === 100 ? "text-emerald-700 font-bold" : ""}>
-                    {trackedResult.progress === 100 ? "✓" : "○"} 4. Dispatch
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
 
       {/* SECTION: LANDMARK PROJECTS PORTFOLIO */}
       <section id="portfolio" className="relative z-10 py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200">
@@ -1628,16 +1151,7 @@ export default function LandingPage() {
                   ▶ Production ERP & Tracking OS
                 </Link>
               </li>
-              <li>
-                <a href="#calculator" className="hover:text-white">
-                  Glazing Spec Calculator
-                </a>
-              </li>
-              <li>
-                <a href="#tracker" className="hover:text-white">
-                  Barcode Order Lookup
-                </a>
-              </li>
+
               <li>
                 <button onClick={() => setQuoteModalOpen(true)} className="hover:text-white text-left">
                   Request Quotation
