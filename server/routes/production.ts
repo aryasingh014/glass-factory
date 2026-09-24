@@ -7,13 +7,26 @@ const sseClients: Response[] = [];
 
 export const handleEventsStream: RequestHandler = (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
+  // Send initial connected packet so proxies and browsers establish the stream immediately
+  res.write(": connected\n\n");
   sseClients.push(res);
 
+  // Send a lightweight comment heartbeat every 15 seconds to keep ngrok/reverse proxy tunnels active
+  const heartbeatTimer = setInterval(() => {
+    try {
+      res.write(": heartbeat\n\n");
+    } catch {
+      clearInterval(heartbeatTimer);
+    }
+  }, 15000);
+
   req.on("close", () => {
+    clearInterval(heartbeatTimer);
     const idx = sseClients.indexOf(res);
     if (idx !== -1) sseClients.splice(idx, 1);
   });
@@ -79,6 +92,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   const updatedItems: GlassItem[] = [];
   const skippedItems: { serialNumber: string; reason: string }[] = [];
   const affectedPiIds = new Set<string>();
+  const alreadyProcessedIds = new Set<string>();
   let hasPairingItems = false;
 
   // Build fast O(1) index map preserving first-match semantics of Array.find
@@ -96,10 +110,14 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       skippedItems.push({ serialNumber: String(serial), reason: "Item not found" });
       continue;
     }
+    if (alreadyProcessedIds.has(item.id)) {
+      continue;
+    }
     if (item.status === "Rejected") {
       skippedItems.push({ serialNumber: item.serialNumber, reason: "Item is rejected" });
       continue;
     }
+    alreadyProcessedIds.add(item.id);
 
     const currentStage = item.currentStage;
     if (!item.completedStages.includes(currentStage)) {
@@ -207,25 +225,101 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       if (nextStage === "Finished") {
         item.status = "Completed";
 
-        // If this item is part of a DGU or DLGU unit, advance any partner pane currently in DGU as well
-        if (item.glassCategory === "DLGU" || item.glassCategory === "DGU" || item.processRoute.includes("DGU")) {
-          const itemPairId = (item as any).lamPairId;
-          glassItemsDatabase.forEach((other) => {
-            if (other.id !== item.id && other.currentStage === "DGU" && other.status !== "Completed" && other.status !== "Rejected") {
-              const isPartner =
-                (itemPairId && (other as any).lamPairId === itemPairId) ||
-                (other.posNo === item.posNo &&
-                  other.width === item.width &&
-                  other.height === item.height &&
-                  (other.piId === item.piId || other.piNumber === item.piNumber || other.orderNo === item.orderNo));
-              if (isPartner) {
-                other.currentStage = "Finished";
-                other.status = "Completed";
-                if (!other.completedStages.includes("DGU")) other.completedStages.push("DGU");
-                other.updatedAt = new Date().toISOString();
-                updatedItems.push(other);
+        // If this item is part of a DGU or DLGU unit, and only a single piece was scanned/submitted,
+        // advance ONLY the partner pane(s) of this specific unit (never other units of the same position).
+        if ((item.glassCategory === "DLGU" || item.glassCategory === "DGU" || item.processRoute.includes("DGU")) && finalSerialNumbers.length === 1) {
+          const itemDguPairId = (item as any).dguPairId;
+          const itemLamPairId = (item as any).lamPairId;
+          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isDlgu = isDlguItem(item) || item.glassCategory === "DLGU";
+
+          let unitPartners: GlassItem[] = [];
+
+          if (itemDguPairId) {
+            unitPartners = glassItemsDatabase.filter(
+              (other) =>
+                other.id !== item.id &&
+                (other as any).dguPairId === itemDguPairId &&
+                other.currentStage === "DGU" &&
+                other.status !== "Completed" &&
+                other.status !== "Rejected" &&
+                !alreadyProcessedIds.has(other.id)
+            );
+          }
+
+          if (unitPartners.length === 0) {
+            // Sibling fallback strictly restricted to ONE matching unit!
+            const dguSiblings = glassItemsDatabase.filter(
+              (other) =>
+                other.id !== item.id &&
+                other.currentStage === "DGU" &&
+                other.status !== "Completed" &&
+                other.status !== "Rejected" &&
+                other.posNo === item.posNo &&
+                Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+                Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+                (
+                  (item.piId && other.piId === item.piId) ||
+                  (item.piNumber && other.piNumber === item.piNumber) ||
+                  (item.orderNo && other.orderNo === item.orderNo) ||
+                  (item.sfoNo && other.sfoNo === item.sfoNo)
+                ) &&
+                !alreadyProcessedIds.has(other.id)
+            );
+
+            if (isDlgu) {
+              if (isItemColour) {
+                // Colour pane scanned: find at most 2 Clear partner panes for this 1 unit
+                unitPartners = dguSiblings
+                  .filter((other) => other.colorOrClear === "Clear" || /clear/i.test(`${other.glassType || ""} ${other.category || ""}`))
+                  .slice(0, 2);
+              } else {
+                // Clear pane scanned: find at most 1 Colour pane + at most 1 sibling Clear pane
+                const colPartner = dguSiblings.find(
+                  (other) => other.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${other.glassType || ""} ${other.category || ""}`)
+                );
+                const clrPartner = itemLamPairId
+                  ? dguSiblings.find((other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id)
+                  : dguSiblings.find((other) => (other.colorOrClear === "Clear" || /clear/i.test(`${other.glassType || ""} ${other.category || ""}`)) && other.id !== item.id);
+                if (colPartner) unitPartners.push(colPartner);
+                if (clrPartner) unitPartners.push(clrPartner);
               }
+            } else {
+              // Standard DGU: find at most ONE opposite-finish partner pane for this 1 unit
+              const oppPartner = dguSiblings.find(
+                (other) => {
+                  const isOtherColour = other.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${other.glassType || ""} ${other.category || ""}`);
+                  return isOtherColour !== isItemColour;
+                }
+              );
+              if (oppPartner) unitPartners.push(oppPartner);
             }
+          }
+
+          unitPartners.forEach((partner) => {
+            alreadyProcessedIds.add(partner.id);
+            partner.currentStage = "Finished";
+            partner.status = "Completed";
+            if (!partner.completedStages.includes("DGU")) partner.completedStages.push("DGU");
+            partner.updatedAt = new Date().toISOString();
+            updatedItems.push(partner);
+
+            productionHistoryDatabase.unshift({
+              id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              serialNumber: partner.serialNumber,
+              barcode: partner.barcode,
+              piNumber: partner.piNumber,
+              itemOrBatch: partner.serialNumber,
+              action: "Dispatched to Finished",
+              prevStatus: "DGU",
+              newStatus: "Completed",
+              stage: "DGU",
+              status: "Completed",
+              operator: cleanOperator,
+              user: cleanOperator,
+              timestamp: new Date().toISOString(),
+              remarks: `${cleanRemarks} (Unit partner pane auto-dispatched with #${item.serialNumber})`,
+            });
           });
         }
       } else {
@@ -273,7 +367,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
     );
     if (piItems.length === 0) continue;
-    const completedCount = piItems.filter((i) => i.currentStage === "Finished" || i.status === "Completed").length;
+    const completedCount = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
     pi.completedItemsCount = completedCount;
     if (completedCount >= piItems.length && piItems.length > 0) {
       pi.status = "Completed";
@@ -391,15 +485,20 @@ export function isDlguStickerPairMatch(paneA: any, paneB: any): boolean {
       (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
     if (!isClrReady) return false;
   } else {
-    // Phase 1: Lamination Pairing (6mm Clear + 13.52mm Clear Lam partner)
-    if (!paneA.glassType || !paneB.glassType) return false;
-    if (paneA.glassType === paneB.glassType) return false; // Same lite, cannot pair with itself
+    // Phase 1: Lamination Pairing (e.g. 6mm Clear + 13.52mm Clear Lam partner, or 2 identical clear lites)
+    // As long as they are distinct physical panes (serials/IDs verified above), they are valid pairing candidates.
   }
 
   // 1. Order No / PI # must match
-  const orderA = String(paneA.orderNo || paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  const orderB = String(paneB.orderNo || paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  if (orderA && orderB && orderA !== orderB) return false;
+  if (paneA.orderNo && paneB.orderNo) {
+    if (String(paneA.orderNo).trim().toLowerCase() !== String(paneB.orderNo).trim().toLowerCase()) return false;
+  } else if (paneA.obNo && paneB.obNo) {
+    if (String(paneA.obNo).trim().toLowerCase() !== String(paneB.obNo).trim().toLowerCase()) return false;
+  } else {
+    const orderA = String(paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const orderB = String(paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (orderA && orderB && orderA !== orderB) return false;
+  }
 
   // 2. POS # must match
   const posA = String(paneA.posNo || "").trim();
@@ -435,9 +534,15 @@ export function isStickerPairMatch(col: any, clr: any): boolean {
   if (isColFinishColour === isClrFinishColour) return false;
 
   // 1. Order No / PI # must match
-  const colOrder = String(col.orderNo || col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  const clrOrder = String(clr.orderNo || clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  if (col.orderNo && clr.orderNo) {
+    if (String(col.orderNo).trim().toLowerCase() !== String(clr.orderNo).trim().toLowerCase()) return false;
+  } else if (col.obNo && clr.obNo) {
+    if (String(col.obNo).trim().toLowerCase() !== String(clr.obNo).trim().toLowerCase()) return false;
+  } else {
+    const colOrder = String(col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const clrOrder = String(clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  }
 
   // 2. POS # (Position Number) must match
   const colPos = String(col.posNo || "").trim();
@@ -492,6 +597,7 @@ export function autoAdvancePairedDguItems(): number {
     const catStr = String(i.category || "").toLowerCase();
 
     const hasColourKeyword =
+      typeStr.includes("emicool") ||
       typeStr.includes("grey") ||
       typeStr.includes("gray") ||
       typeStr.includes("bronze") ||
@@ -539,6 +645,9 @@ export function autoAdvancePairedDguItems(): number {
       usedClear.add(match.serialNumber);
 
       // Auto-advance both paired panes from "Pairing" to "DGU"
+      const pairId = `dgu-${col.serialNumber}-${match.serialNumber}`;
+      (col as any).dguPairId = pairId;
+      (match as any).dguPairId = pairId;
       col.currentStage = "DGU";
       if (!col.completedStages.includes("Pairing")) col.completedStages.push("Pairing");
       col.updatedAt = new Date().toISOString();
@@ -613,9 +722,15 @@ export function isLaminationStickerPairMatch(paneA: any, paneB: any): boolean {
   if (!isDifferentLite) return false;
 
   // 1. Order No / PI # must match
-  const orderA = String(paneA.orderNo || paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  const orderB = String(paneB.orderNo || paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  if (orderA && orderB && orderA !== orderB) return false;
+  if (paneA.orderNo && paneB.orderNo) {
+    if (String(paneA.orderNo).trim().toLowerCase() !== String(paneB.orderNo).trim().toLowerCase()) return false;
+  } else if (paneA.obNo && paneB.obNo) {
+    if (String(paneA.obNo).trim().toLowerCase() !== String(paneB.obNo).trim().toLowerCase()) return false;
+  } else {
+    const orderA = String(paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const orderB = String(paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (orderA && orderB && orderA !== orderB) return false;
+  }
 
   // 2. POS # (Position Number) must match
   const posA = String(paneA.posNo || "").trim();
@@ -803,8 +918,8 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
       i.status !== "Completed" &&
       i.status !== "Rejected" &&
       isDlguItem(i) &&
-      i.processRoute.includes("Lamination") &&
-      !i.completedStages.includes("Lamination") &&
+      (i.processRoute?.includes("Lamination") ?? true) &&
+      !i.completedStages?.includes("Lamination") &&
       i.colorOrClear !== "Colour"
   );
 
@@ -825,10 +940,12 @@ export function autoAdvancePairedDlguItems(filterPosNo?: string, filterPi?: stri
       (match as any).lamPairId = pairId;
 
       paneA.currentStage = "Lamination";
+      if (!paneA.completedStages) paneA.completedStages = ["Cutting"];
       if (!paneA.completedStages.includes("Pairing")) paneA.completedStages.push("Pairing");
       paneA.updatedAt = new Date().toISOString();
 
       match.currentStage = "Lamination";
+      if (!match.completedStages) match.completedStages = ["Cutting"];
       if (!match.completedStages.includes("Pairing")) match.completedStages.push("Pairing");
       match.updatedAt = new Date().toISOString();
 
@@ -898,7 +1015,7 @@ export function manualPairDlguPhase2Items(filterPosNo?: string, filterPi?: strin
         i.status !== "Rejected" &&
         isDlguItem(i) &&
         i.colorOrClear !== "Colour" &&
-        (i.completedStages.includes("Lamination") || i.currentStage === "Lamination" || i.dlguPhase === "DguPairing") &&
+        (Boolean(i.completedStages?.includes("Lamination")) || i.currentStage === "Lamination" || i.dlguPhase === "DguPairing") &&
         !usedSerials.has(i.serialNumber) &&
         (!cleanPiFilter || (i.piNumber && i.piNumber.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter) || (i.piId && i.piId.replace(/^STK-/i, "").trim().toLowerCase() === cleanPiFilter)) &&
         (!cleanPosFilter || String(i.posNo).trim().toLowerCase() === cleanPosFilter)
@@ -915,15 +1032,43 @@ export function manualPairDlguPhase2Items(filterPosNo?: string, filterPi?: strin
         usedSerials.add(col.serialNumber);
         usedSerials.add(match.serialNumber);
 
-        // If match has a lamPairId, find any sibling panes with the same lamPairId and advance them together
+        // If match has a lamPairId, find any sibling panes with the same lamPairId and advance them together.
+        // Fallback: if lamPairId was cleared during an OP rejection, find the sibling clear pane by
+        // positional match (same posNo + dimensions + PI + DguPairing phase) so both clears always
+        // advance to DGU together with the remade colour pane.
         const matchPairId = (match as any).lamPairId;
-        const siblingPanes = matchPairId
+        let siblingPanes: typeof availableLamPanes = matchPairId
           ? availableLamPanes.filter(
               (p) => (p as any).lamPairId === matchPairId && p.serialNumber !== match.serialNumber && !usedSerials.has(p.serialNumber)
             )
           : [];
+        // Positional fallback: pick up the second clear pane that shares posNo+dimensions when
+        // lamPairId is absent (e.g. deleted during prior OP rejection un-linking).
+        if (siblingPanes.length === 0) {
+          siblingPanes = availableLamPanes.filter(
+            (p) =>
+              !usedSerials.has(p.serialNumber) &&
+              p.serialNumber !== match.serialNumber &&
+              (p.colorOrClear === "Clear" || /clear/i.test(`${p.glassType || ""} ${p.category || ""}`)) &&
+              (p.dlguPhase === "DguPairing" || p.completedStages?.includes("Lamination")) &&
+              String(p.posNo || "").trim() === String(match.posNo || "").trim() &&
+              Math.abs((p.width || 0) - (match.width || 0)) < 2 &&
+              Math.abs((p.height || 0) - (match.height || 0)) < 2 &&
+              (
+                (match.piId && p.piId === match.piId) ||
+                (match.piNumber && p.piNumber === match.piNumber) ||
+                (match.orderNo && p.orderNo === match.orderNo) ||
+                (match.obNo && p.obNo === match.obNo)
+              )
+          );
+        }
+
+        const dguPairId = `dgu-${col.serialNumber}-${match.serialNumber}`;
+        (col as any).dguPairId = dguPairId;
+        (match as any).dguPairId = dguPairId;
 
         siblingPanes.forEach((sib) => {
+          (sib as any).dguPairId = dguPairId;
           usedSerials.add(sib.serialNumber);
           sib.currentStage = "DGU";
           if (!sib.completedStages.includes("Lamination")) sib.completedStages.push("Lamination");
@@ -983,20 +1128,22 @@ export function manualPairDlguPhase2Items(filterPosNo?: string, filterPi?: strin
 export const handlePairDlgu: RequestHandler = (req, res) => {
   const { posNo, piNumber, operator } = req.body || {};
   const cleanOperator = sanitizeString(operator || (req as any).user?.username || "Operator", 100);
-  const advancedCount = manualPairDlguPhase2Items(posNo, piNumber, cleanOperator);
+  const phase1Count = autoAdvancePairedDlguItems(posNo, piNumber);
+  const phase2Count = manualPairDlguPhase2Items(posNo, piNumber, cleanOperator);
+  const advancedCount = phase1Count + phase2Count;
   if (advancedCount > 0) {
     broadcastUpdate("stage_advanced", { count: advancedCount });
     createAndBroadcastNotification({
       title: "DLGU Pairing Completed",
-      message: `Manually paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes) and advanced to DGU Assembly Line`,
+      message: `Paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes) and advanced to production lines`,
       category: "STAGE_ADVANCE",
       type: "success",
-      stage: "DGU",
+      stage: phase2Count > 0 ? "DGU" : "Lamination",
       operator: cleanOperator,
     });
     res.json({
       success: true,
-      message: `Successfully paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes) and advanced to DGU!`,
+      message: `Successfully paired ${advancedCount / 2} DLGU set(s) (${advancedCount} panes)!`,
       pairedSets: advancedCount / 2,
       advancedPanes: advancedCount,
     });
@@ -1103,21 +1250,20 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   }
 
   // Check if any target item is already completed at Finished stage
-  const completedItem = targetItems.find(
-    (t) => t.status === "Completed" || t.currentStage === "Finished"
-  );
-  if (completedItem) {
-    res.status(400).json({
-      message: `Item ${completedItem.serialNumber} is completed at Finished stage and cannot be rejected.`,
-    });
-    return;
-  }
+  // Items at Finished / Completed stage (e.g. broken during transit / customer delivery) can be rejected
   // 3. Partner Detection Rules:
   // RULE A: If singlePaneOnly is true or defectivePane is a specific pane (OP, IP, IP_PLY1, IP_PLY2, PRIMARY, PARTNER),
   //         reject ONLY that single piece. The good partner remains intact in the pairing buffer.
-  // RULE B: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, reject the whole paired assembly (both panes).
+  // RULE B: If defectivePane is BOTH_CLEAR / BOTH_IP, reject both clear float panes (IP 1 + IP 2), while the Colour OP remains intact in pairing buffer.
+  // RULE C: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, reject the whole paired assembly (all panes).
+  const isBothClear =
+    defectivePane === "BOTH_CLEAR" ||
+    defectivePane === "BOTH_IP" ||
+    defectivePane === "IP_BOTH";
+
   const isAssemblyReject =
     !req.body.singlePaneOnly &&
+    !isBothClear &&
     (defectivePane === "ASSEMBLY" ||
       defectivePane === "UNIT" ||
       defectivePane === "WHOLE_UNIT" ||
@@ -1126,7 +1272,76 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       (isExplicitList && targetItems.length > 1));
 
   let itemsToReject: GlassItem[] = targetItems;
-  if (!isAssemblyReject && targetItems.length > 1) {
+  if (isBothClear) {
+    let clears = targetItems.filter(
+      (t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`)
+    );
+    if (clears.length === 0 && targetItems.length > 0) {
+      const baseItem = targetItems[0];
+      const dguPairId = (baseItem as any).dguPairId;
+      if (dguPairId) {
+        clears = glassItemsDatabase.filter(
+          (o) =>
+            (o as any).dguPairId === dguPairId &&
+            o.id !== baseItem.id &&
+            o.status !== "Rejected" &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        );
+      }
+      if (clears.length === 0) {
+        clears = glassItemsDatabase.filter(
+          (o) =>
+            o.id !== baseItem.id &&
+            o.status !== "Rejected" &&
+            o.posNo === baseItem.posNo &&
+            Math.abs((o.width || 0) - (baseItem.width || 0)) < 2 &&
+            Math.abs((o.height || 0) - (baseItem.height || 0)) < 2 &&
+            (
+              (baseItem.piId && o.piId === baseItem.piId) ||
+              (baseItem.piNumber && o.piNumber === baseItem.piNumber) ||
+              (baseItem.sfoNo && o.sfoNo === baseItem.sfoNo) ||
+              (baseItem.orderNo && o.orderNo === baseItem.orderNo) ||
+              (baseItem.obNo && o.obNo === baseItem.obNo)
+            ) &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        ).slice(0, 2);
+      }
+    }
+
+    if (clears.length === 1) {
+      const firstClear = clears[0];
+      const lamPairId = (firstClear as any).lamPairId;
+      let secondClear: GlassItem | undefined = undefined;
+      if (lamPairId) {
+        secondClear = glassItemsDatabase.find(
+          (o) => (o as any).lamPairId === lamPairId && o.id !== firstClear.id && o.status !== "Rejected"
+        );
+      }
+      if (!secondClear) {
+        secondClear = glassItemsDatabase.find(
+          (o) =>
+            o.id !== firstClear.id &&
+            o.status !== "Rejected" &&
+            o.posNo === firstClear.posNo &&
+            Math.abs((o.width || 0) - (firstClear.width || 0)) < 2 &&
+            Math.abs((o.height || 0) - (firstClear.height || 0)) < 2 &&
+            (
+              (firstClear.piId && o.piId === firstClear.piId) ||
+              (firstClear.piNumber && o.piNumber === firstClear.piNumber) ||
+              (firstClear.sfoNo && o.sfoNo === firstClear.sfoNo) ||
+              (firstClear.orderNo && o.orderNo === firstClear.orderNo) ||
+              (firstClear.obNo && o.obNo === firstClear.obNo)
+            ) &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        );
+      }
+      if (secondClear && !clears.some((c) => c.id === secondClear!.id)) {
+        clears.push(secondClear);
+      }
+    }
+
+    itemsToReject = clears.length > 0 ? clears : targetItems;
+  } else if (!isAssemblyReject && targetItems.length > 1) {
     if (defectiveSerialNumber) {
       const match = targetItems.find(
         (t) => t.serialNumber === defectiveSerialNumber || t.barcode === defectiveSerialNumber
@@ -1144,6 +1359,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   }
 
   const partnerItems: GlassItem[] = [];
+  const allUnlinkedPartners: GlassItem[] = [];
 
   if (isAssemblyReject) {
     if (!isExplicitList || itemsToReject.length === 1) {
@@ -1153,88 +1369,352 @@ export const handleRejectItem: RequestHandler = (req, res) => {
           return;
         }
 
-        const itemLamPairId = (item as any).lamPairId;
-        const itemDguPairId = (item as any).dguPairId;
+        if (isDlguItem(item) && item.currentStage !== "Lamination") {
+          // DLGU 3-pane assembly rejection: must reject all remaining panes of this unit
+          const lamPairId = (item as any).lamPairId;
+          const dguPairId = (item as any).dguPairId;
+          const dlguPartners: GlassItem[] = [];
+          if (lamPairId) {
+            const lamPartner = glassItemsDatabase.find(
+              (o) => (o as any).lamPairId === lamPairId && o.id !== item.id && o.status !== "Rejected"
+            );
+            if (lamPartner) dlguPartners.push(lamPartner);
+          }
+          if (dguPairId) {
+            const dguPartners = glassItemsDatabase.filter(
+              (o) => (o as any).dguPairId === dguPairId && o.id !== item.id && o.status !== "Rejected"
+            );
+            dguPartners.forEach((dp) => {
+              if (!dlguPartners.some((p) => p.id === dp.id)) dlguPartners.push(dp);
+            });
+          }
+          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const neededClearCount = isItemColour ? 2 : 1;
+          const neededColourCount = isItemColour ? 0 : 1;
+          const currentClearCount = dlguPartners.filter((p) => p.colorOrClear === "Clear" || /clear/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
+          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
 
-        // 1. Matched by unique lamPairId (stamped during pairing)
-        if (itemLamPairId) {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              (other as any).lamPairId === itemLamPairId &&
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              !itemsToReject.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        }
-        // 2. Matched by unique dguPairId
-        else if (itemDguPairId) {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              (other as any).dguPairId === itemDguPairId &&
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              !itemsToReject.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        }
-        // 3. Fallback for Lamination stage (find ONLY 1 matching partner pane)
-        else if (item.currentStage === "Lamination") {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              other.currentStage === "Lamination" &&
-              (isDlguItem(item)
-                ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
-                : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
-              !itemsToReject.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        }
-        // 4. Fallback for DGU stage (find ONLY 1 matching partner pane)
-        else if (item.currentStage === "DGU") {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              other.currentStage === "DGU" &&
-              isStickerPairMatch(item, other) &&
-              !itemsToReject.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
+          if (currentClearCount < neededClearCount || currentColourCount < neededColourCount) {
+            const siblings = glassItemsDatabase.filter(
+              (o) =>
+                o.id !== item.id &&
+                o.status !== "Rejected" &&
+                o.posNo === item.posNo &&
+                Math.abs((o.width || 0) - (item.width || 0)) < 2 &&
+                Math.abs((o.height || 0) - (item.height || 0)) < 2 &&
+                (
+                  (item.piId && o.piId === item.piId) ||
+                  (item.piNumber && o.piNumber === item.piNumber) ||
+                  (item.sfoNo && o.sfoNo === item.sfoNo) ||
+                  (item.orderNo && o.orderNo === item.orderNo) ||
+                  (item.obNo && o.obNo === item.obNo)
+                ) &&
+                !itemsToReject.some((t) => t.id === o.id) &&
+                !partnerItems.some((p) => p.id === o.id) &&
+                !dlguPartners.some((p) => p.id === o.id)
+            );
+
+            if (currentClearCount < neededClearCount) {
+              const missingClears = siblings
+                .filter((s) => s.colorOrClear === "Clear" || /clear/i.test(`${s.glassType || ""} ${s.category || ""}`))
+                .slice(0, neededClearCount - currentClearCount);
+              dlguPartners.push(...missingClears);
+            }
+            if (currentColourCount < neededColourCount) {
+              const missingColour = siblings.find(
+                (s) => s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)
+              );
+              if (missingColour) dlguPartners.push(missingColour);
+            }
+          }
+
+          dlguPartners.forEach((p) => {
+            if (!itemsToReject.some((t) => t.id === p.id) && !partnerItems.some((pi) => pi.id === p.id)) {
+              partnerItems.push(p);
+            }
+          });
+        } else {
+          const itemLamPairId = (item as any).lamPairId;
+          const itemDguPairId = (item as any).dguPairId;
+
+          // 1. Matched by unique lamPairId (stamped during pairing)
+          if (itemLamPairId) {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                (other as any).lamPairId === itemLamPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToReject.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
+          // 2. Matched by unique dguPairId
+          else if (itemDguPairId) {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                (other as any).dguPairId === itemDguPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToReject.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
+          // 3. Fallback for Lamination stage (find ONLY 1 matching partner pane)
+          else if (item.currentStage === "Lamination") {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.currentStage === "Lamination" &&
+                isLaminationItem(other) &&
+                isLaminationStickerPairMatch(item, other) &&
+                !itemsToReject.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
+          // 4. Fallback for DGU stage (find ONLY 1 matching partner pane)
+          else if (item.currentStage === "DGU") {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.currentStage === "DGU" &&
+                isStickerPairMatch(item, other) &&
+                !itemsToReject.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
+          // 5. Fallback for Finished stage
+          else if (item.currentStage === "Finished") {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                (other.currentStage === "Finished" || other.status === "Completed") &&
+                (isLaminationItem(item)
+                  ? isLaminationItem(other) && isLaminationStickerPairMatch(item, other)
+                  : isStickerPairMatch(item, other)) &&
+                !itemsToReject.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
         }
       });
     }
   } else {
-    // Single pane rejection: un-link surviving partner so it returns to pairing buffer waiting for remake piece
+    // Single pane rejection: strictly un-link ONLY the surviving partner panes of THIS SINGLE UNIT (not the entire batch/position)
     itemsToReject.forEach((item) => {
       const itemLamPairId = (item as any).lamPairId;
       const itemDguPairId = (item as any).dguPairId;
-      if (itemLamPairId) {
-        const partner = glassItemsDatabase.find(
-          (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id
-        );
-        if (partner) {
-          delete (partner as any).lamPairId;
-          partner.currentStage = "Pairing";
-          partner.status = "Pending";
+      const partners: GlassItem[] = [];
+
+      if (isDlguItem(item)) {
+        const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+        if (isItemColour) {
+          // Rejection on Colour pane (OP): un-link at most 2 Clear partner panes (IP 1 + IP 2)
+          const dguPairId = (item as any).dguPairId;
+          let clearPartners: GlassItem[] = [];
+          if (dguPairId) {
+            clearPartners = glassItemsDatabase.filter(
+              (other) => (other as any).dguPairId === dguPairId && other.id !== item.id && other.status !== "Rejected"
+            );
+          }
+          if (clearPartners.length === 0) {
+            clearPartners = glassItemsDatabase.filter(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.posNo === item.posNo &&
+                Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+                Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+                (
+                  (item.piId && other.piId === item.piId) ||
+                  (item.piNumber && other.piNumber === item.piNumber) ||
+                  (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                  (item.orderNo && other.orderNo === item.orderNo) ||
+                  (item.obNo && other.obNo === item.obNo)
+                ) &&
+                (other.colorOrClear === "Clear" || /clear/i.test(`${other.glassType || ""} ${other.category || ""}`))
+            ).slice(0, 2);
+          }
+          partners.push(...clearPartners);
+        } else {
+          // Rejection on Clear pane (IP 1, IP 2, or BOTH_CLEAR): un-link surviving partner panes
+          const lamPairId = (item as any).lamPairId;
+          const dguPairId = (item as any).dguPairId;
+          
+          let partnerClear: GlassItem | undefined = undefined;
+          if (!isBothClear && lamPairId) {
+            partnerClear = glassItemsDatabase.find(
+              (other) =>
+                (other as any).lamPairId === lamPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToReject.some((t) => t.id === other.id)
+            );
+          }
+          let partnerColour: GlassItem | undefined = undefined;
+          if (dguPairId) {
+            partnerColour = glassItemsDatabase.find(
+              (other) =>
+                (other as any).dguPairId === dguPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToReject.some((t) => t.id === other.id)
+            );
+          }
+
+          // Fallback sibling search for Finished / Staged units
+          const siblings = glassItemsDatabase.filter(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              ) &&
+              !itemsToReject.some((t) => t.id === other.id)
+          );
+
+          if (!isBothClear && !partnerClear) {
+            partnerClear = siblings.find(
+              (s) =>
+                (s.colorOrClear === "Clear" || /clear/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                s.id !== item.id &&
+                !partners.some((p) => p.id === s.id) &&
+                !itemsToReject.some((t) => t.id === s.id)
+            );
+          }
+          if (!partnerColour) {
+            partnerColour = siblings.find(
+              (s) =>
+                (s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                !partners.some((p) => p.id === s.id) &&
+                !itemsToReject.some((t) => t.id === s.id)
+            );
+          }
+
+          if (!isBothClear && partnerClear) partners.push(partnerClear);
+          if (partnerColour) partners.push(partnerColour);
+        }
+      } else if (isLaminationItem(item)) {
+        const itemLamPairId = (item as any).lamPairId;
+        if (itemLamPairId) {
+          const p = glassItemsDatabase.find(
+            (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id && other.status !== "Rejected"
+          );
+          if (p) partners.push(p);
+        } else {
+          const clearPartner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              )
+          );
+          if (clearPartner) partners.push(clearPartner);
+        }
+      } else {
+        // Standard DGU (1+1): un-link 1 opposite finish partner pane
+        const itemDguPairId = (item as any).dguPairId;
+        if (itemDguPairId) {
+          const p = glassItemsDatabase.find(
+            (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id && other.status !== "Rejected"
+          );
+          if (p) partners.push(p);
+        } else {
+          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const siblings = glassItemsDatabase.filter(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              )
+          );
+          const oppositePartner = siblings.find((s) => {
+            const isOtherColour = s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`);
+            return isOtherColour !== isItemColour;
+          });
+          if (oppositePartner) partners.push(oppositePartner);
         }
       }
-      if (itemDguPairId) {
-        const partner = glassItemsDatabase.find(
-          (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id
-        );
-        if (partner) {
+
+      const isOpRejectionContext = defectivePane === "OP" ||
+        (itemsToReject.length > 0 && (itemsToReject[0].colorOrClear === "Colour" ||
+          /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(
+            `${itemsToReject[0].glassType || ""} ${itemsToReject[0].category || ""}`
+          )));
+      partners.forEach((partner) => {
+        // For OP rejection: preserve lamPairId so the two surviving clears remain linked
+        // and Phase 2 sibling scan can collect both into DGU together.
+        // Only dguPairId needs to be cleared (that's the trio bond that's now broken).
+        if (isOpRejectionContext) {
           delete (partner as any).dguPairId;
-          partner.currentStage = "Pairing";
-          partner.status = "Pending";
+        } else {
+          delete (partner as any).lamPairId;
+          delete (partner as any).dguPairId;
         }
-      }
+        partner.currentStage = "Pairing";
+        partner.status = "Pending";
+        partner.updatedAt = new Date().toISOString();
+        if (isDlguItem(partner)) {
+          const isColour = partner.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${partner.glassType || ""} ${partner.category || ""}`);
+          if (isColour) {
+            partner.dlguPhase = "DguPairing";
+            partner.completedStages = (partner.completedStages || []).filter(
+              (s: string) => s !== "DGU" && s !== "Pairing" && s !== "Finished"
+            );
+            if (!partner.completedStages.includes("Cutting")) {
+              partner.completedStages.push("Cutting");
+            }
+          } else {
+            // Surviving Clear pane:
+            // If the rejection was on Colour pane (OP) and this Clear pane already completed Lamination,
+            // it stays intact in Phase 2 (DguPairing) waiting for the remade Colour pane!
+            // Only if a single Clear pane was rejected does this Clear pane need to re-pair in Phase 1 (LamPairing).
+            const isOpRejection = defectivePane === "OP";
+            if (isOpRejection && partner.completedStages?.includes("Lamination")) {
+              partner.dlguPhase = "DguPairing";
+              partner.completedStages = (partner.completedStages || []).filter(
+                (s: string) => s !== "DGU" && s !== "Pairing" && s !== "Finished"
+              );
+            } else {
+              partner.dlguPhase = "LamPairing";
+              partner.completedStages = (partner.completedStages || []).filter(
+                (s: string) => s !== "Lamination" && s !== "DGU" && s !== "Pairing" && s !== "Finished"
+              );
+            }
+          }
+        }
+      });
+      allUnlinkedPartners.push(...partners);
     });
   }
 
@@ -1243,6 +1723,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   const reworkEntries: ReworkRecord[] = [];
 
   allItemsToReject.forEach((targetItem) => {
+    delete (targetItem as any).lamPairId;
+    delete (targetItem as any).dguPairId;
     const prevStage = targetItem.currentStage;
     const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
 
@@ -1273,6 +1755,12 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       targetItem.status = "Reworking";
       targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
       targetItem.updatedAt = new Date().toISOString();
+      if (isDlguItem(targetItem)) {
+        const isColour = targetItem.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
+        if (!isColour) {
+          targetItem.dlguPhase = "LamPairing";
+        }
+      }
 
       const reworkEntry: ReworkRecord = {
         id: `rew-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -1337,7 +1825,12 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   });
 
   // Update parent PI status and counts
-  const affectedPiKeys = new Set(allItemsToReject.map((i) => i.piNumber).concat(allItemsToReject.map((i) => i.piId)).filter(Boolean));
+  const allAffected = [...allItemsToReject, ...allUnlinkedPartners];
+  const affectedPiKeys = new Set(
+    allAffected
+      .flatMap((i) => [i.piNumber, i.piId])
+      .filter(Boolean)
+  );
   affectedPiKeys.forEach((piKey) => {
     const parentPi = piDatabase.find((p) => p.id === piKey || p.piNumber === piKey);
     if (parentPi) {
@@ -1346,6 +1839,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       parentPi.completedItemsCount = completedItems;
       if (piItems.some((i) => i.status !== "Completed")) {
         parentPi.status = "In Production";
+      } else if (piItems.length > 0 && piItems.every((i) => i.status === "Completed")) {
+        parentPi.status = "Completed";
       }
     }
   });
@@ -1456,9 +1951,16 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   // 3. Partner Detection Rules:
   // RULE A: If singlePaneOnly is true or defectivePane is a specific pane (OP, IP, IP_PLY1, IP_PLY2, PRIMARY, PARTNER),
   //         rework ONLY that single piece. The good partner remains intact in the pairing buffer.
-  // RULE B: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, rework the whole paired assembly (both panes).
+  // RULE B: If defectivePane is BOTH_CLEAR / BOTH_IP, rework both clear float panes (IP 1 + IP 2), while the Colour OP remains intact in pairing buffer.
+  // RULE C: If defectivePane is ASSEMBLY / UNIT / WHOLE_UNIT, rework the whole paired assembly (all panes).
+  const isBothClear =
+    defectivePane === "BOTH_CLEAR" ||
+    defectivePane === "BOTH_IP" ||
+    defectivePane === "IP_BOTH";
+
   const isAssemblyRework =
     !req.body.singlePaneOnly &&
+    !isBothClear &&
     (defectivePane === "ASSEMBLY" ||
       defectivePane === "UNIT" ||
       defectivePane === "WHOLE_UNIT" ||
@@ -1467,7 +1969,76 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       (isExplicitList && targetItems.length > 1));
 
   let itemsToRework: GlassItem[] = targetItems;
-  if (!isAssemblyRework && targetItems.length > 1) {
+  if (isBothClear) {
+    let clears = targetItems.filter(
+      (t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`)
+    );
+    if (clears.length === 0 && targetItems.length > 0) {
+      const baseItem = targetItems[0];
+      const dguPairId = (baseItem as any).dguPairId;
+      if (dguPairId) {
+        clears = glassItemsDatabase.filter(
+          (o) =>
+            (o as any).dguPairId === dguPairId &&
+            o.id !== baseItem.id &&
+            o.status !== "Rejected" &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        );
+      }
+      if (clears.length === 0) {
+        clears = glassItemsDatabase.filter(
+          (o) =>
+            o.id !== baseItem.id &&
+            o.status !== "Rejected" &&
+            o.posNo === baseItem.posNo &&
+            Math.abs((o.width || 0) - (baseItem.width || 0)) < 2 &&
+            Math.abs((o.height || 0) - (baseItem.height || 0)) < 2 &&
+            (
+              (baseItem.piId && o.piId === baseItem.piId) ||
+              (baseItem.piNumber && o.piNumber === baseItem.piNumber) ||
+              (baseItem.sfoNo && o.sfoNo === baseItem.sfoNo) ||
+              (baseItem.orderNo && o.orderNo === baseItem.orderNo) ||
+              (baseItem.obNo && o.obNo === baseItem.obNo)
+            ) &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        ).slice(0, 2);
+      }
+    }
+
+    if (clears.length === 1) {
+      const firstClear = clears[0];
+      const lamPairId = (firstClear as any).lamPairId;
+      let secondClear: GlassItem | undefined = undefined;
+      if (lamPairId) {
+        secondClear = glassItemsDatabase.find(
+          (o) => (o as any).lamPairId === lamPairId && o.id !== firstClear.id && o.status !== "Rejected"
+        );
+      }
+      if (!secondClear) {
+        secondClear = glassItemsDatabase.find(
+          (o) =>
+            o.id !== firstClear.id &&
+            o.status !== "Rejected" &&
+            o.posNo === firstClear.posNo &&
+            Math.abs((o.width || 0) - (firstClear.width || 0)) < 2 &&
+            Math.abs((o.height || 0) - (firstClear.height || 0)) < 2 &&
+            (
+              (firstClear.piId && o.piId === firstClear.piId) ||
+              (firstClear.piNumber && o.piNumber === firstClear.piNumber) ||
+              (firstClear.sfoNo && o.sfoNo === firstClear.sfoNo) ||
+              (firstClear.orderNo && o.orderNo === firstClear.orderNo) ||
+              (firstClear.obNo && o.obNo === firstClear.obNo)
+            ) &&
+            (o.colorOrClear === "Clear" || /clear/i.test(`${o.glassType || ""} ${o.category || ""}`))
+        );
+      }
+      if (secondClear && !clears.some((c) => c.id === secondClear!.id)) {
+        clears.push(secondClear);
+      }
+    }
+
+    itemsToRework = clears.length > 0 ? clears : targetItems;
+  } else if (!isAssemblyRework && targetItems.length > 1) {
     if (defectiveSerialNumber) {
       const match = targetItems.find(
         (t) => t.serialNumber === defectiveSerialNumber || t.barcode === defectiveSerialNumber
@@ -1485,6 +2056,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   }
 
   const partnerItems: GlassItem[] = [];
+  const allUnlinkedPartners: GlassItem[] = [];
 
   if (isAssemblyRework) {
     if (!isExplicitList || itemsToRework.length === 1) {
@@ -1493,53 +2065,118 @@ export const handleReworkItem: RequestHandler = (req, res) => {
           return;
         }
 
-        const itemLamPairId = (item as any).lamPairId;
-        const itemDguPairId = (item as any).dguPairId;
+        if (isDlguItem(item) && item.currentStage !== "Lamination") {
+          // DLGU 3-pane assembly rework: must rework all remaining panes of this unit
+          const lamPairId = (item as any).lamPairId;
+          const dguPairId = (item as any).dguPairId;
+          const dlguPartners: GlassItem[] = [];
+          if (lamPairId) {
+            const lamPartner = glassItemsDatabase.find(
+              (o) => (o as any).lamPairId === lamPairId && o.id !== item.id && o.status !== "Rejected"
+            );
+            if (lamPartner) dlguPartners.push(lamPartner);
+          }
+          if (dguPairId) {
+            const dguPartners = glassItemsDatabase.filter(
+              (o) => (o as any).dguPairId === dguPairId && o.id !== item.id && o.status !== "Rejected"
+            );
+            dguPartners.forEach((dp) => {
+              if (!dlguPartners.some((p) => p.id === dp.id)) dlguPartners.push(dp);
+            });
+          }
+          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const neededClearCount = isItemColour ? 2 : 1;
+          const neededColourCount = isItemColour ? 0 : 1;
+          const currentClearCount = dlguPartners.filter((p) => p.colorOrClear === "Clear" || /clear/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
+          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
 
-        if (itemLamPairId) {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              (other as any).lamPairId === itemLamPairId &&
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              !itemsToRework.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        } else if (itemDguPairId) {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              (other as any).dguPairId === itemDguPairId &&
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              !itemsToRework.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        } else if (item.currentStage === "Lamination") {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              other.currentStage === "Lamination" &&
-              (isDlguItem(item)
-                ? isDlguItem(other) && isDlguStickerPairMatch(item, other)
-                : isLaminationItem(other) && isLaminationStickerPairMatch(item, other)) &&
-              !itemsToRework.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
-        } else if (item.currentStage === "DGU") {
-          const partner = glassItemsDatabase.find(
-            (other) =>
-              other.id !== item.id &&
-              other.status !== "Rejected" &&
-              other.currentStage === "DGU" &&
-              isStickerPairMatch(item, other) &&
-              !itemsToRework.some((t) => t.id === other.id) &&
-              !partnerItems.some((p) => p.id === other.id)
-          );
-          if (partner) partnerItems.push(partner);
+          if (currentClearCount < neededClearCount || currentColourCount < neededColourCount) {
+            const siblings = glassItemsDatabase.filter(
+              (o) =>
+                o.id !== item.id &&
+                o.status !== "Rejected" &&
+                o.posNo === item.posNo &&
+                Math.abs((o.width || 0) - (item.width || 0)) < 2 &&
+                Math.abs((o.height || 0) - (item.height || 0)) < 2 &&
+                (
+                  (item.piId && o.piId === item.piId) ||
+                  (item.piNumber && o.piNumber === item.piNumber) ||
+                  (item.sfoNo && o.sfoNo === item.sfoNo) ||
+                  (item.orderNo && o.orderNo === item.orderNo) ||
+                  (item.obNo && o.obNo === item.obNo)
+                ) &&
+                !itemsToRework.some((t) => t.id === o.id) &&
+                !partnerItems.some((p) => p.id === o.id) &&
+                !dlguPartners.some((p) => p.id === o.id)
+            );
+
+            if (currentClearCount < neededClearCount) {
+              const missingClears = siblings
+                .filter((s) => s.colorOrClear === "Clear" || /clear/i.test(`${s.glassType || ""} ${s.category || ""}`))
+                .slice(0, neededClearCount - currentClearCount);
+              dlguPartners.push(...missingClears);
+            }
+            if (currentColourCount < neededColourCount) {
+              const missingColour = siblings.find(
+                (s) => s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)
+              );
+              if (missingColour) dlguPartners.push(missingColour);
+            }
+          }
+
+          dlguPartners.forEach((p) => {
+            if (!itemsToRework.some((t) => t.id === p.id) && !partnerItems.some((pi) => pi.id === p.id)) {
+              partnerItems.push(p);
+            }
+          });
+        } else {
+          const itemLamPairId = (item as any).lamPairId;
+          const itemDguPairId = (item as any).dguPairId;
+
+          if (itemLamPairId) {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                (other as any).lamPairId === itemLamPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToRework.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          } else if (itemDguPairId) {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                (other as any).dguPairId === itemDguPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToRework.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          } else if (item.currentStage === "Lamination") {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.currentStage === "Lamination" &&
+                isLaminationItem(other) &&
+                isLaminationStickerPairMatch(item, other) &&
+                !itemsToRework.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          } else if (item.currentStage === "DGU") {
+            const partner = glassItemsDatabase.find(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.currentStage === "DGU" &&
+                isStickerPairMatch(item, other) &&
+                !itemsToRework.some((t) => t.id === other.id) &&
+                !partnerItems.some((p) => p.id === other.id)
+            );
+            if (partner) partnerItems.push(partner);
+          }
         }
       });
     }
@@ -1548,26 +2185,194 @@ export const handleReworkItem: RequestHandler = (req, res) => {
     itemsToRework.forEach((item) => {
       const itemLamPairId = (item as any).lamPairId;
       const itemDguPairId = (item as any).dguPairId;
-      if (itemLamPairId) {
-        const partner = glassItemsDatabase.find(
-          (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id
-        );
-        if (partner) {
-          delete (partner as any).lamPairId;
-          partner.currentStage = "Pairing";
-          partner.status = "Pending";
+      const partners: GlassItem[] = [];
+
+      if (isDlguItem(item)) {
+        const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+        if (isItemColour) {
+          // Rework on Colour pane (OP): un-link at most 2 Clear partner panes (IP 1 + IP 2)
+          const dguPairId = (item as any).dguPairId;
+          let clearPartners: GlassItem[] = [];
+          if (dguPairId) {
+            clearPartners = glassItemsDatabase.filter(
+              (other) => (other as any).dguPairId === dguPairId && other.id !== item.id && other.status !== "Rejected"
+            );
+          }
+          if (clearPartners.length === 0) {
+            clearPartners = glassItemsDatabase.filter(
+              (other) =>
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                other.posNo === item.posNo &&
+                Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+                Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+                (
+                  (item.piId && other.piId === item.piId) ||
+                  (item.piNumber && other.piNumber === item.piNumber) ||
+                  (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                  (item.orderNo && other.orderNo === item.orderNo) ||
+                  (item.obNo && other.obNo === item.obNo)
+                ) &&
+                (other.colorOrClear === "Clear" || /clear/i.test(`${other.glassType || ""} ${other.category || ""}`))
+            ).slice(0, 2);
+          }
+          partners.push(...clearPartners);
+        } else {
+          // Rework on Clear pane (IP 1, IP 2, or BOTH_CLEAR): un-link surviving partner panes
+          const lamPairId = (item as any).lamPairId;
+          const dguPairId = (item as any).dguPairId;
+          
+          let partnerClear: GlassItem | undefined = undefined;
+          if (!isBothClear && lamPairId) {
+            partnerClear = glassItemsDatabase.find(
+              (other) =>
+                (other as any).lamPairId === lamPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToRework.some((t) => t.id === other.id)
+            );
+          }
+          let partnerColour: GlassItem | undefined = undefined;
+          if (dguPairId) {
+            partnerColour = glassItemsDatabase.find(
+              (other) =>
+                (other as any).dguPairId === dguPairId &&
+                other.id !== item.id &&
+                other.status !== "Rejected" &&
+                !itemsToRework.some((t) => t.id === other.id)
+            );
+          }
+
+          // Fallback sibling search for Finished / Staged units
+          const siblings = glassItemsDatabase.filter(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              ) &&
+              !itemsToRework.some((t) => t.id === other.id)
+          );
+
+          if (!isBothClear && !partnerClear) {
+            partnerClear = siblings.find(
+              (s) =>
+                (s.colorOrClear === "Clear" || /clear/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                s.id !== item.id &&
+                !partners.some((p) => p.id === s.id) &&
+                !itemsToRework.some((t) => t.id === s.id)
+            );
+          }
+          if (!partnerColour) {
+            partnerColour = siblings.find(
+              (s) =>
+                (s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                !partners.some((p) => p.id === s.id) &&
+                !itemsToRework.some((t) => t.id === s.id)
+            );
+          }
+
+          if (!isBothClear && partnerClear) partners.push(partnerClear);
+          if (partnerColour) partners.push(partnerColour);
+        }
+      } else if (isLaminationItem(item)) {
+        const itemLamPairId = (item as any).lamPairId;
+        if (itemLamPairId) {
+          const p = glassItemsDatabase.find(
+            (other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id && other.status !== "Rejected"
+          );
+          if (p) partners.push(p);
+        } else {
+          const clearPartner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              )
+          );
+          if (clearPartner) partners.push(clearPartner);
+        }
+      } else {
+        // Standard DGU (1+1): un-link 1 opposite finish partner pane
+        const itemDguPairId = (item as any).dguPairId;
+        if (itemDguPairId) {
+          const p = glassItemsDatabase.find(
+            (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id && other.status !== "Rejected"
+          );
+          if (p) partners.push(p);
+        } else {
+          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const siblings = glassItemsDatabase.filter(
+            (other) =>
+              other.id !== item.id &&
+              other.status !== "Rejected" &&
+              other.posNo === item.posNo &&
+              Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+              Math.abs((other.height || 0) - (item.height || 0)) < 2 &&
+              (
+                (item.piId && other.piId === item.piId) ||
+                (item.piNumber && other.piNumber === item.piNumber) ||
+                (item.sfoNo && other.sfoNo === item.sfoNo) ||
+                (item.orderNo && other.orderNo === item.orderNo) ||
+                (item.obNo && other.obNo === item.obNo)
+              )
+          );
+          const oppositePartner = siblings.find((s) => {
+            const isOtherColour = s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`);
+            return isOtherColour !== isItemColour;
+          });
+          if (oppositePartner) partners.push(oppositePartner);
         }
       }
-      if (itemDguPairId) {
-        const partner = glassItemsDatabase.find(
-          (other) => (other as any).dguPairId === itemDguPairId && other.id !== item.id
-        );
-        if (partner) {
-          delete (partner as any).dguPairId;
-          partner.currentStage = "Pairing";
-          partner.status = "Pending";
+
+      partners.forEach((partner) => {
+        delete (partner as any).lamPairId;
+        delete (partner as any).dguPairId;
+        partner.currentStage = "Pairing";
+        partner.status = "Pending";
+        partner.updatedAt = new Date().toISOString();
+        if (isDlguItem(partner)) {
+          const isColour = partner.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${partner.glassType || ""} ${partner.category || ""}`);
+          if (isColour) {
+            partner.dlguPhase = "DguPairing";
+            partner.completedStages = (partner.completedStages || []).filter(
+              (s: string) => s !== "DGU" && s !== "Pairing" && s !== "Finished"
+            );
+            if (!partner.completedStages.includes("Cutting")) {
+              partner.completedStages.push("Cutting");
+            }
+          } else {
+            const isOpRework = defectivePane === "OP";
+            if (isOpRework && partner.completedStages?.includes("Lamination")) {
+              partner.dlguPhase = "DguPairing";
+              partner.completedStages = (partner.completedStages || []).filter(
+                (s: string) => s !== "DGU" && s !== "Pairing" && s !== "Finished"
+              );
+            } else {
+              partner.dlguPhase = "LamPairing";
+              partner.completedStages = (partner.completedStages || []).filter(
+                (s: string) => s !== "Lamination" && s !== "DGU" && s !== "Pairing" && s !== "Finished"
+              );
+            }
+          }
         }
-      }
+      });
+      allUnlinkedPartners.push(...partners);
     });
   }
 
@@ -1575,11 +2380,19 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   const reworkEntries: ReworkRecord[] = [];
 
   allItemsToRework.forEach((targetItem) => {
+    delete (targetItem as any).lamPairId;
+    delete (targetItem as any).dguPairId;
     const prevStage = targetItem.currentStage;
     targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
     targetItem.currentStage = targetStage as ProductionStage;
     targetItem.status = "Reworking";
     targetItem.updatedAt = new Date().toISOString();
+    if (isDlguItem(targetItem)) {
+      const isColour = targetItem.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
+      if (!isColour) {
+        targetItem.dlguPhase = "LamPairing";
+      }
+    }
 
     const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
 
@@ -1626,7 +2439,12 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   });
 
   // Update parent PI status and counts
-  const affectedReworkPiKeys = new Set(allItemsToRework.map((i) => i.piNumber).concat(allItemsToRework.map((i) => i.piId)).filter(Boolean));
+  const allAffectedRework = [...allItemsToRework, ...allUnlinkedPartners];
+  const affectedReworkPiKeys = new Set(
+    allAffectedRework
+      .flatMap((i) => [i.piNumber, i.piId])
+      .filter(Boolean)
+  );
   affectedReworkPiKeys.forEach((piKey) => {
     const parentPi = piDatabase.find((p) => p.id === piKey || p.piNumber === piKey);
     if (parentPi) {
@@ -1635,6 +2453,8 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       parentPi.completedItemsCount = completedItems;
       if (piItems.some((i) => i.status !== "Completed")) {
         parentPi.status = "In Production";
+      } else if (piItems.length > 0 && piItems.every((i) => i.status === "Completed")) {
+        parentPi.status = "Completed";
       }
     }
   });
@@ -1726,7 +2546,14 @@ export const handleExcelUpload: RequestHandler = (req, res) => {
     totalQty += qty;
 
     const serialNumber = raw.serialNumber || `S${String(glassItemsDatabase.length + idx + 1).padStart(3, "0")}`;
-    const barcode = raw.barcode || `10126270${Date.now().toString().slice(-4)}${String(idx + 1).padStart(4, "0")}`;
+    const cleanSfo = String(sfoNo || raw.sfoNo || "1344").replace(/[^0-9]/g, "");
+    const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
+    const numPart = String(serialNumber).replace(/\D/g, "");
+    const seqPad = (numPart || String(idx + 1)).padStart(4, "0").slice(-4);
+    const fallbackBarcode = `10126270${sfoPad}${seqPad}`;
+    const rawBarcode = String(raw.barcode || "").trim();
+    const isInvalidBarcode = !rawBarcode || /width|height|order|customer|project|batch|glass/i.test(rawBarcode) || /^[A-Z]+$/i.test(rawBarcode) || !/\d/.test(rawBarcode);
+    const barcode = isInvalidBarcode ? fallbackBarcode : rawBarcode;
 
     // Determine process route from description
     const descLower = String(glassDescription || raw.glassType || "").toLowerCase();
@@ -1973,7 +2800,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
   let totalQty = 0;
 
   // In one PDF, it is strictly 100% full Colour or 100% Clear (never Mixed)
-  const colourRegex = /colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
+  const colourRegex = /emicool|colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
   let isColourBatch = false;
   if (colorOrClear === "Colour" || colorOrClear === "Color" || (req.body as any).finish === "Colour") {
     isColourBatch = true;
@@ -2016,177 +2843,368 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
     defaultGlassCategory = "Lamination";
   }
 
-  const newItems: GlassItem[] = items.map((raw: any, idx: number) => {
-    const width = parseFloat(raw.width) || 1000;
-    const height = parseFloat(raw.height) || 1000;
-    const qty = parseInt(raw.qty || raw.quantity, 10) || 1;
-    const sqm = parseFloat(raw.sqm) || parseFloat(((width * height * qty) / 1000000).toFixed(2));
+  // Detect if PDF contains multiple customers and/or projects
+  const groupMap = new Map<string, { customer: string; project: string; rawItems: any[] }>();
 
-    totalSqm += sqm;
-    totalQty += qty;
-
-    const serialNumber = `S${String(glassItemsDatabase.length + idx + 1).padStart(3, "0")}`;
-    const cleanSfo = String(raw.sfoNo || sfoNo || "1344").replace(/[^0-9]/g, "");
-    const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
-    const seqPad = String(raw.posNo || idx + 1).replace(/[^0-9]/g, "").padStart(4, "0").slice(-4);
-    const fallbackBarcode = `10126270${sfoPad}${seqPad}`;
-    const barcode = raw.barcode || fallbackBarcode;
-
-    const itemGlassCategory: "DGU" | "Lamination" | "DLGU" =
-      raw.glassCategory === "DLGU" || raw.glassCategory === "Lamination" || raw.glassCategory === "DGU"
-        ? raw.glassCategory
-        : defaultGlassCategory;
-    const isDlgu = itemGlassCategory === "DLGU";
-    const isLaminated = !isDlgu && itemGlassCategory === "Lamination";
-
-    // Uniformly Colour or Clear across the entire PDF
-    const itemColorOrClear: "Clear" | "Colour" = defaultColorOrClear;
-    const itemGlassColor: string = defaultGlassColor;
-
-    let route: ProductionStage[];
-    let dlguPhase: "LamPairing" | "DguPairing" | undefined = undefined;
-
-    if (isDlgu) {
-      const rawText = `${raw.glassType || ""} ${raw.glassCode || ""}`.toLowerCase();
-      const isLamPane = itemColorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(rawText);
-      if (isLamPane) {
-        route = ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"];
-        dlguPhase = "LamPairing";
-      } else {
-        route = ["Cutting", "Pairing", "DGU", "Finished"];
-        dlguPhase = "DguPairing";
-      }
-    } else if (isLaminated) {
-      route = ["Cutting", "Pairing", "Lamination", "Finished"];
-    } else {
-      route = ["Cutting", "Pairing", "DGU", "Finished"];
+  items.forEach((raw: any) => {
+    const cust = (raw.customerName || customerName || "Customer").trim();
+    const proj = (raw.projectName || projectName || "Project").trim();
+    const key = `${cust}:::${proj}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, { customer: cust, project: proj, rawItems: [] });
     }
-
-    return {
-      id: `item-${Date.now()}-${idx}`,
-      piId: batchId,
-      piNumber: batchIdentifier,
-      serialNumber,
-      barcode,
-      qrId: `QR-${barcode}`,
-      orderNo: raw.orderNo || raw.obNo || obNo || batchIdentifier,
-      obNo: raw.obNo || obNo || "",
-      sfoNo: raw.sfoNo || sfoNo || "",
-      batchNo: raw.batchNo || batchNo || "1",
-      posNo: raw.posNo || String(idx + 1),
-      srNo: idx + 1,
-      itemCode: raw.glassCode || `GL-${String(idx + 1).padStart(2, "0")}`,
-      glassCode: raw.glassCode || "",
-      glassType: raw.glassType || (itemColorOrClear === "Colour" ? `6MM ${itemGlassColor.toUpperCase()} TEMPERED` : "6MM CLEAR TEMPERED"),
-      width,
-      height,
-      thickness: "",
-      qty,
-      lineQty: parseInt(raw.lineQty, 10) || qty,
-      rackNo: String(raw.rackNo || "1"),
-      sqm,
-      taper: "",
-      holesCutout: "",
-      shape: "",
-      layer: "",
-      sectionName: "",
-      category: raw.category || (itemColorOrClear === "Colour" ? `Coloured Glass (${itemGlassColor})` : "Clear Glass"),
-      glassCategory: itemGlassCategory,
-      dlguPhase,
-      colorOrClear: itemColorOrClear,
-      glassColor: itemGlassColor,
-      delLocation: "FACTORY",
-      sketch: "SKETCH-01",
-      remarks: `Sticker #${raw.stickerNo || idx + 1}`,
-      processRoute: route,
-      currentStage: "Cutting",
-      status: "Pending",
-      completedStages: [],
-      updatedAt: new Date().toISOString(),
-    };
+    groupMap.get(key)!.rawItems.push(raw);
   });
 
-  const finalCustomer = (customerName || items[0]?.customerName || "Customer").trim();
-  const finalProject = (projectName || items[0]?.projectName || "Project").trim();
-  const finalDelDate = deliveryDate || items[0]?.delDate || new Date().toLocaleDateString("en-GB");
-  const finalOptDate = optDate || items[0]?.optDate || new Date().toLocaleDateString("en-GB");
+  const isMultiGroup = groupMap.size > 1;
+  const createdBatches: PIMaster[] = [];
+  const allNewItems: GlassItem[] = [];
+  let globalItemIdx = 0;
 
-  const batchRecord: PIMaster = {
-    id: batchId,
-    piNumber: batchIdentifier,
-    fileName: fileName || `${batchIdentifier}.pdf`,
-    customerName: finalCustomer,
-    jobOrderNumber: sfoNo || obNo || batchIdentifier,
-    projectName: finalProject,
-    issueDate: finalOptDate,
-    sfoNo: sfoNo || "",
-    sfoDate: finalOptDate,
-    deliveryDate: finalDelDate,
-    proformaInvNo: batchIdentifier,
-    soNoDate: `Batch #${batchNo || "1"} / ${finalOptDate}`,
-    refContact: "",
-    dispatchType: "FACTORY",
-    invoiceTo: finalCustomer,
-    dispatchTo: finalCustomer,
-    obNo: obNo || "",
-    purchaseOrderNo: "",
-    version: "1.00",
-    totalQty: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0),
-    totalSqm: parseFloat(totalSqm.toFixed(2)),
-    glassDescription: newItems[0]?.glassType || (defaultColorOrClear === "Colour" ? "Coloured Glass" : "6MM CLEAR TEMPERED"),
-    glassCategory: defaultGlassCategory,
-    colorOrClear: defaultColorOrClear,
-    finish: defaultColorOrClear,
-    glassColor: defaultGlassColor,
-    status: "In Production",
-    itemsCount: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0) || newItems.length,
-    completedItemsCount: 0,
-    createdAt: new Date().toISOString(),
-  };
+  if (!isMultiGroup) {
+    // Single customer batch - Standard flow (100% backwards compatible)
+    const finalCustomer = (customerName || items[0]?.customerName || "Customer").trim();
+    const finalProject = (projectName || items[0]?.projectName || "Project").trim();
+    const finalDelDate = deliveryDate || items[0]?.delDate || new Date().toLocaleDateString("en-GB");
+    const finalOptDate = optDate || items[0]?.optDate || new Date().toLocaleDateString("en-GB");
 
-  const totalStickerCount = totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0) || newItems.length;
+    const newItems: GlassItem[] = items.map((raw: any, idx: number) => {
+      const width = parseFloat(raw.width) || 1000;
+      const height = parseFloat(raw.height) || 1000;
+      const qty = parseInt(raw.qty || raw.quantity, 10) || 1;
+      const sqm = parseFloat(raw.sqm) || parseFloat(((width * height * qty) / 1000000).toFixed(2));
 
-  piDatabase.unshift(batchRecord);
-  glassItemsDatabase.unshift(...newItems);
+      totalSqm += sqm;
+      totalQty += qty;
 
-  productionHistoryDatabase.unshift({
-    id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    serialNumber: `BATCH-${batchRecord.piNumber}`,
-    piNumber: batchRecord.piNumber,
-    itemOrBatch: `Batch ${batchRecord.piNumber}`,
-    action: "Batch Uploaded (Sticker PDF)",
-    prevStatus: "New File",
-    newStatus: "In Production",
-    stage: "Cutting",
-    status: "Completed",
-    operator: "Operator",
-    user: "Operator",
-    timestamp: new Date().toISOString(),
-    remarks: `Uploaded ${totalStickerCount} glass units (${batchRecord.totalSqm} SQM) from ${fileName || batchIdentifier}`,
+      const serialNumber = `S${String(glassItemsDatabase.length + idx + 1).padStart(3, "0")}`;
+      const cleanSfo = String(raw.sfoNo || sfoNo || "1344").replace(/[^0-9]/g, "");
+      const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
+      const numPart = String(serialNumber).replace(/\D/g, "");
+      const seqPad = (numPart || String(raw.posNo || idx + 1).replace(/[^0-9]/g, "")).padStart(4, "0").slice(-4);
+      const fallbackBarcode = `10126270${sfoPad}${seqPad}`;
+      const rawBarcode = String(raw.barcode || "").trim();
+      const isInvalidBarcode = !rawBarcode || /width|height|order|customer|project|batch|glass/i.test(rawBarcode) || /^[A-Z]+$/i.test(rawBarcode) || !/\d/.test(rawBarcode);
+      const barcode = isInvalidBarcode ? fallbackBarcode : rawBarcode;
+
+      const itemGlassCategory: "DGU" | "Lamination" | "DLGU" =
+        raw.glassCategory === "DLGU" || raw.glassCategory === "Lamination" || raw.glassCategory === "DGU"
+          ? raw.glassCategory
+          : defaultGlassCategory;
+      const isDlgu = itemGlassCategory === "DLGU";
+      const isLaminated = !isDlgu && itemGlassCategory === "Lamination";
+
+      const itemColorOrClear: "Clear" | "Colour" = defaultColorOrClear;
+      const itemGlassColor: string = defaultGlassColor;
+
+      let route: ProductionStage[];
+      let dlguPhase: "LamPairing" | "DguPairing" | undefined = undefined;
+
+      if (isDlgu) {
+        const rawText = `${raw.glassType || ""} ${raw.glassCode || ""}`.toLowerCase();
+        const isLamPane = itemColorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(rawText);
+        if (isLamPane) {
+          route = ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"];
+          dlguPhase = "LamPairing";
+        } else {
+          route = ["Cutting", "Pairing", "DGU", "Finished"];
+          dlguPhase = "DguPairing";
+        }
+      } else if (isLaminated) {
+        route = ["Cutting", "Pairing", "Lamination", "Finished"];
+      } else {
+        route = ["Cutting", "Pairing", "DGU", "Finished"];
+      }
+
+      return {
+        id: `item-${Date.now()}-${idx}`,
+        piId: batchId,
+        piNumber: batchIdentifier,
+        serialNumber,
+        barcode,
+        qrId: `QR-${barcode}`,
+        orderNo: raw.orderNo || raw.obNo || obNo || batchIdentifier,
+        obNo: raw.obNo || obNo || "",
+        sfoNo: raw.sfoNo || sfoNo || "",
+        batchNo: raw.batchNo || batchNo || "1",
+        posNo: raw.posNo || String(idx + 1),
+        customerName: finalCustomer,
+        projectName: finalProject,
+        srNo: idx + 1,
+        itemCode: raw.glassCode || `GL-${String(idx + 1).padStart(2, "0")}`,
+        glassCode: raw.glassCode || "",
+        glassType: raw.glassType || (itemColorOrClear === "Colour" ? `6MM ${itemGlassColor.toUpperCase()} TEMPERED` : "6MM CLEAR TEMPERED"),
+        width,
+        height,
+        thickness: "",
+        qty,
+        lineQty: parseInt(raw.lineQty, 10) || qty,
+        rackNo: String(raw.rackNo || "1"),
+        sqm,
+        taper: "",
+        holesCutout: "",
+        shape: "",
+        layer: "",
+        sectionName: "",
+        category: raw.category || (itemColorOrClear === "Colour" ? `Coloured Glass (${itemGlassColor})` : "Clear Glass"),
+        glassCategory: itemGlassCategory,
+        dlguPhase,
+        colorOrClear: itemColorOrClear,
+        glassColor: itemGlassColor,
+        delLocation: "FACTORY",
+        sketch: "SKETCH-01",
+        remarks: `Sticker #${raw.stickerNo || idx + 1}`,
+        processRoute: route,
+        currentStage: "Cutting",
+        status: "Pending",
+        completedStages: [],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    const batchRecord: PIMaster = {
+      id: batchId,
+      piNumber: batchIdentifier,
+      batchNo: String(batchNo || batchIdentifier),
+      fileName: fileName || `${batchIdentifier}.pdf`,
+      customerName: finalCustomer,
+      jobOrderNumber: sfoNo || obNo || batchIdentifier,
+      projectName: finalProject,
+      issueDate: finalOptDate,
+      sfoNo: sfoNo || "",
+      sfoDate: finalOptDate,
+      deliveryDate: finalDelDate,
+      proformaInvNo: batchIdentifier,
+      soNoDate: `Batch #${batchNo || "1"} / ${finalOptDate}`,
+      refContact: "",
+      dispatchType: "FACTORY",
+      invoiceTo: finalCustomer,
+      dispatchTo: finalCustomer,
+      obNo: obNo || "",
+      purchaseOrderNo: "",
+      version: "1.00",
+      totalQty: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0),
+      totalSqm: parseFloat(totalSqm.toFixed(2)),
+      glassDescription: newItems[0]?.glassType || (defaultColorOrClear === "Colour" ? "Coloured Glass" : "6MM CLEAR TEMPERED"),
+      glassCategory: defaultGlassCategory,
+      colorOrClear: defaultColorOrClear,
+      finish: defaultColorOrClear,
+      glassColor: defaultGlassColor,
+      status: "In Production",
+      itemsCount: totalQty || newItems.reduce((a, b) => a + (b.qty || 1), 0) || newItems.length,
+      completedItemsCount: 0,
+      createdAt: new Date().toISOString(),
+    };
+
+    createdBatches.push(batchRecord);
+    allNewItems.push(...newItems);
+  } else {
+    // Multi-Customer Batch: Split into dedicated customer sub-batches
+    const groupEntries = Array.from(groupMap.values());
+    const baseBatchClean = batchIdentifier.trim();
+
+    groupEntries.forEach((group, grpIdx) => {
+      const subBatchId = `batch-${Date.now()}-${grpIdx}`;
+      const cleanCust = group.customer.replace(/[^A-Za-z0-9]/g, " ").trim();
+      const custTag = (cleanCust.split(/\s+/)[0] || "CUST").toUpperCase();
+      const cleanProj = group.project.replace(/[^A-Za-z0-9_]/g, " ").trim();
+      const projTag = (cleanProj.split(/\s+/)[0] || "PROJ").toUpperCase();
+
+      const sameCustCount = groupEntries.filter((g) => g.customer === group.customer).length;
+      const subBatchPiNumber = sameCustCount > 1
+        ? `${baseBatchClean}-${custTag}-${projTag}`
+        : `${baseBatchClean}-${custTag}`;
+
+      let groupSqm = 0;
+      let groupQty = 0;
+
+      const groupGlassItems: GlassItem[] = group.rawItems.map((raw: any) => {
+        const width = parseFloat(raw.width) || 1000;
+        const height = parseFloat(raw.height) || 1000;
+        const qty = parseInt(raw.qty || raw.quantity, 10) || 1;
+        const sqm = parseFloat(raw.sqm) || parseFloat(((width * height * qty) / 1000000).toFixed(2));
+
+        groupSqm += sqm;
+        groupQty += qty;
+        totalSqm += sqm;
+        totalQty += qty;
+
+        const serialNumber = `S${String(glassItemsDatabase.length + globalItemIdx + 1).padStart(3, "0")}`;
+        const cleanSfo = String(raw.sfoNo || sfoNo || "1344").replace(/[^0-9]/g, "");
+        const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
+        const numPart = String(serialNumber).replace(/\D/g, "");
+        const seqPad = (numPart || String(raw.posNo || globalItemIdx + 1).replace(/[^0-9]/g, "")).padStart(4, "0").slice(-4);
+        const fallbackBarcode = `10126270${sfoPad}${seqPad}`;
+        const rawBarcode = String(raw.barcode || "").trim();
+        const isInvalidBarcode = !rawBarcode || /width|height|order|customer|project|batch|glass/i.test(rawBarcode) || /^[A-Z]+$/i.test(rawBarcode) || !/\d/.test(rawBarcode);
+        const barcode = isInvalidBarcode ? fallbackBarcode : rawBarcode;
+
+        const itemGlassCategory: "DGU" | "Lamination" | "DLGU" =
+          raw.glassCategory === "DLGU" || raw.glassCategory === "Lamination" || raw.glassCategory === "DGU"
+            ? raw.glassCategory
+            : defaultGlassCategory;
+        const isDlgu = itemGlassCategory === "DLGU";
+        const isLaminated = !isDlgu && itemGlassCategory === "Lamination";
+
+        const itemColorOrClear: "Clear" | "Colour" = defaultColorOrClear;
+        const itemGlassColor: string = defaultGlassColor;
+
+        let route: ProductionStage[];
+        let dlguPhase: "LamPairing" | "DguPairing" | undefined = undefined;
+
+        if (isDlgu) {
+          const rawText = `${raw.glassType || ""} ${raw.glassCode || ""}`.toLowerCase();
+          const isLamPane = itemColorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(rawText);
+          if (isLamPane) {
+            route = ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"];
+            dlguPhase = "LamPairing";
+          } else {
+            route = ["Cutting", "Pairing", "DGU", "Finished"];
+            dlguPhase = "DguPairing";
+          }
+        } else if (isLaminated) {
+          route = ["Cutting", "Pairing", "Lamination", "Finished"];
+        } else {
+          route = ["Cutting", "Pairing", "DGU", "Finished"];
+        }
+
+        const itemObj: GlassItem = {
+          id: `item-${Date.now()}-${globalItemIdx}`,
+          piId: subBatchId,
+          piNumber: subBatchPiNumber,
+          serialNumber,
+          barcode,
+          qrId: `QR-${barcode}`,
+          orderNo: raw.orderNo || raw.obNo || obNo || baseBatchClean,
+          obNo: raw.obNo || obNo || "",
+          sfoNo: raw.sfoNo || sfoNo || "",
+          batchNo: raw.batchNo || batchNo || baseBatchClean,
+          posNo: raw.posNo || String(globalItemIdx + 1),
+          customerName: group.customer,
+          projectName: group.project,
+          srNo: globalItemIdx + 1,
+          itemCode: raw.glassCode || `GL-${String(globalItemIdx + 1).padStart(2, "0")}`,
+          glassCode: raw.glassCode || "",
+          glassType: raw.glassType || (itemColorOrClear === "Colour" ? `6MM ${itemGlassColor.toUpperCase()} TEMPERED` : "6MM CLEAR TEMPERED"),
+          width,
+          height,
+          thickness: "",
+          qty,
+          lineQty: parseInt(raw.lineQty, 10) || qty,
+          rackNo: String(raw.rackNo || "1"),
+          sqm,
+          taper: "",
+          holesCutout: "",
+          shape: "",
+          layer: "",
+          sectionName: "",
+          category: raw.category || (itemColorOrClear === "Colour" ? `Coloured Glass (${itemGlassColor})` : "Clear Glass"),
+          glassCategory: itemGlassCategory,
+          dlguPhase,
+          colorOrClear: itemColorOrClear,
+          glassColor: itemGlassColor,
+          delLocation: "FACTORY",
+          sketch: "SKETCH-01",
+          remarks: `Sticker #${raw.stickerNo || globalItemIdx + 1}`,
+          processRoute: route,
+          currentStage: "Cutting",
+          status: "Pending",
+          completedStages: [],
+          updatedAt: new Date().toISOString(),
+        };
+
+        globalItemIdx++;
+        return itemObj;
+      });
+
+      const firstRaw = group.rawItems[0] || {};
+      const subBatchRecord: PIMaster = {
+        id: subBatchId,
+        piNumber: subBatchPiNumber,
+        batchNo: String(firstRaw.batchNo || batchNo || baseBatchClean),
+        fileName: fileName || `${baseBatchClean}.pdf`,
+        customerName: group.customer,
+        jobOrderNumber: firstRaw.sfoNo || firstRaw.obNo || sfoNo || obNo || baseBatchClean,
+        projectName: group.project,
+        issueDate: firstRaw.optDate || optDate || new Date().toLocaleDateString("en-GB"),
+        sfoNo: firstRaw.sfoNo || sfoNo || "",
+        sfoDate: firstRaw.optDate || optDate || new Date().toLocaleDateString("en-GB"),
+        deliveryDate: firstRaw.delDate || deliveryDate || new Date().toLocaleDateString("en-GB"),
+        proformaInvNo: subBatchPiNumber,
+        soNoDate: `Batch #${firstRaw.batchNo || batchNo || baseBatchClean} / ${firstRaw.optDate || optDate || new Date().toLocaleDateString("en-GB")}`,
+        refContact: "",
+        dispatchType: "FACTORY",
+        invoiceTo: group.customer,
+        dispatchTo: group.customer,
+        obNo: firstRaw.obNo || obNo || "",
+        purchaseOrderNo: "",
+        version: "1.00",
+        totalQty: groupQty,
+        totalSqm: parseFloat(groupSqm.toFixed(2)),
+        glassDescription: groupGlassItems[0]?.glassType || (defaultColorOrClear === "Colour" ? "Coloured Glass" : "6MM CLEAR TEMPERED"),
+        glassCategory: defaultGlassCategory,
+        colorOrClear: defaultColorOrClear,
+        finish: defaultColorOrClear,
+        glassColor: defaultGlassColor,
+        status: "In Production",
+        itemsCount: groupGlassItems.length,
+        completedItemsCount: 0,
+        createdAt: new Date().toISOString(),
+      };
+
+      createdBatches.push(subBatchRecord);
+      allNewItems.push(...groupGlassItems);
+    });
+  }
+
+  piDatabase.unshift(...createdBatches);
+  glassItemsDatabase.unshift(...allNewItems);
+
+  createdBatches.forEach((batchRec) => {
+    productionHistoryDatabase.unshift({
+      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: `BATCH-${batchRec.piNumber}`,
+      piNumber: batchRec.piNumber,
+      itemOrBatch: `Batch ${batchRec.piNumber}`,
+      action: "Batch Uploaded (Sticker PDF)",
+      prevStatus: "New File",
+      newStatus: "In Production",
+      stage: "Cutting",
+      status: "Completed",
+      operator: "Operator",
+      user: "Operator",
+      timestamp: new Date().toISOString(),
+      remarks: `Uploaded ${batchRec.itemsCount} glass units (${batchRec.totalSqm} SQM) for ${batchRec.customerName} (${batchRec.projectName}) from ${fileName || batchIdentifier}`,
+    });
   });
 
   saveDatabaseToDisk();
-  broadcastUpdate("sticker_batch_uploaded", { batchIdentifier, totalItems: newItems.length });
+  broadcastUpdate("sticker_batch_uploaded", { batchIdentifier, totalItems: allNewItems.length });
   createAndBroadcastNotification({
     title: `Batch #${batchNo || batchIdentifier} Uploaded`,
-    message: `${totalStickerCount} glass units (${batchRecord.totalSqm} m²) imported from ${fileName || batchIdentifier}`,
+    message: isMultiGroup
+      ? `${totalQty} glass units imported across ${createdBatches.length} customer batches from ${fileName || batchIdentifier}`
+      : `${totalQty} glass units (${createdBatches[0].totalSqm} m²) imported from ${fileName || batchIdentifier}`,
     category: "BATCH_UPLOAD",
     type: "info",
     batchNumber: batchNo || batchIdentifier,
-    piNumber: batchRecord.piNumber,
+    piNumber: createdBatches[0].piNumber,
     operator: (req as any).user?.username || "Operator",
   });
 
   res.json({
-    message: "Sticker batch uploaded and items imported successfully",
-    batch: batchRecord,
+    message: isMultiGroup
+      ? `Sticker batch imported into ${createdBatches.length} customer sub-batches successfully`
+      : "Sticker batch uploaded and items imported successfully",
+    batch: createdBatches[0],
+    subBatches: createdBatches,
     batchNo,
     sfoNo,
     batchIdentifier,
     totalSqm: parseFloat(totalSqm.toFixed(2)),
-    totalItems: totalStickerCount,
-    totalStickers: totalStickerCount,
-    items: newItems,
+    totalItems: totalQty,
+    totalStickers: totalQty,
+    items: allNewItems,
   });
 };
 
@@ -2196,16 +3214,21 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   const pendingPI = piDatabase.filter((p) => p.status === "Pending" || p.status === "In Production").length;
   const completedPI = piDatabase.filter((p) => p.status === "Completed").length;
 
+  const isUndispatched = (i: any) =>
+    !i.isDispatched &&
+    i.currentStage !== "Dispatched" &&
+    !i.dispatchedAt;
+
   const pendingCutting = glassItemsDatabase
-    .filter((i) => (i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Completed" && i.status !== "Rejected")
+    .filter((i) => isUndispatched(i) && (i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Completed" && i.status !== "Rejected")
     .reduce((a, b) => a + (b.qty || 1), 0);
   const pendingLaminationPanes = glassItemsDatabase
-    .filter((i) => i.currentStage === "Lamination" && i.status !== "Completed" && i.status !== "Rejected")
+    .filter((i) => isUndispatched(i) && i.currentStage === "Lamination" && i.status !== "Completed" && i.status !== "Rejected")
     .reduce((a, b) => a + (b.qty || 1), 0);
   const pendingLamination = Math.ceil(pendingLaminationPanes / 2);
 
   // DGU Stage: Count DGU units (paired 1 Colour + 1 Clear pane = 1 DGU Unit)
-  const dguItems = glassItemsDatabase.filter((i) => i.currentStage === "DGU" && i.status !== "Completed" && i.status !== "Rejected");
+  const dguItems = glassItemsDatabase.filter((i) => isUndispatched(i) && i.currentStage === "DGU" && i.status !== "Completed" && i.status !== "Rejected");
   const isColour = (i: any) => {
     const typeStr = String(i.glassType || "").toLowerCase();
     const colorStr = String(i.glassColor || "").toLowerCase();
@@ -2245,27 +3268,42 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   const pendingDGU = dguColourPanes > 0 ? dguColourPanes : dguReadyPairs;
 
   const pendingPairing = glassItemsDatabase
-    .filter((i) => i.currentStage === "Pairing" && i.status !== "Completed" && i.status !== "Rejected")
+    .filter((i) => isUndispatched(i) && i.currentStage === "Pairing" && i.status !== "Completed" && i.status !== "Rejected")
     .reduce((a, b) => a + (b.qty || 1), 0);
 
-  // Finished Items: Count finished assembled DGU units + Laminated units + General units
-  const finishedList = glassItemsDatabase.filter((i) => i.currentStage === "Finished" || i.status === "Completed");
+  // Finished Items (Pending Dispatch) vs Dispatched Items
   const isDgu = (i: any) => {
     const descLower = `${i.glassType || ""} ${i.glassCode || ""}`.toLowerCase();
     return (Array.isArray(i.processRoute) && i.processRoute.includes("DGU")) || descLower.includes("dgu") || descLower.includes("igu") || descLower.includes("double") || descLower.includes("spacer");
   };
-  const finishedDguList = finishedList.filter(isDgu);
-  const finishedNonDguList = finishedList.filter((i) => !isDgu(i));
-  const finishedDguColour = finishedDguList.filter(isColour).reduce((a, b) => a + (b.qty || 1), 0);
-  const finishedDguTotal = finishedDguList.reduce((a, b) => a + (b.qty || 1), 0);
-  const finishedDguUnits = finishedDguColour > 0 ? finishedDguColour : Math.ceil(finishedDguTotal / 2);
-
   const isLam = (i: any) => i.glassCategory === "Lamination" || (Array.isArray(i.processRoute) && i.processRoute.includes("Lamination"));
-  const finishedLamList = finishedNonDguList.filter(isLam);
-  const finishedMonolithicList = finishedNonDguList.filter((i) => !isLam(i));
-  const finishedLamUnits = Math.ceil(finishedLamList.reduce((a, b) => a + (b.qty || 1), 0) / 2);
-  const finishedMonolithicUnits = finishedMonolithicList.reduce((a, b) => a + (b.qty || 1), 0);
-  const finishedItems = finishedDguUnits + finishedLamUnits + finishedMonolithicUnits;
+
+  const computeUnits = (list: typeof glassItemsDatabase) => {
+    const dlguList = list.filter(isDlguItem);
+    const pureDguList = list.filter((i) => isDgu(i) && !isDlguItem(i));
+    const nonDguList = list.filter((i) => !isDgu(i));
+
+    const dlguColour = dlguList.filter(isColour).reduce((a, b) => a + (b.qty || 1), 0);
+    const dlguClear = dlguList.filter((i) => !isColour(i)).reduce((a, b) => a + (b.qty || 1), 0);
+    const dlguUnits = dlguColour > 0 && dlguClear > 0 ? Math.min(dlguColour, Math.floor(dlguClear / 2)) : Math.floor((dlguColour + dlguClear) / 3);
+
+    const finDguColourPanes = pureDguList.filter(isColour).reduce((a, b) => a + (b.qty || 1), 0);
+    const finDguClearPanes = pureDguList.filter((i) => !isColour(i)).reduce((a, b) => a + (b.qty || 1), 0);
+    const pureDguUnits = finDguColourPanes > 0 && finDguClearPanes > 0 ? Math.min(finDguColourPanes, finDguClearPanes) : (finDguColourPanes > 0 ? finDguColourPanes : Math.ceil(pureDguList.reduce((a, b) => a + (b.qty || 1), 0) / 2));
+
+    const lamList = nonDguList.filter(isLam);
+    const monoList = nonDguList.filter((i) => !isLam(i));
+    const lamUnits = Math.ceil(lamList.reduce((a, b) => a + (b.qty || 1), 0) / 2);
+    const monoUnits = monoList.reduce((a, b) => a + (b.qty || 1), 0);
+
+    return dlguUnits + pureDguUnits + lamUnits + monoUnits;
+  };
+
+  const finishedPendingList = glassItemsDatabase.filter((i) => isUndispatched(i) && i.currentStage === "Finished" && i.status !== "Rejected");
+  const dispatchedList = glassItemsDatabase.filter((i) => (!isUndispatched(i) || (i as any).isDispatched === true || (i as any).currentStage === "Dispatched") && i.status !== "Rejected");
+
+  const finishedItems = computeUnits(finishedPendingList);
+  const dispatchedItems = computeUnits(dispatchedList);
   const rejectItems = rejectDatabase.length;
   const reworkItems = reworkDatabase.length;
 
@@ -2278,6 +3316,7 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
     pendingLamination,
     pendingDGU,
     finishedItems,
+    dispatchedItems,
     rejectItems,
     reworkItems,
   };
@@ -2596,7 +3635,7 @@ export const handleDeleteItems: RequestHandler = (req, res) => {
     if (pi) {
       const remainingItems = glassItemsDatabase.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
       pi.itemsCount = remainingItems.length;
-      pi.completedItemsCount = remainingItems.filter((i) => i.currentStage === "Finished" || i.status === "Completed").length;
+      pi.completedItemsCount = remainingItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
     }
   }
 
@@ -2617,5 +3656,151 @@ export const handleDeleteItems: RequestHandler = (req, res) => {
     message: `${deletedItems.length} glass item(s) deleted successfully`,
     deletedCount: deletedItems.length,
     deletedItems,
+  });
+};
+
+// Dispatch Items: Mark finished glass items/units as dispatched so they vanish from Dispatch workstation and permanently archive in Dispatched History
+export const handleDispatchItems: RequestHandler = (req, res) => {
+  const {
+    serialNumbers,
+    itemIds,
+    dispatchAll,
+    dispatchNoteNo,
+    vehicleNo,
+    driverName,
+    remarks,
+    operator,
+    dispatchedAt,
+  } = req.body || {};
+
+  const cleanOperator = typeof operator === "string" && operator.trim() ? operator.trim() : "Dispatch Officer";
+  const nowIso = dispatchedAt || new Date().toISOString();
+  const cleanNoteNo =
+    typeof dispatchNoteNo === "string" && dispatchNoteNo.trim()
+      ? dispatchNoteNo.trim()
+      : `DN-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const cleanVehicle = typeof vehicleNo === "string" ? vehicleNo.trim() : "";
+  const cleanDriver = typeof driverName === "string" ? driverName.trim() : "";
+  const cleanRemarks = typeof remarks === "string" ? remarks.trim() : "";
+
+  let targetItems: typeof glassItemsDatabase = [];
+
+  if (dispatchAll) {
+    targetItems = glassItemsDatabase.filter(
+      (i) => i.currentStage === "Finished" && i.status !== "Rejected" && !i.isDispatched
+    );
+  } else {
+    const serialSet = new Set<string>(
+      Array.isArray(serialNumbers) ? serialNumbers.map((s) => String(s).trim()) : []
+    );
+    const idSet = new Set<string>(
+      Array.isArray(itemIds) ? itemIds.map((id) => String(id).trim()) : []
+    );
+
+    targetItems = glassItemsDatabase.filter((i) => {
+      if (i.status === "Rejected" || i.isDispatched) return false;
+      if (serialSet.has(i.serialNumber) || idSet.has(i.id)) return true;
+      return false;
+    });
+
+    // Also include paired partner panes (so complete units are always dispatched together)
+    const additionalPartners: typeof glassItemsDatabase = [];
+    for (const item of targetItems) {
+      const pairId = (item as any).dguPairId;
+      const lamId = (item as any).lamPairId;
+      if (pairId) {
+        const partners = glassItemsDatabase.filter(
+          (other) =>
+            other.id !== item.id &&
+            !other.isDispatched &&
+            (other as any).dguPairId === pairId
+        );
+        for (const p of partners) {
+          if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+            additionalPartners.push(p);
+          }
+        }
+      }
+      if (lamId) {
+        const partners = glassItemsDatabase.filter(
+          (other) =>
+            other.id !== item.id &&
+            !other.isDispatched &&
+            (other as any).lamPairId === lamId
+        );
+        for (const p of partners) {
+          if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+            additionalPartners.push(p);
+          }
+        }
+      }
+    }
+    targetItems = [...targetItems, ...additionalPartners];
+  }
+
+  if (targetItems.length === 0) {
+    res.status(400).json({ error: "No eligible finished glass items found to dispatch." });
+    return;
+  }
+
+  for (const item of targetItems) {
+    item.isDispatched = true;
+    item.currentStage = "Dispatched";
+    item.dispatchedAt = nowIso;
+    item.dispatchNoteNo = cleanNoteNo;
+    if (cleanVehicle) (item as any).vehicleNo = cleanVehicle;
+    if (cleanDriver) (item as any).driverName = cleanDriver;
+    if (cleanRemarks) (item as any).dispatchRemarks = cleanRemarks;
+    item.status = "Completed";
+
+    productionHistoryDatabase.unshift({
+      id: `hist-dispatch-${item.serialNumber}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      itemId: item.id,
+      serialNumber: item.serialNumber,
+      barcode: item.barcode,
+      piNumber: item.piNumber,
+      stage: "Finished",
+      action: "Dispatched",
+      prevStatus: "Finished Warehouse",
+      newStatus: "Dispatched",
+      status: "Completed",
+      operator: cleanOperator,
+      timestamp: nowIso,
+      remarks: cleanRemarks
+        ? `Dispatched: ${cleanRemarks} (Delivery Note #${cleanNoteNo})`
+        : `Dispatched from warehouse to customer (Delivery Note #${cleanNoteNo})`,
+    });
+  }
+
+  // Update affected PIs
+  const affectedPiIds = Array.from(new Set(targetItems.map((i) => i.piId || i.piNumber).filter(Boolean)));
+  for (const piRef of affectedPiIds) {
+    const pi = piDatabase.find((p) => p.id === piRef || p.piNumber === piRef);
+    if (pi) {
+      const piItems = glassItemsDatabase.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
+      const allDispatched = piItems.length > 0 && piItems.every((i) => i.isDispatched || i.status === "Rejected");
+      if (allDispatched) {
+        pi.status = "Completed";
+      }
+    }
+  }
+
+  saveDatabaseToDisk(true);
+  broadcastUpdate("stage_advanced", { count: targetItems.length, action: "dispatch" });
+
+  createAndBroadcastNotification({
+    title: `${targetItems.length} Items Dispatched`,
+    message: `${targetItems.length} glass items successfully dispatched under Delivery Note #${cleanNoteNo}`,
+    category: "STAGE_ADVANCE",
+    type: "success",
+    piNumber: targetItems[0]?.piNumber,
+    operator: cleanOperator,
+  });
+
+  res.json({
+    message: `${targetItems.length} items dispatched successfully`,
+    count: targetItems.length,
+    dispatchNoteNo: cleanNoteNo,
+    dispatchedSerials: targetItems.map((i) => i.serialNumber),
   });
 };

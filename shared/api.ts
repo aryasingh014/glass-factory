@@ -1,4 +1,4 @@
-export type ProductionStage = "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished";
+export type ProductionStage = "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished" | "Dispatched";
 export type ProcessRoute = "Route A (Cut -> Finish)" | "Route B (Cut -> Pairing -> DGU -> Finish)" | "Route C (Cut -> Lam -> Finish)" | "Route D (Cut -> Pairing -> Lam -> Pairing -> DGU -> Finish)";
 export type GlassStatus = "Pending" | "In Production" | "Completed" | "Rejected" | "Reworking";
 export type UserRole = "Admin" | "Operator" | "Supervisor";
@@ -15,6 +15,8 @@ export interface GlassItem {
   sfoNo?: string;       // e.g. 1348 / SFO No 00384
   batchNo?: string;     // e.g. 1466
   posNo?: string;       // e.g. 1 / POS 1
+  customerName?: string;// e.g. ASHBILIA ALUMINIUM / MERAKI FACADE
+  projectName?: string; // e.g. DISTRICT_O / HAVEN_BY_A
   srNo?: number;
   itemCode: string;     // e.g. CW-88G1/FACTORY / 4B-AL06-GL01
   glassCode?: string;   // e.g. CW-88G1/FACTORY
@@ -44,6 +46,12 @@ export interface GlassItem {
   currentStage: ProductionStage;
   status: GlassStatus;
   completedStages: ProductionStage[];
+  isDispatched?: boolean;
+  dispatchedAt?: string;
+  dispatchNoteNo?: string;
+  vehicleNo?: string;
+  driverName?: string;
+  dispatchRemarks?: string;
   createdAt?: string;
   updatedAt: string;
 }
@@ -52,6 +60,7 @@ export interface PIMaster {
   id: string;
   piNumber: string;      // PI-20260725-001 or PI/SG/262700468
   customerName: string;  // e.g. SEJAL GLASS & GLASS MANUFACTURING PRODUCTS LLC
+  batchNo?: string;      // e.g. 5846 / 5826
   jobOrderNumber: string;// e.g. SFO/SG/262700384
   projectName: string;   // e.g. ASTRA TWIN TOWER
   issueDate: string;     // e.g. 2026-07-25
@@ -114,7 +123,7 @@ export interface RejectRecord {
   defectStation?: string;
   reason: string;
   defectType?: string;
-  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
+  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "BOTH_CLEAR" | "ASSEMBLY" | "SINGLE" | string;
   defectiveSerialNumber?: string;
   partnerSerialNumber?: string;
   notes?: string;
@@ -134,7 +143,7 @@ export interface ReworkRecord {
   targetStage?: ProductionStage;
   defectStation?: string;
   reason: string;
-  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "ASSEMBLY" | "SINGLE" | string;
+  defectivePane?: "OP" | "IP" | "LAMI_INNER" | "BOTH_CLEAR" | "ASSEMBLY" | "SINGLE" | string;
   defectiveSerialNumber?: string;
   partnerSerialNumber?: string;
   date: string;
@@ -150,6 +159,7 @@ export interface DashboardStats {
   pendingLamination: number;
   pendingDGU: number;
   finishedItems: number;
+  dispatchedItems?: number;
   rejectItems: number;
   reworkItems: number;
 }

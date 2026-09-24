@@ -62,25 +62,47 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage, SystemNotification } from "@shared/api";
-import { StickerUploaderModal } from "@/components/StickerUploaderModal";
-import { ManualPIModal } from "@/components/ManualPIModal";
-import { PIDocumentModal } from "@/components/PIDocumentModal";
-import { BarcodeStickerModal } from "@/components/BarcodeStickerModal";
-import { ScanLookupModal } from "@/components/ScanLookupModal";
+import { TableHorizontalScrollWrapper } from "@/components/TableHorizontalScrollWrapper";
 import { ProductionStageView } from "@/components/ProductionStageView";
-import { RejectReworkModal } from "@/components/RejectReworkModal";
-import { ReportsView } from "@/components/ReportsView";
-import { PerformanceAnalyticsView } from "@/components/PerformanceAnalyticsView";
 import { ProductionOverviewView } from "@/components/ProductionOverviewView";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/context/AuthContext";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+
+// Lazy-load heavy modals and sub-views to keep initial page bundle ultra-fast over ngrok/tunnels
+const StickerUploaderModal = React.lazy(() =>
+  import("@/components/StickerUploaderModal").then((m) => ({ default: m.StickerUploaderModal }))
+);
+const ManualPIModal = React.lazy(() =>
+  import("@/components/ManualPIModal").then((m) => ({ default: m.ManualPIModal }))
+);
+const PIDocumentModal = React.lazy(() =>
+  import("@/components/PIDocumentModal").then((m) => ({ default: m.PIDocumentModal }))
+);
+const BarcodeStickerModal = React.lazy(() =>
+  import("@/components/BarcodeStickerModal").then((m) => ({ default: m.BarcodeStickerModal }))
+);
+const ScanLookupModal = React.lazy(() =>
+  import("@/components/ScanLookupModal").then((m) => ({ default: m.ScanLookupModal }))
+);
+const RejectReworkModal = React.lazy(() =>
+  import("@/components/RejectReworkModal").then((m) => ({ default: m.RejectReworkModal }))
+);
+const ReportsView = React.lazy(() =>
+  import("@/components/ReportsView").then((m) => ({ default: m.ReportsView }))
+);
+const PerformanceAnalyticsView = React.lazy(() =>
+  import("@/components/PerformanceAnalyticsView").then((m) => ({ default: m.PerformanceAnalyticsView }))
+);
+const DispatchedHistoryView = React.lazy(() =>
+  import("@/components/DispatchedHistoryView").then((m) => ({ default: m.DispatchedHistoryView }))
+);
 
 export default function Index() {
   const [searchParams] = useSearchParams();
-  const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "reports", "analytics"] as const;
+  const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "dispatched-history", "reports", "analytics"] as const;
   type TabType = typeof validTabs[number];
   // ponytail: Preserve user's active module across hard refreshes and page reloads
   const initialTab = validTabs.includes(searchParams.get("tab") as TabType)
@@ -351,7 +373,7 @@ export default function Index() {
         if (streamDebounceRef.current) clearTimeout(streamDebounceRef.current);
         streamDebounceRef.current = setTimeout(() => {
           fetchData(true);
-        }, 120);
+        }, 400);
       };
 
       eventSource.addEventListener("system_notification", (e: any) => {
@@ -399,7 +421,7 @@ export default function Index() {
       console.error("SSE connection error:", err);
     }
 
-    const timer = setInterval(() => fetchData(true), 30000);
+    const timer = setInterval(() => fetchData(true), 60000);
     return () => {
       eventSource?.close();
       clearInterval(timer);
@@ -438,7 +460,7 @@ export default function Index() {
 
   const handleDeletePI = async (piId: string) => {
     const targetPI = pis.find((p) => p.id === piId || p.piNumber === piId);
-    const batchNumber = targetPI?.piNumber ? formatBatchNumber(targetPI.piNumber) : targetPI?.id || "";
+    const batchNumber = targetPI ? formatBatchNumber(targetPI.batchNo || targetPI.piNumber) : piId;
 
     if (userRole === "Operator") {
       toast.error(`Operator role cannot delete batches`);
@@ -638,6 +660,7 @@ export default function Index() {
         pi.piNumber.toLowerCase().includes(query) ||
         pi.customerName.toLowerCase().includes(query) ||
         pi.projectName.toLowerCase().includes(query) ||
+        (pi.fileName && pi.fileName.toLowerCase().includes(query)) ||
         (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(query))
       );
     })
@@ -655,7 +678,6 @@ export default function Index() {
   const paginatedPIs = sortedAndFilteredPIs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Customer Grouped View States & Memoization
-  const [batchViewMode, setBatchViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
   const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
 
   const toggleCustomerExpanded = (customerName: string) => {
@@ -781,11 +803,12 @@ export default function Index() {
   const pipelineMetrics = React.useMemo(() => {
     const isColour = (i: GlassItem) => getItemFinish(i) === "Colour";
 
-    const cuttingItems = items.filter((i) => (i.currentStage?.toLowerCase() === "cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
-    const pairingItems = items.filter((i) => i.currentStage?.toLowerCase() === "pairing" && i.status !== "Rejected");
-    const dguItems = items.filter((i) => i.currentStage?.toLowerCase() === "dgu" && i.status !== "Rejected" && i.status !== "Completed");
-    const laminationItems = items.filter((i) => i.currentStage?.toLowerCase() === "lamination" && i.status !== "Rejected");
-    const finishedItems = items.filter((i) => i.currentStage?.toLowerCase() === "finished" || i.status === "Completed");
+    const cuttingItems = items.filter((i) => !isDispatchedItem(i) && (i.currentStage?.toLowerCase() === "cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
+    const pairingItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "pairing" && i.status !== "Rejected");
+    const dguItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "dgu" && i.status !== "Rejected" && i.status !== "Completed");
+    const laminationItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "lamination" && i.status !== "Rejected");
+    const finishedItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "finished" && i.status !== "Rejected");
+    const dispatchedList = items.filter((i) => isDispatchedItem(i) && i.status !== "Rejected");
     const rejectedItems = items.filter((i) => i.status === "Rejected");
     const reworkItems = items.filter((i) => i.status === "Reworking");
 
@@ -837,24 +860,41 @@ export default function Index() {
     const dguClear = dguItems.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const dguPairs = Math.min(dguColour, dguClear);
 
-    const finishedDguItems = finishedItems.filter((i) => isDguGlass(i) || isDlguGlass(i));
-    const finishedNonDguItems = finishedItems.filter((i) => !isDguGlass(i) && !isDlguGlass(i));
+    // Helper to calculate assembled units for a list of items
+    const calculateAssembledUnits = (itemList: typeof items) => {
+      const dlguList = itemList.filter((i) => isDlguGlass(i));
+      const pureDguList = itemList.filter((i) => isDguGlass(i) && !isDlguGlass(i));
+      const nonDguList = itemList.filter((i) => !isDguGlass(i) && !isDlguGlass(i));
 
-    const finishedDguColour = finishedDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const finishedDguTotal = finishedDguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const finishedDguUnits = finishedDguColour > 0 ? finishedDguColour : Math.ceil(finishedDguTotal / 2);
-    const finishedDguSqm = finishedDguColour > 0
-      ? finishedDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0)
-      : (finishedDguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2);
+      const dlguCol = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const dlguClr = dlguList.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const dlguU = dlguCol > 0 && dlguClr > 0 ? Math.min(dlguCol, Math.floor(dlguClr / 2)) : Math.floor((dlguCol + dlguClr) / 3);
 
-    const finishedLamItems = finishedNonDguItems.filter((i) => isLaminatedGlass(i) || i.glassCategory === "Lamination" || i.processRoute?.includes("Lamination"));
-    const finishedMonolithicItems = finishedNonDguItems.filter((i) => !isLaminatedGlass(i) && i.glassCategory !== "Lamination" && !i.processRoute?.includes("Lamination"));
-    const finishedLamUnits = Math.ceil(finishedLamItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
-    const finishedMonolithicUnits = finishedMonolithicItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const dguColPanes = pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const dguClrPanes = pureDguList.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+      const pureDguU = dguColPanes > 0 && dguClrPanes > 0 ? Math.min(dguColPanes, dguClrPanes) : (dguColPanes > 0 ? dguColPanes : Math.ceil(pureDguList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2));
 
-    const finishedNonDguSqm = finishedNonDguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
-    const finishedUnits = finishedDguUnits + finishedLamUnits + finishedMonolithicUnits;
-    const effectiveFinishedSqm = parseFloat((finishedDguSqm + finishedNonDguSqm).toFixed(2));
+      const lamList = nonDguList.filter((i) => isLaminatedGlass(i) || i.glassCategory === "Lamination" || i.processRoute?.includes("Lamination"));
+      const monoList = nonDguList.filter((i) => !isLaminatedGlass(i) && i.glassCategory !== "Lamination" && !i.processRoute?.includes("Lamination"));
+      const lamU = Math.ceil(lamList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+      const monoU = monoList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+      const dguSqmTotal = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0) +
+        pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+      const nonDguSqmTotal = nonDguList.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+
+      return {
+        totalUnits: dlguU + pureDguU + lamU + monoU,
+        totalSqm: parseFloat((dguSqmTotal + nonDguSqmTotal).toFixed(2)),
+      };
+    };
+
+    const finishedMetrics = calculateAssembledUnits(finishedItems);
+    const dispatchedMetrics = calculateAssembledUnits(dispatchedList);
+
+    const finishedUnits = finishedMetrics.totalUnits;
+    const effectiveFinishedSqm = finishedMetrics.totalSqm;
+    const dispatchedUnits = dispatchedMetrics.totalUnits;
 
     const laminationUnits = Math.ceil(laminationCount / 2);
     const totalActive = cuttingCount + pairingCount + dguCount + laminationUnits + finishedUnits;
@@ -885,6 +925,7 @@ export default function Index() {
       laminationSqm,
       finishedItems: finishedUnits,
       finishedSqm: effectiveFinishedSqm,
+      dispatchedItems: dispatchedUnits,
       rejectedItems: rejectedCount,
       reworkItems: reworkCount,
       completionRate,
@@ -907,6 +948,7 @@ export default function Index() {
       pendingDGU: dguUnitsCount,
       pendingLamination: pipelineMetrics.laminationItems,
       finishedItems: pipelineMetrics.finishedItems,
+      dispatchedItems: stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems,
       rejectItems: pipelineMetrics.rejectedItems,
       reworkItems: pipelineMetrics.reworkItems,
     };
@@ -961,11 +1003,13 @@ export default function Index() {
 
       const st = item.currentStage?.toLowerCase();
       const itemPieces = item.qty || 1;
-      if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
+      if (isDispatchedItem(item)) {
+        // Dispatched items belong strictly in Dispatched History
+      } else if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
       else if (st === "pairing") b.pairingCount += itemPieces;
       else if (st === "dgu") b.dguCount += itemPieces;
       else if (st === "lamination") b.laminationCount += itemPieces;
-      else if (st === "finished" || item.status === "Completed") b.finishedCount += itemPieces;
+      else if (st === "finished") b.finishedCount += itemPieces;
     });
 
     // Also include any PIs without direct items
@@ -1657,7 +1701,7 @@ export default function Index() {
                                   className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
                                   title="Click to view Batch details"
                                 >
-                                  <td className="py-3 px-2.5 font-mono font-bold text-blue-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
+                                  <td className="py-3 px-2.5 font-mono font-bold text-blue-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.batchNo || pi.piNumber)}</td>
                                   <td className="py-3 px-2.5 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
                                   <td className="py-3 px-2.5 text-slate-600 leading-snug">
                                     <div className="font-medium text-slate-900">{pi.projectName || "—"}</div>
@@ -2185,7 +2229,7 @@ export default function Index() {
           )}
 
           {/* OTHER WORKSTATION TABS (Cutting, DGU, Lamination, Finished) */}
-          {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && (
+          {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && activeTab !== "dispatched-history" && (
             <ProductionStageView
               stage={
                 activeTab === "cutting" ? "Cutting" :
@@ -2203,6 +2247,19 @@ export default function Index() {
               onPrintSticker={handleOpenSticker}
               onReject={handleOpenReject}
               onRework={handleOpenRework}
+              onNavigateTab={(tab) => setActiveTab(tab as any)}
+            />
+          )}
+
+          {/* TAB: DISPATCHED HISTORY */}
+          {activeTab === "dispatched-history" && (
+            <DispatchedHistoryView
+              items={items}
+              pis={pis}
+              operator={userRole}
+              onRefresh={() => fetchData(true)}
+              onPrintSticker={handleOpenSticker}
+              onNavigateToDispatchQueue={() => setActiveTab("finished")}
             />
           )}
 
@@ -2215,49 +2272,10 @@ export default function Index() {
                     <Boxes className="w-5 h-5 text-purple-600" />
                     Sticker & Batch Status
                   </h2>
-                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders grouped by customer or flat list.</p>
+                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders grouped by customer.</p>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* View Mode Toggle */}
-                  <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setBatchViewMode("CUSTOMER")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                        batchViewMode === "CUSTOMER"
-                          ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                      <span>Group by Customer</span>
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                      }`}>
-                        {groupedCustomerData.length}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setBatchViewMode("FLAT")}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                        batchViewMode === "FLAT"
-                          ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      <ClipboardList className="w-3.5 h-3.5" />
-                      <span>All Batches (Flat)</span>
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                      }`}>
-                        {sortedAndFilteredPIs.length}
-                      </span>
-                    </button>
-                  </div>
-
                   {userRole === "Admin" && (
                     <>
                       <Button
@@ -2336,7 +2354,7 @@ export default function Index() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {batchViewMode === "CUSTOMER" && groupedCustomerData.length > 0 && (
+                  {groupedCustomerData.length > 0 && (
                     <div className="flex items-center gap-1">
                       <Button
                         size="sm"
@@ -2370,9 +2388,8 @@ export default function Index() {
                 </div>
               </div>
 
-              {/* VIEW 1: GROUP BY CUSTOMER */}
-              {batchViewMode === "CUSTOMER" && (
-                <div className="space-y-3">
+              {/* GROUP BY CUSTOMER */}
+              <div className="space-y-3">
                   {groupedCustomerData.length > 0 ? (
                     groupedCustomerData.map((customer) => {
                       const isExpanded = isCustomerExpanded(customer.customerName);
@@ -2662,8 +2679,9 @@ export default function Index() {
                               </div>
 
                               {/* Customer Batches Table */}
-                              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-2xs">
-                                <table className="w-full text-left text-xs border-collapse">
+                              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                                <TableHorizontalScrollWrapper>
+                                  <table className="w-full text-left text-xs border-collapse">
                                   <thead>
                                     <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
                                       <th className="py-2.5 px-3 whitespace-nowrap">BATCH NO</th>
@@ -2687,7 +2705,7 @@ export default function Index() {
                                           className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
                                         >
                                           <td className="py-2.5 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">
-                                            {formatBatchNumber(pi.piNumber)}
+                                            {formatBatchNumber(pi.batchNo || pi.piNumber)}
                                           </td>
                                           <td className="py-2.5 px-3 whitespace-nowrap">
                                             {pi.colorOrClear === "Colour" ? (
@@ -2762,10 +2780,11 @@ export default function Index() {
                                     })}
                                   </tbody>
                                 </table>
-                              </div>
+                              </TableHorizontalScrollWrapper>
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
+                      </div>
                       );
                     })
                   ) : (
@@ -2778,201 +2797,48 @@ export default function Index() {
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* VIEW 2: ALL BATCHES FLAT TABLE */}
-              {batchViewMode === "FLAT" && (
-                <div className="bg-white border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-                  {paginatedPIs.length > 0 ? (
-                    <div className="no-scrollbar overflow-x-auto w-full">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
-                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
-                              BATCH NO {renderSortIcon("piNumber")}
-                            </th>
-                            <th className="py-2.5 px-3 whitespace-nowrap">
-                              FINISH
-                            </th>
-                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
-                              CUSTOMER {renderSortIcon("customerName")}
-                            </th>
-                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
-                              PROJECT {renderSortIcon("projectName")}
-                            </th>
-                            <th className="py-2.5 px-3 whitespace-nowrap">
-                              CURRENT STAGE
-                            </th>
-                            <th className="py-2.5 px-3 text-center whitespace-nowrap">
-                              ITEMS
-                            </th>
-                            <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                              TOTAL SQM
-                            </th>
-                            <th className="py-2.5 px-3 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
-                              UPLOADED AT {renderSortIcon("createdAt")}
-                            </th>
-                            <th className="py-2.5 px-3 text-center whitespace-nowrap">
-                              STATUS
-                            </th>
-                            <th className="py-2.5 px-3 text-right whitespace-nowrap">
-                              ACTIONS
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {paginatedPIs.map((pi) => {
-                            const metrics = getBatchMetrics(pi);
-                            return (
-                              <tr
-                                key={pi.id}
-                                onClick={() => openPIDetails(pi)}
-                                className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                                title="Click to view Batch details"
-                              >
-                                <td className="py-3 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.piNumber)}</td>
-                                <td className="py-3 px-3 whitespace-nowrap">
-                                  {pi.colorOrClear === "Colour" ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs">
-                                      Coloured Glass
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs">
-                                      Clear Glass
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-3 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
-                                <td className="py-3 px-3 text-slate-600 leading-snug">
-                                  <div className="font-medium text-slate-900">{pi.projectName || "—"}</div>
-                                </td>
-                                <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveTab(metrics.activeStageTab)}
-                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
-                                    title={`Go to ${metrics.activeStageName}`}
-                                  >
-                                    <span>{metrics.activeStageName}</span>
-                                    <ChevronRight className="w-3 h-3 opacity-60" />
-                                  </button>
-                                </td>
-                                <td className="py-3 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
-                                  {metrics.completedPieces} / {metrics.totalPieces}
-                                </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
-                                  {metrics.totalSqm.toFixed(2)} m²
-                                </td>
-                                <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
-                                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                                    <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                                    {formatPlatformDate(pi.createdAt || pi.issueDate)}
-                                  </div>
-                                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
-                                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                    {formatPlatformTime(pi.createdAt)}
-                                  </div>
-                                </td>
-                                <td className="py-3 px-3 text-center whitespace-nowrap">
-                                  <StatusBadge status={metrics.status || pi.status || "Pending"} />
-                                </td>
-                                <td className="py-3 px-3 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openPIDetails(pi);
-                                    }}
-                                    className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
-                                    title="View Details"
-                                  >
-                                    <Eye className="w-3.5 h-3.5" />
-                                  </Button>
-                                  {userRole === "Admin" && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeletePI(pi.id);
-                                      }}
-                                      className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
-                                      title="Delete Batch"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </Button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-
-                      {/* Pagination for flat view */}
-                      {totalPages > 1 && (
-                        <div className="flex items-center justify-between border-t border-slate-200 pt-3 mt-3 text-xs text-slate-600">
-                          <div>
-                            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedAndFilteredPIs.length)} of {sortedAndFilteredPIs.length} batches
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                              disabled={currentPage === 1}
-                              className="h-7 px-2"
-                            >
-                              <ChevronLeft className="w-3.5 h-3.5" />
-                            </Button>
-                            <span className="px-2 font-bold text-slate-800">Page {currentPage} of {totalPages}</span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                              disabled={currentPage === totalPages}
-                              className="h-7 px-2"
-                            >
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                      <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3">
-                        <FileText className="w-7 h-7" />
-                      </div>
-                      <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
-                      <p className="text-xs text-slate-500 mt-1">Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.</p>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
           {/* TAB: REPORTS & AUDIT LOG */}
           {activeTab === "reports" && (
-            <ReportsView
-              key={reportsInitialTab}
-              initialTab={reportsInitialTab}
-              onTabChange={(tab) => {
-                setReportsInitialTab(tab);
-                try {
-                  localStorage.setItem("sejal_reports_active_tab", tab);
-                } catch {}
-              }}
-              onPrintSticker={handleOpenSticker}
-              onReject={handleOpenReject}
-              onRework={handleOpenRework}
-            />
+            <React.Suspense
+              fallback={
+                <div className="py-24 flex flex-col items-center justify-center text-slate-500">
+                  <div className="w-9 h-9 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 animate-spin mb-3" />
+                  <span className="text-xs font-medium tracking-wide">Loading Reports & Audit Logs...</span>
+                </div>
+              }
+            >
+              <ReportsView
+                key={reportsInitialTab}
+                initialTab={reportsInitialTab}
+                onTabChange={(tab) => {
+                  setReportsInitialTab(tab);
+                  try {
+                    localStorage.setItem("sejal_reports_active_tab", tab);
+                  } catch {}
+                }}
+                onPrintSticker={handleOpenSticker}
+                onReject={handleOpenReject}
+                onRework={handleOpenRework}
+              />
+            </React.Suspense>
           )}
 
           {/* TAB: PERFORMANCE ANALYTICS */}
-          {activeTab === "analytics" && <PerformanceAnalyticsView />}
+          {activeTab === "analytics" && (
+            <React.Suspense
+              fallback={
+                <div className="py-24 flex flex-col items-center justify-center text-slate-500">
+                  <div className="w-9 h-9 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 animate-spin mb-3" />
+                  <span className="text-xs font-medium tracking-wide">Loading Performance Analytics...</span>
+                </div>
+              }
+            >
+              <PerformanceAnalyticsView />
+            </React.Suspense>
+          )}
         </main>
       </div>
 
@@ -3000,63 +2866,72 @@ export default function Index() {
         </div>
       </footer>
 
-      {/* Modals */}
-      <StickerUploaderModal
-        open={stickerUploadModalOpen}
-        onOpenChange={setStickerUploadModalOpen}
-        onSuccess={() => {
-          fetchData(true);
-        }}
-      />
+      {/* Modals - Lazy Loaded on Demand to Keep Network Lean */}
+      <React.Suspense fallback={null}>
+        {stickerUploadModalOpen && (
+          <StickerUploaderModal
+            open={stickerUploadModalOpen}
+            onOpenChange={setStickerUploadModalOpen}
+            onSuccess={() => {
+              fetchData(true);
+            }}
+          />
+        )}
 
-      <ManualPIModal
-        open={manualPIModalOpen}
-        onOpenChange={setManualPIModalOpen}
-        onSuccess={() => {
-          fetchData(true);
-        }}
-      />
+        {manualPIModalOpen && (
+          <ManualPIModal
+            open={manualPIModalOpen}
+            onOpenChange={setManualPIModalOpen}
+            onSuccess={() => {
+              fetchData(true);
+            }}
+          />
+        )}
 
-      <ScanLookupModal
-        open={scanModalOpen}
-        onOpenChange={setScanModalOpen}
-        onPrintSticker={handleOpenSticker}
-        onReject={handleOpenReject}
-        onRework={handleOpenRework}
-      />
+        {scanModalOpen && (
+          <ScanLookupModal
+            open={scanModalOpen}
+            onOpenChange={setScanModalOpen}
+            onPrintSticker={handleOpenSticker}
+            onReject={handleOpenReject}
+            onRework={handleOpenRework}
+          />
+        )}
 
-      {selectedPI && (
-        <PIDocumentModal
-          open={piModalOpen}
-          onOpenChange={setPiModalOpen}
-          pi={selectedPI}
-          items={
-            items.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber).length > 0
-              ? items.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber)
-              : selectedPIItems
-          }
-          onDeletePI={handleDeletePI}
-          onReleaseToProduction={handleReleaseToProduction}
-        />
-      )}
+        {selectedPI && piModalOpen && (
+          <PIDocumentModal
+            open={piModalOpen}
+            onOpenChange={setPiModalOpen}
+            pi={selectedPI}
+            items={
+              selectedPIItems && selectedPIItems.length > 0
+                ? selectedPIItems
+                : items.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber)
+            }
+            onDeletePI={handleDeletePI}
+            onReleaseToProduction={handleReleaseToProduction}
+          />
+        )}
 
-      {selectedStickerItem && (
-        <BarcodeStickerModal
-          open={stickerModalOpen}
-          onOpenChange={setStickerModalOpen}
-          item={selectedStickerItem}
-        />
-      )}
+        {selectedStickerItem && stickerModalOpen && (
+          <BarcodeStickerModal
+            open={stickerModalOpen}
+            onOpenChange={setStickerModalOpen}
+            item={selectedStickerItem}
+          />
+        )}
 
-      {rejectReworkItem && (
-        <RejectReworkModal
-          open={rejectReworkModalOpen}
-          onOpenChange={setRejectReworkModalOpen}
-          item={rejectReworkItem}
-          mode={rejectReworkMode}
-          onSuccess={() => fetchData(true)}
-        />
-      )}
+        {rejectReworkItem && rejectReworkModalOpen && (
+          <RejectReworkModal
+            open={rejectReworkModalOpen}
+            onOpenChange={setRejectReworkModalOpen}
+            item={rejectReworkItem}
+            allItems={items}
+            mode={rejectReworkMode}
+            onSuccess={() => fetchData(true)}
+          />
+        )}
+      </React.Suspense>
     </div>
   );
 }

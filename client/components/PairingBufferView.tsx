@@ -41,8 +41,9 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
 import { exportStageWipToExcel } from "@/lib/excelExport";
+import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
 
 interface PairingBufferViewProps {
   items: GlassItem[];
@@ -78,6 +79,7 @@ export interface ConsolidatedPositionRow {
   remainingSqm: number;
   glassCode: string;
   glassType: string;
+  orderNo?: string;
   obNo: string;
   sfoNo: string;
   batchNo: string;
@@ -163,6 +165,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     const map = new Map<string, { id: string; piNumber: string; customerName: string; totalItems: number; cutItems: number }>();
 
     items.forEach((item) => {
+      if (isDispatchedItem(item)) return;
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
       const orderPi = (item.orderNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
       const customer = parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer";
@@ -184,8 +187,9 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       }
     });
 
-    // Also include any PIs from Master if not already mapped
+    // Also include any PIs from Master if not already mapped and not completed
     pis.forEach((p) => {
+      if (p.status === "Completed" || (p as any).status === "Dispatched") return;
       const pNum = (p.piNumber || "").replace(/^STK-/i, "").trim();
       if (pNum && !map.has(pNum)) {
         map.set(pNum, {
@@ -205,6 +209,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   const availableCustomers = useMemo(() => {
     const map = new Map<string, { name: string; totalItems: number; cutItems: number }>();
     items.forEach((item) => {
+      if (isDispatchedItem(item)) return;
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
       const cust = (parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer").trim();
       if (cust) {
@@ -220,6 +225,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       }
     });
     pis.forEach((p) => {
+      if (p.status === "Completed" || (p as any).status === "Dispatched") return;
       const cust = (p.customerName || "Customer").trim();
       if (cust && !map.has(cust)) {
         map.set(cust, { name: cust, totalItems: p.totalQty || p.itemsCount || 0, cutItems: p.completedItemsCount || 0 });
@@ -260,7 +266,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     }
 
     items.forEach((item) => {
-      if (item.status === "Rejected") return;
+      if (item.status === "Rejected" || isDispatchedItem(item)) return;
 
       const parentPI = (item.piId ? piMapById.get(item.piId) : null) || (item.piNumber ? piMapByNumber.get(item.piNumber) : null);
       // The PI number displayed in the sticker upload table is item.orderNo (e.g. 2045, 2137, 2139)
@@ -273,7 +279,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       // Differentiate lites by thickness or primary glass type (e.g. 12MM vs 10MM) so matching lites form separate rows to be paired
       const rawThickness = (item.thickness || item.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
       const thicknessKey = isDlgu && finish === "Clear" ? "DLGU_CLEAR_LAM" : (rawThickness || (item.glassType?.split("/")[0]?.trim()) || finish);
-      const isDlguDoneLam = item.completedStages.includes("Lamination") || item.colorOrClear === "Colour" || !item.processRoute?.includes("Lamination");
+      const isDlguDoneLam = item.completedStages?.includes("Lamination") || item.colorOrClear === "Colour" || !item.processRoute?.includes("Lamination");
       const dlguPhaseKey = isDlgu
         ? (item.dlguPhase || (isDlguDoneLam ? "DguPairing" : "LamPairing"))
         : "default";
@@ -297,6 +303,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           bufferItems: [],
           glassCode: item.glassCode || `GL ${posKey}`,
           glassType: isDlgu && finish === "Clear" ? "13.52MM CLEAR LAMINATED (DLGU Sub-Assembly)" : (item.glassType || item.itemCode || (finish === "Colour" ? "6MM COLOURED TEMPERED" : "6MM CLEAR TEMPERED")),
+          orderNo: item.orderNo || cleanPiNumber,
           obNo: item.obNo || "",
           sfoNo: item.sfoNo || cleanPiNumber,
           batchNo: item.batchNo || "1",
@@ -373,6 +380,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         remainingSqm,
         glassCode: g.glassCode,
         glassType: g.glassType,
+        orderNo: g.orderNo,
         obNo: g.obNo,
         sfoNo: g.sfoNo,
         batchNo: g.batchNo,
@@ -395,8 +403,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           r.glassCategory === row.glassCategory &&
           (row.glassCategory !== "DLGU" || r.dlguPhase === row.dlguPhase) &&
           isDguStickerPairMatch(
-            { orderNo: row.piNumber, piId: row.piId, posNo: row.posNo, width: row.width, height: row.height, obNo: row.obNo, lineQty: row.totalQty, glassCode: row.glassCode, customerName: row.customerName, projectName: row.projectName, glassCategory: row.glassCategory, dlguPhase: row.dlguPhase, completedStages: row.rawItems[0]?.completedStages, colorOrClear: row.finish },
-            { orderNo: r.piNumber, piId: r.piId, posNo: r.posNo, width: r.width, height: r.height, obNo: r.obNo, lineQty: r.totalQty, glassCode: r.glassCode, customerName: r.customerName, projectName: r.projectName, glassCategory: r.glassCategory, dlguPhase: r.dlguPhase, completedStages: r.rawItems[0]?.completedStages, colorOrClear: r.finish }
+            { orderNo: row.orderNo || row.rawItems[0]?.orderNo || row.piNumber, piId: row.piId, posNo: row.posNo, width: row.width, height: row.height, obNo: row.obNo, lineQty: row.totalQty, glassCode: row.glassCode, customerName: row.customerName, projectName: row.projectName, glassCategory: row.glassCategory, dlguPhase: row.dlguPhase, completedStages: row.rawItems[0]?.completedStages, colorOrClear: row.finish },
+            { orderNo: r.orderNo || r.rawItems[0]?.orderNo || r.piNumber, piId: r.piId, posNo: r.posNo, width: r.width, height: r.height, obNo: r.obNo, lineQty: r.totalQty, glassCode: r.glassCode, customerName: r.customerName, projectName: r.projectName, glassCategory: r.glassCategory, dlguPhase: r.dlguPhase, completedStages: r.rawItems[0]?.completedStages, colorOrClear: r.finish }
           ) &&
           (r.finish !== row.finish || r.glassType !== row.glassType || r.thickness !== row.thickness || r.id !== row.id)
       );
@@ -483,6 +491,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         const q = (searchTerm || externalSearchTerm || "").toLowerCase().trim();
         if (!q) return true;
 
+        const parentPI = pis.find((p) => p.id === row.piId || p.piNumber === row.piNumber);
         return (
           row.piNumber.toLowerCase().includes(q) ||
           row.posNo.toLowerCase().includes(q) ||
@@ -491,6 +500,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           row.barcode.toLowerCase().includes(q) ||
           row.customerName.toLowerCase().includes(q) ||
           row.projectName.toLowerCase().includes(q) ||
+          Boolean(parentPI?.fileName && parentPI.fileName.toLowerCase().includes(q)) ||
           row.obNo.toLowerCase().includes(q) ||
           row.sfoNo.toLowerCase().includes(q) ||
           row.batchNo.toLowerCase().includes(q) ||
@@ -524,7 +534,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   }, [consolidatedRows, selectedPIFilter, categoryFilter, finishFilter, pendingSubFilter, searchTerm, externalSearchTerm, sortColumn, sortDirection]);
 
   // Customer Grouped View State (Default Closed)
-  const [bufferViewMode, setBufferViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
   const [expandedBufferCustomers, setExpandedBufferCustomers] = useState<Record<string, boolean>>({});
 
   const toggleBufferCustomerExpanded = (customerName: string) => {
@@ -1394,9 +1403,9 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
             </div>
           </div>
 
-          {/* Right Side: View Mode Switcher Toggle (Parallel on Right Side) */}
+          {/* Right Side: Expand/Collapse All */}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            {bufferViewMode === "CUSTOMER" && groupedCustomerRows.length > 0 && (
+            {groupedCustomerRows.length > 0 && (
               <div className="flex items-center gap-1 shrink-0 mr-1">
                 <Button
                   size="sm"
@@ -1417,55 +1426,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                 </Button>
               </div>
             )}
-
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
-              <button
-                type="button"
-                onClick={() => setBufferViewMode("CUSTOMER")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  bufferViewMode === "CUSTOMER"
-                    ? "bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-100"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Group by Customer</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    bufferViewMode === "CUSTOMER" ? "bg-indigo-100 text-indigo-800" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {groupedCustomerRows.length}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setBufferViewMode("FLAT")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                  bufferViewMode === "FLAT"
-                    ? "bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-100"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <ClipboardList className="w-3.5 h-3.5" />
-                <span>All Rows (Flat)</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    bufferViewMode === "FLAT" ? "bg-indigo-100 text-indigo-800" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {filteredRows.length}
-                </span>
-              </button>
-            </div>
           </div>
         </div>
       </div>
 
         {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
-        {bufferViewMode === "CUSTOMER" && (
-          <div className="space-y-3">
+        <div className="space-y-3">
             {groupedCustomerRows.length > 0 ? (
               groupedCustomerRows.map((customer) => {
                 const isExpanded = isBufferCustomerExpanded(customer.customerName);
@@ -1606,22 +1572,22 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                   {isExpanded && (
                     <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
                       <div className="border border-slate-200 rounded-xl bg-white shadow-2xs overflow-hidden">
-                        <div className="overflow-x-auto w-full max-h-[500px] overflow-y-auto">
-                          <table className="w-full text-left text-xs border-collapse min-w-full">
-                            <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10 select-none">
+                        <TableHorizontalScrollWrapper>
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black select-none">
                               <tr>
-                                <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
-                                <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
-                                <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
-                                <th className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap">POS NO.</th>
-                                <th className="px-3 py-2.5 w-36 min-w-[130px] whitespace-nowrap">FINISH / TYPE</th>
-                                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">WIDTH (MM)</th>
-                                <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">HEIGHT (MM)</th>
-                                <th className="px-3 py-2.5 w-24 min-w-[85px] text-center whitespace-nowrap">TOTAL QTY</th>
-                                <th className="px-3 py-2.5 w-32 min-w-[110px] text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200">GLASS CUT</th>
-                                <th className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200">REMAINING</th>
-                                <th className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap">SQM</th>
-                                <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">SL NO.</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">PI</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">BATCH</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">POS NO.</th>
+                                <th className="px-2 py-2 whitespace-nowrap">FINISH / TYPE</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">WIDTH (MM)</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">HEIGHT (MM)</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap">TOTAL QTY</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200">GLASS CUT</th>
+                                <th className="px-2 py-2 text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200">REMAINING</th>
+                                <th className="px-2 py-2 text-right whitespace-nowrap">SQM</th>
+                                <th className="px-2 py-2 whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
@@ -1632,7 +1598,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                 return (
                                   <React.Fragment key={row.id}>
                                     <tr className={`hover:bg-indigo-50/40 transition-colors ${isRowExpanded ? "bg-indigo-50/30" : ""}`}>
-                                      <td className="px-3 py-2.5 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
                                         <div className="flex items-center justify-center gap-1">
                                           <button
                                             type="button"
@@ -1648,16 +1614,16 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                           <span>{row.slNo}</span>
                                         </div>
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono font-bold text-purple-700 text-center whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono font-bold text-purple-700 text-center whitespace-nowrap">
                                         {formatBatchNumber(row.piNumber)}
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
                                         {formatBatchNumber(row.batchNo || row.piNumber)}
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono text-center font-black text-indigo-900 bg-indigo-50/60 border-x border-indigo-100 whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono text-center font-black text-indigo-900 bg-indigo-50/60 border-x border-indigo-100 whitespace-nowrap">
                                         #{row.posNo}
                                       </td>
-                                      <td className="px-3 py-2.5 whitespace-nowrap">
+                                      <td className="px-2 py-2 whitespace-nowrap">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
                                             row.finish === "Colour"
@@ -1671,25 +1637,25 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                           </span>
                                         </div>
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
                                         {row.width}
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
                                         {row.height}
                                       </td>
-                                      <td className="px-3 py-2.5 font-mono text-center font-black text-slate-900 whitespace-nowrap">
+                                      <td className="px-2 py-2 font-mono text-center font-black text-slate-900 whitespace-nowrap">
                                         {row.totalQty}
                                       </td>
-                                      <td className="px-3 py-2.5 text-center align-middle bg-emerald-50/50 border-x border-emerald-100 whitespace-nowrap font-mono font-black text-emerald-800">
+                                      <td className="px-2 py-2 text-center align-middle bg-emerald-50/50 border-x border-emerald-100 whitespace-nowrap font-mono font-black text-emerald-800">
                                         {row.cutQty}
                                       </td>
-                                      <td className="px-3 py-2.5 text-center align-middle bg-amber-50/40 border-r border-amber-100 whitespace-nowrap font-mono font-black text-amber-800">
+                                      <td className="px-2 py-2 text-center align-middle bg-amber-50/40 border-r border-amber-100 whitespace-nowrap font-mono font-black text-amber-800">
                                         {row.remainingQty}
                                       </td>
-                                      <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
+                                      <td className="px-2 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
                                         {row.totalSqm.toFixed(2)} m²
                                       </td>
-                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                      <td className="px-2 py-2 align-middle whitespace-nowrap">
                                         {row.readyPairsCount > 0 ? (
                                           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300">
                                             <Sparkles className="w-3 h-3 text-indigo-600" />
@@ -1723,7 +1689,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                               <span>POS #{row.posNo} — Individual Glass Panes ({row.rawItems.length} items)</span>
                                               <span className="text-slate-500 font-normal text-[11px]">{row.customerName} • {row.projectName}</span>
                                             </div>
-                                            <div className="overflow-x-auto">
+                                            <div className="overflow-x-auto no-scrollbar">
                                               <table className="w-full text-left text-xs">
                                                 <thead>
                                                   <tr className="border-b text-[10px] font-black text-slate-500 uppercase bg-slate-50">
@@ -1795,7 +1761,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                               })}
                             </tbody>
                           </table>
-                        </div>
+                        </TableHorizontalScrollWrapper>
                       </div>
                     </div>
                   )}
@@ -1809,645 +1775,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
             </div>
           )}
         </div>
-      )}
-
-      {/* ── VIEW 2: FLAT POSITION ROWS TABLE ── */}
-      {bufferViewMode === "FLAT" && (
-        <div className="border-2 border-slate-200 rounded-2xl bg-white shadow-xs overflow-hidden">
-          {/* Table Title Bar */}
-          <div className="px-4 py-3 bg-slate-100 text-xs font-extrabold text-slate-700 border-b border-slate-200 flex justify-between items-center flex-wrap gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span>
-                {activeViewMetrics.cutPieces} of {activeViewMetrics.totalPieces} Pieces Cut •{" "}
-                <strong className="text-amber-700">{activeViewMetrics.remainingPieces} Remaining to Cut</strong>
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 text-xs">
-              <span className="text-slate-500 font-mono">
-                Total Area: <strong className="text-slate-900">{activeViewMetrics.totalSqm.toFixed(2)} m²</strong> (Cut:{" "}
-                <strong className="text-emerald-700">{activeViewMetrics.cutSqm.toFixed(2)} m²</strong> • Remaining:{" "}
-                <strong className="text-amber-700">{activeViewMetrics.remainingSqm.toFixed(2)} m²</strong>)
-              </span>
-            </div>
-          </div>
-
-          {/* The Table with exact columns */}
-          <div className="overflow-x-auto w-full max-h-[600px] overflow-y-auto">
-            <table className="w-full text-left text-xs border-collapse min-w-full">
-              <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10 select-none">
-                <tr>
-                  <th className="px-3 py-2.5 w-14 min-w-[60px] text-center whitespace-nowrap">SL NO.</th>
-                  <th className="px-3 py-2.5 w-28 min-w-[90px] text-center whitespace-nowrap">PI</th>
-                  <th className="px-3 py-2.5 w-24 min-w-[75px] text-center whitespace-nowrap">BATCH</th>
-                  <th
-                    onClick={() => handleHeaderSort("posNo")}
-                    className="px-3 py-2.5 w-24 min-w-[80px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                    title="Click to sort by POS NO."
-                  >
-                    <div className="inline-flex items-center gap-1">
-                      <span>POS NO.</span>
-                      {sortColumn === "posNo" ? (
-                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-                  <th className="px-3 py-2.5 w-36 min-w-[130px] whitespace-nowrap">FINISH / TYPE</th>
-                  <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">WIDTH (MM)</th>
-                  <th className="px-3 py-2.5 w-28 min-w-[100px] text-center whitespace-nowrap">HEIGHT (MM)</th>
-                  <th
-                    onClick={() => handleHeaderSort("totalQty")}
-                    className="px-3 py-2.5 w-24 min-w-[85px] text-center whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                    title="Click to sort by Total Qty"
-                  >
-                    <div className="inline-flex items-center gap-1">
-                      <span>TOTAL QTY</span>
-                      {sortColumn === "totalQty" ? (
-                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleHeaderSort("cutQty")}
-                    className="px-3 py-2.5 w-32 min-w-[110px] text-center whitespace-nowrap bg-emerald-50/80 text-emerald-900 border-x border-emerald-200 cursor-pointer hover:bg-emerald-100/80 transition-colors"
-                    title="Click to sort by Glass Cut quantity"
-                  >
-                    <div className="inline-flex items-center gap-1">
-                      <span>GLASS CUT</span>
-                      {sortColumn === "cutQty" ? (
-                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-800" /> : <ArrowDown className="w-3 h-3 text-emerald-800" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-emerald-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleHeaderSort("remainingQty")}
-                    className="px-3 py-2.5 w-36 min-w-[130px] text-center whitespace-nowrap bg-amber-50/80 text-amber-900 border-r border-amber-200 cursor-pointer hover:bg-amber-100/80 transition-colors"
-                    title="Click to sort by Remaining quantity"
-                  >
-                    <div className="inline-flex items-center gap-1">
-                      <span>REMAINING</span>
-                      {sortColumn === "remainingQty" ? (
-                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-amber-800" /> : <ArrowDown className="w-3 h-3 text-amber-800" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-amber-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleHeaderSort("sqm")}
-                    className="px-3 py-2.5 w-24 min-w-[85px] text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/80 transition-colors"
-                    title="Click to sort by Area SQM"
-                  >
-                    <div className="inline-flex items-center justify-end gap-1 w-full">
-                      <span>SQM</span>
-                      {sortColumn === "sqm" ? (
-                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                      )}
-                    </div>
-                  </th>
-                  <th className="px-3 py-2.5 min-w-[200px] whitespace-nowrap">1+1 PAIRING / BUFFER STATUS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
-                {filteredRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="text-center py-12 text-slate-400 whitespace-nowrap">
-                      No position records found matching the current PI or filters.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredRows.map((row) => {
-                    const isExpanded = expandedRowIds.includes(row.id);
-                    const isFullyCut = row.remainingQty === 0;
-                    const isPartiallyCut = row.cutQty > 0 && !isFullyCut;
-
-                    return (
-                      <React.Fragment key={row.id}>
-                        <tr
-                          className={`hover:bg-indigo-50/40 transition-colors ${
-                            isExpanded ? "bg-indigo-50/30" : ""
-                          }`}
-                        >
-                          <td className="px-3 py-2.5 font-mono font-bold text-slate-500 text-center text-xs align-middle whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => toggleExpandRow(row.id)}
-                                className={`p-1 rounded-md transition-all cursor-pointer ${
-                                  isExpanded
-                                    ? "bg-indigo-100 text-indigo-700 shadow-2xs"
-                                    : "text-slate-400 hover:text-indigo-700 hover:bg-slate-200/80"
-                                }`}
-                                title={
-                                  isExpanded
-                                    ? "Collapse individual pieces"
-                                    : `Expand and view all ${row.totalQty} individual glass pieces`
-                                }
-                              >
-                                {isExpanded ? (
-                                  <ChevronUp className="w-3.5 h-3.5" />
-                                ) : (
-                                  <ChevronRight className="w-3.5 h-3.5" />
-                                )}
-                              </button>
-                              <span>{row.slNo}</span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 font-mono font-bold text-purple-700 text-center whitespace-nowrap">
-                            {formatBatchNumber(row.piNumber)}
-                          </td>
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-xl font-mono font-black text-xs bg-slate-100 text-slate-800 border border-slate-300 shadow-2xs whitespace-nowrap">
-                            {row.batchNo || row.sfoNo || row.rawItems[0]?.batchNo || "—"}
-                          </span>
-                        </td>
-
-                        {/* POS NO. Pill Badge */}
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-300 shadow-2xs whitespace-nowrap min-w-[40px]">
-                            {row.posNo}
-                          </span>
-                        </td>
-
-                        {/* FINISH / TYPE */}
-                        <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {categoryFilter === "ALL_PENDING" && (
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-black shadow-2xs whitespace-nowrap uppercase tracking-wider ${
-                                  row.glassCategory === "DGU"
-                                    ? "bg-teal-600 text-white"
-                                    : row.glassCategory === "Lamination"
-                                    ? "bg-amber-600 text-white"
-                                    : "bg-purple-600 text-white"
-                                }`}
-                              >
-                                {row.glassCategory === "Lamination" ? "LAM" : row.glassCategory}
-                              </span>
-                            )}
-                            {row.finish === "Colour" ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs whitespace-nowrap">
-                                Colour
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-cyan-100 text-cyan-800 border border-cyan-200 shadow-2xs whitespace-nowrap">
-                                Clear
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* WIDTH (MM) Pill */}
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl font-mono font-black text-xs bg-white text-slate-900 border border-slate-300 shadow-2xs whitespace-nowrap min-w-[65px]">
-                            {row.width}
-                          </span>
-                        </td>
-
-                        {/* HEIGHT (MM) Pill */}
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl font-mono font-black text-xs bg-white text-slate-900 border border-slate-300 shadow-2xs whitespace-nowrap min-w-[65px]">
-                            {row.height}
-                          </span>
-                        </td>
-
-                        {/* TOTAL ORDERED QTY - Clickable to Expand All Pieces */}
-                        <td className="px-3 py-2.5 text-center align-middle whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandRow(row.id)}
-                            title={`Click to view all ${row.totalQty} individual glass piece barcodes & status`}
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-xl font-mono font-black text-xs border shadow-2xs whitespace-nowrap cursor-pointer transition-all hover:scale-105 active:scale-95 ${
-                              isExpanded
-                                ? "bg-indigo-600 text-white border-indigo-700 ring-2 ring-indigo-300 shadow-sm"
-                                : "bg-slate-100 text-slate-900 border-slate-300 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
-                            }`}
-                          >
-                            <span>{row.totalQty} pcs</span>
-                            {isExpanded ? (
-                              <ChevronUp className="w-3.5 h-3.5 text-white shrink-0" />
-                            ) : (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            )}
-                          </button>
-                        </td>
-
-                        {/* GLASS CUT COLUMN */}
-                        <td className="px-3 py-2.5 text-center align-middle bg-emerald-50/40 border-x border-emerald-100 whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandRow(row.id)}
-                            title="Click to view piece cutting status breakdown"
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-xl font-mono font-black text-xs border shadow-2xs whitespace-nowrap cursor-pointer transition-transform hover:scale-105 ${
-                              isFullyCut
-                                ? "bg-emerald-600 text-white border-emerald-700 ring-2 ring-emerald-300 shadow-xs"
-                                : isPartiallyCut
-                                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                                : "bg-slate-100 text-slate-400 border-slate-200"
-                            }`}
-                          >
-                            <Check className={`w-3.5 h-3.5 shrink-0 ${isFullyCut ? "text-white" : isPartiallyCut ? "text-emerald-700" : "text-slate-400"}`} />
-                            <span>{row.cutQty} Cut</span>
-                          </button>
-                        </td>
-
-                        {/* REMAINING IN CUTTING COLUMN */}
-                        <td className="px-3 py-2.5 text-center align-middle bg-amber-50/40 border-r border-amber-100 whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandRow(row.id)}
-                            title="Click to view remaining pieces in cutting"
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-xl font-mono font-black text-xs border shadow-2xs whitespace-nowrap cursor-pointer transition-transform hover:scale-105 ${
-                              row.remainingQty > 0
-                                ? "bg-amber-100 text-amber-900 border-amber-300"
-                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            }`}
-                          >
-                            {row.remainingQty > 0 ? (
-                              <>
-                                <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                <span>{row.remainingQty} Remaining</span>
-                              </>
-                            ) : (
-                              <>
-                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>0 Left (Done)</span>
-                              </>
-                            )}
-                          </button>
-                        </td>
-
-                        {/* SQM */}
-                        <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs align-middle">
-                          {row.totalSqm.toFixed(2)} m²
-                        </td>
-
-                        {/* 1+1 PAIRING / BUFFER STATUS */}
-                        <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                          <div className="flex items-center whitespace-nowrap">
-                            {row.finishedQty > 0 || (row.matchingPartnerRow && row.matchingPartnerRow.finishedQty > 0 && row.remainingQty === 0 && row.inBufferQty === 0) ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-600 text-white border border-emerald-700 shadow-xs whitespace-nowrap">
-                                <CheckCircle className="w-3.5 h-3.5 text-white shrink-0" />
-                                <span>✓ {row.finishedQty || row.matchingPartnerRow?.finishedQty || row.totalQty} of {row.totalQty} Dispatched to Finished</span>
-                              </span>
-                            ) : row.readyPairsCount > 0 ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs whitespace-nowrap">
-                                <span>{row.readyPairsCount} Pair(s) Ready for Assembly</span>
-                              </span>
-                            ) : row.inBufferQty > 0 ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-purple-100 text-purple-950 border border-purple-300 shadow-2xs whitespace-nowrap">
-                                <span>Staged in Buffer ({row.inBufferQty} pcs) • Waiting for {row.waitingFinish || "Partner Lite"}</span>
-                              </span>
-                            ) : row.rawItems.some((i: any) => i.currentStage === "DGU") ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-teal-100 text-teal-900 border border-teal-300 shadow-2xs whitespace-nowrap">
-                                <span>Assembling in DGU Workstation</span>
-                              </span>
-                            ) : row.rawItems.some((i: any) => i.currentStage === "Lamination") ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs whitespace-nowrap">
-                                <span>Processing in Lamination</span>
-                              </span>
-                            ) : row.remainingQty > 0 && row.matchingPartnerRow && (row.matchingPartnerRow.inBufferQty > 0 || row.matchingPartnerRow.cutQty > 0) ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-amber-100 text-amber-950 border border-amber-300 shadow-2xs whitespace-nowrap">
-                                <span>
-                                  Partner Lite has {row.matchingPartnerRow.inBufferQty || row.matchingPartnerRow.cutQty} Cut in Buffer • Cut {row.finish || "this lite"} to Pair
-                                </span>
-                              </span>
-                            ) : isFullyCut ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 whitespace-nowrap">
-                                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>Advanced to Pipeline</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">
-                                <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                <span>Waiting on Cutting Table</span>
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-
-                      {/* ── INLINE EXPANDED ROW: ALL INDIVIDUAL GLASS PIECES DRAWER ── */}
-                      {isExpanded && (
-                        <tr className="bg-indigo-50/25">
-                          <td colSpan={12} className="p-0 border-y-2 border-indigo-200">
-                            <div className="bg-slate-50/50 p-3">
-                              {/* Individual Pieces Sub-Table */}
-                              <div className="rounded-xl border-2 border-slate-200/90 bg-white overflow-hidden shadow-2xs">
-                                <table className="w-full text-left text-xs border-collapse">
-                                  <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black">
-                                    <tr>
-                                      <th className="px-3 py-2 w-12 text-center whitespace-nowrap">SL NO.</th>
-                                      <th className="px-3 py-2 w-20 text-center whitespace-nowrap">PI</th>
-                                      <th className="px-3 py-2 w-20 text-center whitespace-nowrap">POS NO.</th>
-                                      <th className="px-3 py-2 w-28 whitespace-nowrap">FINISH / TYPE</th>
-                                      <th className="px-3 py-2 w-24 text-center whitespace-nowrap">WIDTH (MM)</th>
-                                      <th className="px-3 py-2 w-24 text-center whitespace-nowrap">HEIGHT (MM)</th>
-                                      <th className="px-3 py-2 w-16 text-center whitespace-nowrap">QTY</th>
-                                      <th className="px-3 py-2 w-20 text-right whitespace-nowrap">SQM</th>
-                                      <th className="px-3 py-2 min-w-[140px] whitespace-nowrap">GLASS CODE</th>
-                                      <th className="px-3 py-2 min-w-[220px] max-w-[320px] whitespace-nowrap">GLASS TYPE / SPEC</th>
-                                      <th className="px-3 py-2 w-16 text-center whitespace-nowrap">OB</th>
-                                      <th className="px-3 py-2 w-16 text-center whitespace-nowrap">SFO</th>
-                                      <th className="px-3 py-2 w-16 text-center whitespace-nowrap">BATCH</th>
-                                      <th className="px-3 py-2 min-w-[180px] whitespace-nowrap">BARCODE</th>
-                                      <th className="px-3 py-2 text-right min-w-[120px] whitespace-nowrap">ACTIONS</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100 font-sans">
-                                    {row.rawItems.length === 0 ? (
-                                      <tr>
-                                        <td colSpan={15} className="text-center py-4 text-slate-400">
-                                          No individual piece records found for this position.
-                                        </td>
-                                      </tr>
-                                    ) : (
-                                      [...row.rawItems]
-                                        .sort((a, b) => {
-                                          const aCut = a.currentStage?.toLowerCase() !== "cutting" && a.status !== "Rejected" ? 1 : 0;
-                                          const bCut = b.currentStage?.toLowerCase() !== "cutting" && b.status !== "Rejected" ? 1 : 0;
-                                          return bCut - aCut;
-                                        })
-                                        .map((piece, pIdx) => {
-                                        const isFinished = piece.currentStage?.toLowerCase() === "finished" || piece.status === "Completed";
-                                        const isCut = piece.currentStage?.toLowerCase() !== "cutting" && piece.status !== "Rejected";
-                                        const isBuffer = piece.currentStage?.toLowerCase() === "pairing";
-                                        const pieceSqm = parseFloat(
-                                          (
-                                            ((piece.width || row.width) * (piece.height || row.height)) /
-                                            1000000
-                                          ).toFixed(2)
-                                        );
-
-                                        return (
-                                          <tr
-                                            key={piece.id || `${row.id}_piece_${pIdx}`}
-                                            className={`transition-colors ${
-                                              isFinished
-                                                ? "bg-emerald-100/60 border-l-4 border-l-emerald-600 hover:bg-emerald-100"
-                                                : isCut
-                                                ? "bg-emerald-50/80 border-l-4 border-l-emerald-500 hover:bg-emerald-100/70"
-                                                : "bg-white hover:bg-amber-50/40 border-l-4 border-l-amber-300"
-                                            }`}
-                                          >
-                                            {/* SL NO. */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              {isFinished ? (
-                                                <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded-md font-mono font-black text-xs bg-emerald-600 text-white border border-emerald-700 shadow-2xs">
-                                                  <CheckCircle className="w-3 h-3 text-white shrink-0" />
-                                                  <span>{pIdx + 1}</span>
-                                                </span>
-                                              ) : isCut ? (
-                                                <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded-md font-mono font-black text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
-                                                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
-                                                  <span>{pIdx + 1}</span>
-                                                </span>
-                                              ) : (
-                                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md font-mono font-bold text-slate-600 text-xs bg-slate-100 border border-slate-200">
-                                                  {pIdx + 1}
-                                                </span>
-                                              )}
-                                            </td>
-
-                                            {/* PI */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full font-mono font-black text-[11px] bg-purple-50 text-purple-700 border border-purple-200">
-                                                {formatBatchNumber(piece.orderNo || piece.piNumber || row.piNumber)}
-                                              </span>
-                                            </td>
-
-                                            {/* POS NO. */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-300 min-w-[36px]">
-                                                {piece.posNo || row.posNo}
-                                              </span>
-                                            </td>
-
-                                            {/* FINISH / TYPE */}
-                                            <td className="px-3 py-2 align-middle whitespace-nowrap">
-                                              {row.finish === "Colour" ? (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                                  Colour
-                                                </span>
-                                              ) : (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
-                                                  Clear
-                                                </span>
-                                              )}
-                                            </td>
-
-                                            {/* WIDTH (MM) */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-white text-slate-900 border border-slate-300 min-w-[50px]">
-                                                {piece.width || row.width}
-                                              </span>
-                                            </td>
-
-                                            {/* HEIGHT (MM) */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-white text-slate-900 border border-slate-300 min-w-[50px]">
-                                                {piece.height || row.height}
-                                              </span>
-                                            </td>
-
-                                            {/* QTY */}
-                                            <td className="px-3 py-2 text-center align-middle whitespace-nowrap">
-                                              {isFinished ? (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-emerald-600 text-white border border-emerald-700 shadow-2xs">
-                                                  <CheckCircle className="w-3 h-3 text-white shrink-0" />
-                                                  <span>1 pc (Finished)</span>
-                                                </span>
-                                              ) : isCut ? (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
-                                                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
-                                                  <span>1 pc (Cut)</span>
-                                                </span>
-                                              ) : (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg font-mono font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200">
-                                                  <Clock className="w-3 h-3 text-amber-600 shrink-0" />
-                                                  <span>1 pc (Wait)</span>
-                                                </span>
-                                              )}
-                                            </td>
-
-                                            {/* SQM */}
-                                            <td className="px-3 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs align-middle">
-                                              {(piece.sqm ? piece.sqm.toFixed(2) : pieceSqm.toFixed(2))} m²
-                                            </td>
-
-                                            {/* GLASS CODE */}
-                                            <td className="px-3 py-2 font-bold font-mono text-slate-900 text-xs align-middle whitespace-nowrap">
-                                              <span className="bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 inline-block">
-                                                {piece.glassCode || row.glassCode}
-                                              </span>
-                                            </td>
-
-                                            {/* GLASS TYPE / SPEC */}
-                                            <td className="px-3 py-2 text-slate-800 font-medium text-xs align-middle max-w-[280px] whitespace-nowrap">
-                                              <div className="truncate font-bold" title={piece.glassType || row.glassType}>
-                                                {piece.glassType || row.glassType}
-                                              </div>
-                                            </td>
-
-                                            {/* OB */}
-                                            <td className="px-3 py-2 text-center font-mono font-bold text-slate-700 text-xs align-middle whitespace-nowrap">
-                                              {piece.obNo || row.obNo}
-                                            </td>
-
-                                            {/* SFO */}
-                                            <td className="px-3 py-2 text-center font-mono font-bold text-purple-700 text-xs align-middle whitespace-nowrap">
-                                              {piece.sfoNo || row.sfoNo}
-                                            </td>
-
-                                            {/* BATCH */}
-                                            <td className="px-3 py-2 text-center font-mono font-bold text-purple-700 text-xs align-middle whitespace-nowrap">
-                                              {piece.batchNo || row.batchNo}
-                                            </td>
-
-                                            {/* BARCODE */}
-                                            <td className="px-3 py-2 align-middle font-mono whitespace-nowrap">
-                                              <div className="flex items-center gap-1.5">
-                                                <BarcodeIcon className={`w-4 h-4 shrink-0 ${isFinished ? "text-emerald-600" : isCut ? "text-emerald-600" : "text-slate-400"}`} />
-                                                <span
-                                                  className={`font-black px-2 py-0.5 rounded-md border text-xs ${
-                                                    isFinished
-                                                      ? "bg-emerald-600 text-white border-emerald-700"
-                                                      : isCut
-                                                      ? "bg-emerald-100 text-emerald-950 border-emerald-300"
-                                                      : "bg-slate-100 text-slate-900 border-slate-300"
-                                                  }`}
-                                                >
-                                                  {piece.barcode || piece.serialNumber || `SN-${row.posNo}-${pIdx + 1}`}
-                                                </span>
-                                                <button
-                                                  type="button"
-                                                  onClick={() => handleCopyBarcode(piece.barcode || piece.serialNumber)}
-                                                  className="text-slate-400 hover:text-indigo-600 p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer"
-                                                  title="Copy barcode to clipboard"
-                                                >
-                                                  <Copy className="w-3.5 h-3.5" />
-                                                </button>
-                                              </div>
-                                            </td>
-
-                                            {/* ACTIONS */}
-                                            <td className="px-3 py-2 text-right align-middle whitespace-nowrap">
-                                              <div className="flex items-center justify-end gap-1.5">
-                                                {isFinished ? (
-                                                  <span className="text-[10px] font-black text-white bg-emerald-600 border border-emerald-700 px-2 py-0.5 rounded-md inline-flex items-center gap-1 whitespace-nowrap shadow-2xs">
-                                                    <CheckCircle className="w-3 h-3 text-white" /> Finished & Dispatched
-                                                  </span>
-                                                ) : isCut ? (
-                                                  <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md inline-flex items-center gap-1 whitespace-nowrap">
-                                                    <Check className="w-3 h-3 text-emerald-600" /> Cut (In Buffer)
-                                                  </span>
-                                                ) : (
-                                                  <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1 whitespace-nowrap">
-                                                    <Clock className="w-3 h-3 text-amber-600" /> Waiting in Cutting
-                                                  </span>
-                                                )}
-
-                                                {isBuffer && (row.finish === "Colour") && (
-                                                  <Button
-                                                    size="sm"
-                                                    onClick={() => completeStage([piece.serialNumber], 1, false)}
-                                                    disabled={loading}
-                                                    className="h-6 px-2 text-[10px] font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-2xs gap-1"
-                                                    title="Advance this single piece to DGU"
-                                                  >
-                                                    <Zap className="w-2.5 h-2.5" /> Send to DGU
-                                                  </Button>
-                                                )}
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onPrintSticker(piece);
-                                                  }}
-                                                  className="w-7 h-7 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                                  title="Print Piece Barcode / QR Sticker"
-                                                >
-                                                  <Tag className="w-3.5 h-3.5 text-slate-700" />
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onReject({
-                                                      ...(row.rawItems[pIdx] || piece),
-                                                      partnerItem: row.rawItems[pIdx === 0 ? 1 : 0] || null,
-                                                      allSerials: row.rawItems.map((r) => r.serialNumber),
-                                                      isDguPair: row.rawItems.length > 1,
-                                                    } as any);
-                                                  }}
-                                                  className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                                  title="Reject Item / Report Defect"
-                                                >
-                                                  <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onRework({
-                                                      ...(row.rawItems[pIdx] || piece),
-                                                      partnerItem: row.rawItems[pIdx === 0 ? 1 : 0] || null,
-                                                      allSerials: row.rawItems.map((r) => r.serialNumber),
-                                                      isDguPair: row.rawItems.length > 1,
-                                                    } as any);
-                                                  }}
-                                                  className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
-                                                  title="Send Item to Rework"
-                                                >
-                                                  <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                                                </button>
-                                              </div>
-                                            </td>
-                                          </tr>
-                                        );
-                                      })
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Table Bottom Footer Summary */}
-        <div className="p-3 bg-slate-50 text-xs text-slate-600 font-semibold border-t border-slate-200 flex justify-between items-center flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <span>Showing {filteredRows.reduce((a, b) => a + b.totalQty, 0)} pieces</span>
-            <span className="text-slate-300">•</span>
-            <span>
-              {activeViewMetrics.cutPieces} of {activeViewMetrics.totalPieces} Pieces Cut (
-              {activeViewMetrics.cutPercent}% complete)
-            </span>
-          </div>
-          <div className="flex items-center gap-3 font-mono">
-            <span className="text-emerald-700 font-bold">Cut Area: {activeViewMetrics.cutSqm.toFixed(2)} m²</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-amber-700 font-bold">Remaining Area: {activeViewMetrics.remainingSqm.toFixed(2)} m²</span>
-          </div>
-        </div>
-      </div>
-      )}
 
       {/* ── Scan Verification Modal for Pairing Buffer ── */}
       {scanRow && (
@@ -2537,7 +1864,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                   const serials = targetRow.bufferItems.map((i) => i.serialNumber);
                   await completeStage(serials, 1, false);
                 }}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs gap-1.5 shadow-xs"
+                className="bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs gap-1.5 shadow-xs"
               >
                 <Zap className="w-3.5 h-3.5" /> 1-Click Send to DGU
               </Button>

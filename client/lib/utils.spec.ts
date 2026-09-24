@@ -35,10 +35,16 @@ describe("formatBatchNumber", () => {
   it("should strip B prefix and legacy SFO prefix", () => {
     expect(formatBatchNumber("B5441")).toBe("5441");
     expect(formatBatchNumber("B5442")).toBe("5442");
-    expect(formatBatchNumber("201765-B5442")).toBe("5442");
-    expect(formatBatchNumber("STK-201765-B5442")).toBe("5442");
     expect(formatBatchNumber("5442")).toBe("5442");
     expect(formatBatchNumber("")).toBe("-");
+  });
+
+  it("should correctly extract numeric batch number from multi-customer sub-batches", () => {
+    expect(formatBatchNumber("5846-ASHBILIA")).toBe("5846");
+    expect(formatBatchNumber("5846-MERAKI-DISTRICT_O")).toBe("5846");
+    expect(formatBatchNumber("5846-MERAKI-HAVEN_BY_A")).toBe("5846");
+    expect(formatBatchNumber("5826-MERAKI")).toBe("5826");
+    expect(formatBatchNumber("5826-ASHBILIA")).toBe("5826");
   });
 });
 

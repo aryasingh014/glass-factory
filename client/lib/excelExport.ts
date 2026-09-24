@@ -399,7 +399,7 @@ export function exportBatchProgressMatrixToExcel(pi: PIMaster, items: GlassItem[
     const isPairing = completedStages.includes("Pairing");
     const isDgu = completedStages.includes("DGU") || (item.currentStage !== "Cutting" && item.currentStage !== "Pairing" && item.currentStage !== "DGU");
     const isLam = completedStages.includes("Lamination") || (item.currentStage === "Finished" && item.processRoute.includes("Lamination"));
-    const isDispatched = item.currentStage === "Finished" && item.status === "Completed";
+    const isDispatched = (item as any).isDispatched === true || (item as any).currentStage === "Dispatched" || Boolean((item as any).dispatchedAt);
 
     return {
       "Sr No": idx + 1,

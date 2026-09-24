@@ -378,10 +378,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // Real-Time auto-refresh polling interval (every 10 seconds) + SSE event listener
   useEffect(() => {
     let eventSource: EventSource | null = null;
+    let debounceTimer: NodeJS.Timeout | null = null;
     try {
       eventSource = new EventSource("/api/production/events");
       const handleStreamUpdate = () => {
-        fetchReports(false);
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          fetchReports(false);
+        }, 500);
       };
       eventSource.addEventListener("stage_advanced", handleStreamUpdate);
       eventSource.addEventListener("item_rejected", handleStreamUpdate);
@@ -397,15 +401,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
     if (!autoSync) {
       return () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
         eventSource?.close();
       };
     }
 
     const interval = setInterval(() => {
       fetchReports(false);
-    }, 10000);
+    }, 60000);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       eventSource?.close();
       clearInterval(interval);
     };
@@ -1485,10 +1491,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               ? "bg-red-50/50 border-red-400 ring-2 ring-red-500/50"
               : "bg-white border-slate-200/90 hover:border-red-300"
           }`}
-          title="Click to view only Rejected Glass Units"
+          title="Click to view only Rejected Glass Pieces"
         >
           <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Rejected Units</span>
+            <span>Rejected Pieces</span>
             <Layers className="w-4 h-4 text-red-600" />
           </div>
           <div className="mt-1 flex items-baseline justify-between">
@@ -1498,7 +1504,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </span>
           </div>
           <div className="mt-1.5 text-[10px] text-slate-500">
-            Total Defective Glass Units
+            Total Defective Glass Pieces
           </div>
         </div>
 
@@ -2121,7 +2127,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                         {/* 7. QTY */}
                         <td className="p-3 text-center font-mono font-bold text-blue-700 whitespace-nowrap">
-                          {eff.qty} {eff.unitLabel}
+                          {eff.qty}
                         </td>
 
                         {/* 8. SQM */}
@@ -2189,7 +2195,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 <Tag className="w-3.5 h-3.5 text-slate-700" />
                               </button>
                             )}
-                            {onReject && i.status !== "Rejected" && i.status !== "Completed" && i.currentStage !== "Finished" && i.currentStage !== "Cutting" && (
+                            {onReject && i.status !== "Rejected" && i.currentStage !== "Cutting" && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2430,7 +2436,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                   <Tag className="w-3.5 h-3.5 text-slate-700" />
                                 </button>
                               )}
-                              {onReject && targetItem.status !== "Rejected" && targetItem.status !== "Completed" && targetItem.currentStage !== "Finished" && targetItem.currentStage !== "Cutting" && (
+                              {onReject && targetItem.status !== "Rejected" && targetItem.currentStage !== "Cutting" && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -2899,6 +2905,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                 <th className="p-3 text-center">POS NO</th>
                                                                 <th className="p-3 text-center">FINISH</th>
                                                                 <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                                                                <th className="p-3 text-center">QTY</th>
                                                                 <th className="p-3 text-right">SQM</th>
                                                                 <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
                                                                 <th className="p-3 text-center">STAGE</th>
@@ -2912,12 +2919,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                               {sheetGroup.items.map(({ item, rejectRecord, isRejected }, idx) => {
                                                                 const eff = getDguEffectiveQtyAndSqm(item);
                                                                 const finish = getItemFinish(item);
+                                                                const isActivelyRejected = item.status === "Rejected";
+                                                                const isRemake = Boolean(rejectRecord) && !isActivelyRejected;
                                                                 const actionItem = getGlassItemForActions(
                                                                   item.serialNumber,
                                                                   item.barcode,
                                                                   item.piNumber,
-                                                                  rejectRecord?.stage || item.currentStage,
-                                                                  isRejected ? "Rejected" : (item.status as any) || "Pending",
+                                                                  isActivelyRejected ? (rejectRecord?.stage || item.currentStage) : item.currentStage,
+                                                                  item.status || "In Production",
                                                                   rejectRecord?.reason || item.remarks
                                                                 );
 
@@ -2925,8 +2934,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                   <tr
                                                                     key={item.id || item.serialNumber}
                                                                     className={`transition-colors ${
-                                                                      isRejected
+                                                                      isActivelyRejected
                                                                         ? "bg-red-50/40 hover:bg-red-50/70"
+                                                                        : isRemake
+                                                                        ? "bg-blue-50/20 hover:bg-blue-50/50"
                                                                         : "hover:bg-slate-50/80"
                                                                     }`}
                                                                   >
@@ -2937,8 +2948,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                                                                     {/* Serial Number & Barcode */}
                                                                     <td className="p-3 font-mono whitespace-nowrap">
-                                                                      <div className={`font-bold ${isRejected ? "text-red-700" : "text-blue-700"}`}>
-                                                                        {item.serialNumber}
+                                                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                                                        <span className={`font-bold ${isActivelyRejected ? "text-red-700" : "text-blue-700"}`}>
+                                                                          {item.serialNumber}
+                                                                        </span>
+                                                                        {isRemake && (
+                                                                          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200 inline-flex items-center gap-1 shadow-2xs">
+                                                                            <RefreshCw className="w-2.5 h-2.5 text-blue-600" />
+                                                                            <span>Remake</span>
+                                                                          </span>
+                                                                        )}
                                                                       </div>
                                                                       <div className="text-[10px] text-slate-400 font-medium">
                                                                         {item.barcode}
@@ -2978,6 +2997,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                       {item.width} × {item.height} mm
                                                                     </td>
 
+                                                                    {/* QTY */}
+                                                                    <td className="p-3 text-center font-mono font-bold text-blue-700 whitespace-nowrap">
+                                                                      {eff.qty}
+                                                                    </td>
+
                                                                     {/* SQM */}
                                                                     <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
                                                                       {formatAENumber(eff.sqm, 2)} m²
@@ -2998,13 +3022,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                     {/* Stage */}
                                                                     <td className="p-3 text-center whitespace-nowrap">
                                                                       <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-800 text-[10px] font-bold">
-                                                                        {getDisplayStage(item, rejectRecord?.stage || item.currentStage)}
+                                                                        {getDisplayStage(item, isActivelyRejected ? (rejectRecord?.stage || item.currentStage) : item.currentStage)}
                                                                       </span>
                                                                     </td>
 
                                                                     {/* Quality Status */}
                                                                     <td className="p-3 text-center whitespace-nowrap">
-                                                                      {isRejected ? (
+                                                                      {isActivelyRejected ? (
                                                                         <span className="px-2.5 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs">
                                                                           <AlertCircle className="w-3 h-3 text-red-600" />
                                                                           REJECTED
@@ -3016,7 +3040,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                                                                     {/* Defect Details */}
                                                                     <td className="p-3">
-                                                                      {isRejected ? (
+                                                                      {isActivelyRejected ? (
                                                                         <div className="space-y-1 min-w-[240px]">
                                                                           <div className="flex items-center gap-1.5 flex-wrap">
                                                                             {rejectRecord?.defectStation && (
@@ -3034,6 +3058,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                                     ? "bg-cyan-100 text-cyan-900 border-cyan-300"
                                                                                     : rejectRecord.defectivePane === "IP_PLY2"
                                                                                     ? "bg-teal-100 text-teal-900 border-teal-300"
+                                                                                    : rejectRecord.defectivePane === "BOTH_CLEAR"
+                                                                                    ? "bg-cyan-100 text-cyan-900 border-cyan-300 ring-1 ring-cyan-400"
                                                                                     : rejectRecord.defectivePane === "IP"
                                                                                     ? "bg-cyan-100 text-cyan-800 border-cyan-200"
                                                                                     : "bg-red-100 text-red-800 border-red-200"
@@ -3045,6 +3071,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                                   ? "IP • Lami Ply 1"
                                                                                   : rejectRecord.defectivePane === "IP_PLY2"
                                                                                   ? "IP • Lami Ply 2"
+                                                                                  : rejectRecord.defectivePane === "BOTH_CLEAR"
+                                                                                  ? "Both Clears • IP 1 + IP 2"
                                                                                   : rejectRecord.defectivePane === "IP"
                                                                                   ? "IP • Inner Pane"
                                                                                   : rejectRecord.defectivePane === "ASSEMBLY"
@@ -3054,8 +3082,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                             )}
                                                                           </div>
                                                                           <div className="text-red-700 font-extrabold text-xs leading-snug">
-                                                                            {(rejectRecord?.reason || item.remarks || "Defect Scrap").replace(
-                                                                              /^\[Station:[^\]]+\]\s*/i,
+                                                                            {(rejectRecord?.reason || item.remarks || "Defect Scrap").replace(/^\[Station:[^\]]+\]\s*/i,
                                                                               ""
                                                                             )}
                                                                           </div>
@@ -3064,6 +3091,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                               {formatDubaiDateTime(rejectRecord.date)}
                                                                             </div>
                                                                           )}
+                                                                        </div>
+                                                                      ) : isRemake ? (
+                                                                        <div className="space-y-1 min-w-[220px]">
+                                                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 inline-flex items-center gap-1 shadow-2xs">
+                                                                              <RefreshCw className="w-3 h-3 text-blue-600" />
+                                                                              <span>Remake in Progress</span>
+                                                                            </span>
+                                                                            {rejectRecord?.defectStation && (
+                                                                              <span className="text-[10px] text-slate-500 font-medium">
+                                                                                (Replaced {rejectRecord.defectStation})
+                                                                              </span>
+                                                                            )}
+                                                                          </div>
+                                                                          <div className="text-[11px] text-slate-500 font-medium truncate max-w-[280px]" title={rejectRecord?.reason || ""}>
+                                                                            Original Defect: {(rejectRecord?.reason || item.remarks || "Scrapped & Recut").replace(/^\[Station:[^\]]+\]\s*/i, "")}
+                                                                          </div>
                                                                         </div>
                                                                       ) : (
                                                                         <span className="text-slate-400 font-medium text-xs whitespace-nowrap">
@@ -3096,11 +3140,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                           </button>
                                                                         )}
 
-                                                                        {/* Reject Button - Only visible if item is post-Cutting, NOT already rejected, and NOT completed at Finished stage */}
+                                                                        {/* Reject Button - Visible for all post-Cutting items not yet rejected (including Finished / Completed stage, e.g. transit / delivery breakage) */}
                                                                         {!isRejected &&
                                                                           item.status !== "Rejected" &&
-                                                                          item.status !== "Completed" &&
-                                                                          item.currentStage !== "Finished" &&
                                                                           item.currentStage !== "Cutting" &&
                                                                           onReject && (
                                                                             <button
@@ -3577,6 +3619,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                 <th className="p-3 text-center">POS NO</th>
                                                                 <th className="p-3 text-center">FINISH</th>
                                                                 <th className="p-3 text-center">WIDTH x HEIGHT</th>
+                                                                <th className="p-3 text-center">QTY</th>
                                                                 <th className="p-3 text-right">SQM</th>
                                                                 <th className="p-3 min-w-[180px]">GLASS TYPE / SPEC</th>
                                                                 <th className="p-3 text-center">REWORK ROUTE</th>
@@ -3662,6 +3705,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                       {item.width} × {item.height} mm
                                                                     </td>
 
+                                                                    {/* QTY */}
+                                                                    <td className="p-3 text-center font-mono font-bold text-blue-700 whitespace-nowrap">
+                                                                      {eff.qty}
+                                                                    </td>
+
                                                                     {/* SQM */}
                                                                     <td className="p-3 font-mono font-bold text-emerald-700 text-right whitespace-nowrap">
                                                                       {formatAENumber(eff.sqm, 2)} m²
@@ -3730,6 +3778,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                                     ? "bg-cyan-100 text-cyan-900 border-cyan-300"
                                                                                     : reworkRecord.defectivePane === "IP_PLY2"
                                                                                     ? "bg-teal-100 text-teal-900 border-teal-300"
+                                                                                    : reworkRecord.defectivePane === "BOTH_CLEAR"
+                                                                                    ? "bg-cyan-100 text-cyan-900 border-cyan-300 ring-1 ring-cyan-400"
                                                                                     : reworkRecord.defectivePane === "IP"
                                                                                     ? "bg-cyan-100 text-cyan-800 border-cyan-200"
                                                                                     : "bg-amber-100 text-amber-800 border-amber-200"
@@ -3741,6 +3791,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                                   ? "IP • Lami Ply 1"
                                                                                   : reworkRecord.defectivePane === "IP_PLY2"
                                                                                   ? "IP • Lami Ply 2"
+                                                                                  : reworkRecord.defectivePane === "BOTH_CLEAR"
+                                                                                  ? "Both Clears • IP 1 + IP 2"
                                                                                   : reworkRecord.defectivePane === "IP"
                                                                                   ? "IP • Inner Pane"
                                                                                   : reworkRecord.defectivePane === "ASSEMBLY"

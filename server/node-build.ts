@@ -9,8 +9,18 @@ const port = process.env.PORT || 3000;
 const __dirname = import.meta.dirname;
 const distPath = path.join(__dirname, "../spa");
 
-// Serve static files
-app.use(express.static(distPath));
+// Serve static files with caching
+app.use(
+  express.static(distPath, {
+    maxAge: "1h",
+    setHeaders: (res, filePath) => {
+      // Fingerprinted assets in /assets/ never change and can be cached permanently
+      if (filePath.includes("assets")) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  })
+);
 
 // Handle React Router - serve index.html for all non-API routes
 app.get("*", (req, res) => {

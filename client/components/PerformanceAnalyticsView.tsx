@@ -112,12 +112,12 @@ export const PerformanceAnalyticsView: React.FC = () => {
     fetchAnalytics(true);
   }, [timeRange, projectFilter, batchFilter, productTypeFilter, selectedStage, selectedOperator, selectedStatus]);
 
-  // Real-time Background Auto-Sync (10 seconds)
+  // Real-time Background Auto-Sync (60 seconds fallback)
   useEffect(() => {
     if (!autoSync) return;
     const interval = setInterval(() => {
       fetchAnalytics(false);
-    }, 10000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [autoSync, timeRange, projectFilter, batchFilter, productTypeFilter, selectedStage, selectedOperator, selectedStatus]);
 

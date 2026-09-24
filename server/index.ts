@@ -2,6 +2,7 @@ import "dotenv/config";
 import "./lib/env";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import compression from "compression";
 import { UserRole } from "@shared/api";
 import { generateToken, verifyToken } from "./lib/auth";
 import { logger } from "./lib/logger";
@@ -29,6 +30,7 @@ import {
   handleEventsStream,
   handleCleanupDatabase,
   handleDeleteItems,
+  handleDispatchItems,
 } from "./routes/production";
 
 import { handleGetPerformanceAnalytics } from "./routes/analytics";
@@ -81,7 +83,7 @@ setInterval(() => {
   for (const [key, record] of rateLimitMap) {
     if (now > record.resetTime) rateLimitMap.delete(key);
   }
-}, 30 * 60 * 1000);
+}, 30 * 60 * 1000).unref();
 
 function rateLimiter(options: { windowMs?: number; max?: number } = {}) {
   const windowMs = options.windowMs || 15 * 60 * 1000; // 15 mins
@@ -126,6 +128,19 @@ export function createServer() {
   loadDatabaseFromDisk(true);
   const app = express();
 
+  // Compression middleware - Compresses JSON payloads and static assets by 70-85% over remote/ngrok connections
+  app.use(
+    compression({
+      filter: (req, res) => {
+        // SSE streams must NOT be compressed or buffered
+        if (req.headers.accept?.includes("text/event-stream") || req.path.endsWith("/production/events")) {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+    })
+  );
+
   // Middleware
   app.use(cors());
   app.use(express.json({ limit: "25mb" }));
@@ -135,19 +150,22 @@ export function createServer() {
 
   // Security Headers Middleware (CSP, XSS, Clickjacking, MIME Sniffing)
   app.use((_req, res, next) => {
-    // Content Security Policy — mitigates XSS including dangerouslySetInnerHTML usage
-    res.setHeader("Content-Security-Policy", [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob:",
-      "connect-src 'self'",
-      "worker-src 'self' blob:",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; "));
+    // Content Security Policy — allows WebSockets (ws: wss:) for HMR and ngrok tunnels
+    res.setHeader(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "connect-src 'self' ws: wss: https: data: blob:",
+        "worker-src 'self' blob:",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join("; ")
+    );
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("X-XSS-Protection", "1; mode=block");
@@ -200,7 +218,9 @@ export function createServer() {
   apiV1.post("/production/advance-dlgu-lamination", handleAdvanceDlguLamination);
   apiV1.post("/production/reject", handleRejectItem);
   apiV1.post("/production/rework", handleReworkItem);
+  apiV1.post("/production/dispatch", handleDispatchItems);
   apiV1.post("/excel/upload", requireRole(["Admin", "Supervisor"]), handleExcelUpload);
+  apiV1.post("/upload-excel", requireRole(["Admin", "Supervisor"]), handleExcelUpload);
   apiV1.post("/sticker/upload", requireRole(["Admin", "Supervisor"]), handleStickerUpload);
   apiV1.post("/sticker/check-duplicates", handleCheckStickerDuplicates);
   apiV1.get("/production/dashboard", handleGetDashboardStats);

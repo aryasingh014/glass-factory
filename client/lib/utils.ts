@@ -9,8 +9,8 @@ export function cn(...inputs: ClassValue[]) {
  * Formats numbers according to UAE standards (en-AE locale)
  * e.g., 1234.56 -> "1,234.56"
  */
-export function formatAENumber(num: number, decimals: number = 2): string {
-  if (isNaN(num)) return "0.00";
+export function formatAENumber(num: number | null | undefined, decimals: number = 2): string {
+  if (num == null || !Number.isFinite(num)) return "0.00";
   return num.toLocaleString("en-AE", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
@@ -382,11 +382,38 @@ export function getDguEffectiveQtyAndSqm(
  */
 export function formatBatchNumber(batchIdentifier?: string): string {
   if (!batchIdentifier) return "-";
-  let clean = String(batchIdentifier).replace(/^STK-/i, "").trim();
-  if (clean.includes("-")) {
-    const parts = clean.split("-");
-    clean = parts[parts.length - 1].trim();
+  let clean = String(batchIdentifier).replace(/^STK-/i, "").replace(/^PI-/i, "").replace(/^BATCH-/i, "").trim();
+
+  // If already clean number or B+number (e.g. "5442", "B5442")
+  if (/^B?\d+$/i.test(clean)) {
+    return clean.replace(/^B(?=\d)/i, "");
   }
+
+  if (clean.includes("-")) {
+    const parts = clean.split("-").map((p) => p.trim()).filter(Boolean);
+
+    // 1. Look for part that is B followed by digits (e.g. "B5442" in "201765-B5442")
+    const bPart = parts.find((p) => /^B\d+$/i.test(p));
+    if (bPart) {
+      return bPart.replace(/^B(?=\d)/i, "");
+    }
+
+    // 2. Look for part that is purely digits (e.g. "5846" in "5846-ASHBILIA" or "5826" in "5826-MERAKI-DISTRICT_O")
+    const numPart = parts.find((p) => /^\d+$/.test(p));
+    if (numPart) {
+      return numPart;
+    }
+
+    // 3. Fallback: find any part that has digits (e.g. "B1", "BATCH1")
+    const partWithDigits = parts.find((p) => /\d/.test(p));
+    if (partWithDigits) {
+      return partWithDigits.replace(/^B(?=\d)/i, "");
+    }
+
+    // 4. If no digits at all, return the clean string
+    return clean;
+  }
+
   return clean.replace(/^B(?=\d)/i, "");
 }
 
@@ -431,11 +458,8 @@ export function isDguStickerPairMatch(col: any, clr: any): boolean {
         (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
       if (!isClrReady) return false;
     } else {
-      // Phase 1: Lamination Pairing (e.g. 6mm Clear + 13.52mm Clear Laminated sticker)
-      const liteKeyA = col.glassType || col.glassCode || "";
-      const liteKeyB = clr.glassType || clr.glassCode || "";
-      if (!liteKeyA || !liteKeyB) return false;
-      if (liteKeyA === liteKeyB) return false; // Same lite – cannot pair with itself
+      // Phase 1: Lamination Pairing (e.g. 6mm Clear + 13.52mm Clear Laminated sticker, or 2 identical clear lites)
+      // Distinct physical panes (serials/IDs checked) are valid pairing candidates.
     }
   } else {
     // STRICT RULE: Category must match (DGU only matches DGU, Lamination only matches Lamination)
@@ -455,24 +479,24 @@ export function isDguStickerPairMatch(col: any, clr: any): boolean {
       if (isColColour === isClrColour) return false;
     }
 
-    // STRICT RULE: Lamination requires 2 complementary lites (cannot pair identical panes from same batch/barcode)
+    // STRICT RULE: Lamination requires 2 distinct lites (cannot pair exact same barcode/id)
     if (isColLam && isClrLam) {
       const barcodeA = String(col.barcode || "");
       const barcodeB = String(clr.barcode || "");
       if (barcodeA && barcodeB && barcodeA === barcodeB) return false;
-
-      const piA = String(col.piId || col.piNumber || col.orderNo || "");
-      const piB = String(clr.piId || clr.piNumber || clr.orderNo || "");
-      const thickA = (col.thickness || col.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
-      const thickB = (clr.thickness || clr.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
-      if (piA && piB && piA === piB && thickA && thickB && thickA === thickB && col.glassType === clr.glassType) return false;
     }
   }
 
   // 1. Order No / PI # must match
-  const colOrder = String(col.orderNo || col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  const clrOrder = String(clr.orderNo || clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-  if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  if (col.orderNo && clr.orderNo) {
+    if (String(col.orderNo).trim().toLowerCase() !== String(clr.orderNo).trim().toLowerCase()) return false;
+  } else if (col.obNo && clr.obNo) {
+    if (String(col.obNo).trim().toLowerCase() !== String(clr.obNo).trim().toLowerCase()) return false;
+  } else {
+    const colOrder = String(col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const clrOrder = String(clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  }
 
   // 2. POS # (Position Number) must match
   const colPos = String(col.posNo || "").trim();
@@ -515,6 +539,15 @@ export function isDguStickerPairMatch(col: any, clr: any): boolean {
   if (colProj && clrProj && colProj !== clrProj) return false;
 
   return true;
+}
+
+export function isDispatchedItem(item: any): boolean {
+  if (!item) return false;
+  return (
+    item.isDispatched === true ||
+    item.currentStage === "Dispatched" ||
+    Boolean(item.dispatchedAt)
+  );
 }
 
 

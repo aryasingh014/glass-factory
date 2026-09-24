@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Cairo:wght@400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Cairo:wght@400;600;700&family=Caveat:wght@600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -63,12 +63,131 @@
 }
 
 .no-scrollbar::-webkit-scrollbar {
-  display: none;
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 .no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
+
+/* Global sleek scrollbar: reduce bulky 16-17px native scroller to half size (6px) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Dark sidebar sleek scroller: ultra-thin 5px and semi-transparent */
+aside::-webkit-scrollbar,
+nav::-webkit-scrollbar {
+  width: 5px;
+}
+
+aside::-webkit-scrollbar-track,
+nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+aside::-webkit-scrollbar-thumb,
+nav::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+
+aside::-webkit-scrollbar-thumb:hover,
+nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+aside, nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+
+/* Sleek cross-browser table horizontal scrollbar handling: eliminate bulky native 17px downside scroller across all stages */
+div[class*="overflow-x-auto"] {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+div[class*="overflow-x-auto"]:hover {
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+div[class*="overflow-x-auto"]::-webkit-scrollbar {
+  height: 4px;
+}
+div[class*="overflow-x-auto"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+div[class*="overflow-x-auto"]::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+}
+
+/* Synchronized Top Horizontal Scrollbar */
+.horizontal-scrollbar-sync {
+  scrollbar-width: thin !important;
+  scrollbar-color: #8b5cf6 #f1f5f9 !important;
+}
+.horizontal-scrollbar-sync::-webkit-scrollbar {
+  height: 6px !important;
+  display: block !important;
+}
+.horizontal-scrollbar-sync::-webkit-scrollbar-track {
+  background: #f1f5f9 !important;
+  border-radius: 9999px !important;
+}
+.horizontal-scrollbar-sync::-webkit-scrollbar-thumb {
+  background: #8b5cf6 !important;
+  border-radius: 9999px !important;
+}
+.horizontal-scrollbar-sync::-webkit-scrollbar-thumb:hover {
+  background: #7c3aed !important;
+}
+
+/* Table Bottom Horizontal Scrollbar */
+.table-scrollbar-bottom {
+  scrollbar-width: thin !important;
+  scrollbar-color: #94a3b8 #f8fafc !important;
+}
+.table-scrollbar-bottom::-webkit-scrollbar {
+  height: 6px !important;
+  display: block !important;
+}
+.table-scrollbar-bottom::-webkit-scrollbar-track {
+  background: #f8fafc !important;
+}
+.table-scrollbar-bottom::-webkit-scrollbar-thumb {
+  background: #cbd5e1 !important;
+  border-radius: 9999px !important;
+}
+.table-scrollbar-bottom::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8 !important;
+}
+
+
 
 @layer components {
   .brand-mark { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-[#1a3a6b] text-white shadow-[0_6px_14px_rgba(26,58,107,0.25)]; }

@@ -266,7 +266,7 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
     const stageAnalyticsMap: StageAnalytics[] = stagesToAnalyze.map((stage) => {
       if (stage === "Finished") {
         const finishedItemsList = filteredItems.filter(
-          (i) => i.currentStage === "Finished" || i.status === "Completed"
+          (i) => i.currentStage === "Finished" && i.status !== "Rejected"
         );
         const finishedSqm = finishedItemsList.reduce((acc, item) => acc + (item.sqm || 0), 0);
         const utilization =

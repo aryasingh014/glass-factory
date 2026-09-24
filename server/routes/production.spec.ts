@@ -892,4 +892,920 @@ describe("DLGU (Double Glazed Laminated Unit) Workflow Verification", () => {
     expect(responseData?.items?.length).toBe(1);
     expect(responseData?.rejectEntries?.length).toBe(1);
   });
+
+  it("should reject 1 clear pane of DLGU from Finished stage, un-link partner to LamPairing, and pair after re-cutting", async () => {
+    const { handleRejectItem, handlePairDlgu } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // Finished DLGU assembly: 1 Colour OP + 2 Clear IP
+    const opPane: any = {
+      id: "dlgu-fin-op",
+      serialNumber: "DLGU-OP-01",
+      barcode: "DLGU-OP-01",
+      piNumber: "PI-DLGU-FIN",
+      posNo: "9",
+      width: 1200,
+      height: 2400,
+      glassType: "8MM SUNGUARD SN GREY 50",
+      glassCategory: "DLGU",
+      colorOrClear: "Colour",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+
+    const ipPane1: any = {
+      id: "dlgu-fin-ip1",
+      serialNumber: "DLGU-IP1-01",
+      barcode: "DLGU-IP1-01",
+      piNumber: "PI-DLGU-FIN",
+      posNo: "9",
+      width: 1200,
+      height: 2400,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    const ipPane2: any = {
+      id: "dlgu-fin-ip2",
+      serialNumber: "DLGU-IP2-01",
+      barcode: "DLGU-IP2-01",
+      piNumber: "PI-DLGU-FIN",
+      posNo: "9",
+      width: 1200,
+      height: 2400,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(opPane, ipPane1, ipPane2);
+
+    // Reject 1 Clear pane (ipPane1)
+    const req: any = {
+      body: {
+        serialNumber: "DLGU-IP1-01",
+        singlePaneOnly: true,
+        defectivePane: "IP_PLY1",
+        reason: "Transit crack on inner pane",
+        operator: "Dispatch QC",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // ipPane1 is in Cutting / Reworking
+    expect(ipPane1.status).toBe("Reworking");
+    expect(ipPane1.currentStage).toBe("Cutting");
+
+    // ipPane2 (surviving Clear pane) is in Pairing / LamPairing ready for remake
+    expect(ipPane2.status).toBe("Pending");
+    expect(ipPane2.currentStage).toBe("Pairing");
+    expect(ipPane2.dlguPhase).toBe("LamPairing");
+    expect(ipPane2.completedStages).not.toContain("Lamination");
+
+    // opPane (surviving Colour pane) is in Pairing / DguPairing
+    expect(opPane.status).toBe("Pending");
+    expect(opPane.currentStage).toBe("Pairing");
+    expect(opPane.dlguPhase).toBe("DguPairing");
+
+    // Simulate cutting completion for ipPane1: moves to Pairing stage with completedStages = ["Cutting"]
+    ipPane1.currentStage = "Pairing";
+    ipPane1.status = "Pending";
+    ipPane1.completedStages = ["Cutting"];
+    ipPane1.dlguPhase = "LamPairing";
+
+    // Trigger handlePairDlgu to verify they pair together into Lamination Line
+    let pairResult: any = null;
+    const pairRes: any = {
+      json: (d: any) => { pairResult = d; },
+    };
+    handlePairDlgu({} as any, pairRes, () => {});
+
+    // Both Clear panes must advance to Lamination together
+    expect(ipPane1.currentStage).toBe("Lamination");
+    expect(ipPane2.currentStage).toBe("Lamination");
+    expect((ipPane1 as any).lamPairId).toBeDefined();
+    expect((ipPane1 as any).lamPairId).toBe((ipPane2 as any).lamPairId);
+  });
+
+  it("should reject BOTH clear panes of DLGU while keeping Colour OP pane intact in Pairing buffer", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const opPane: any = {
+      id: "dlgu-both-op",
+      serialNumber: "DLGU-BOTH-OP-01",
+      barcode: "DLGU-BOTH-OP-01",
+      piNumber: "PI-DLGU-BOTH",
+      posNo: "12",
+      width: 1000,
+      height: 2000,
+      glassType: "8MM SUNGUARD SN GREY 50",
+      glassCategory: "DLGU",
+      colorOrClear: "Colour",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "pair-dlgu-both-12",
+    };
+
+    const ipPane1: any = {
+      id: "dlgu-both-ip1",
+      serialNumber: "DLGU-BOTH-IP1-01",
+      barcode: "DLGU-BOTH-IP1-01",
+      piNumber: "PI-DLGU-BOTH",
+      posNo: "12",
+      width: 1000,
+      height: 2000,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      lamPairId: "lam-both-12",
+      dguPairId: "pair-dlgu-both-12",
+    };
+
+    const ipPane2: any = {
+      id: "dlgu-both-ip2",
+      serialNumber: "DLGU-BOTH-IP2-01",
+      barcode: "DLGU-BOTH-IP2-01",
+      piNumber: "PI-DLGU-BOTH",
+      posNo: "12",
+      width: 1000,
+      height: 2000,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      lamPairId: "lam-both-12",
+      dguPairId: "pair-dlgu-both-12",
+    };
+
+    glassItemsDatabase.push(opPane, ipPane1, ipPane2);
+
+    // Reject BOTH Clear panes (IP 1 + IP 2)
+    const req: any = {
+      body: {
+        serialNumber: "DLGU-BOTH-IP1-01",
+        serialNumbers: ["DLGU-BOTH-IP1-01", "DLGU-BOTH-IP2-01"],
+        singlePaneOnly: false,
+        defectivePane: "BOTH_CLEAR",
+        reason: "Autoclave lamination bubbles across both clear plies",
+        operator: "DGU Line QC",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // BOTH clear panes must be sent to Cutting for remake (status: Reworking by default autoRework)
+    expect(ipPane1.status).toBe("Reworking");
+    expect(ipPane1.currentStage).toBe("Cutting");
+    expect(ipPane2.status).toBe("Reworking");
+    expect(ipPane2.currentStage).toBe("Cutting");
+
+    // Colour OP pane MUST NOT be rejected! It should be un-linked and in Pairing buffer waiting for new clear pair
+    expect(opPane.status).toBe("Pending");
+    expect(opPane.currentStage).toBe("Pairing");
+    expect(opPane.dlguPhase).toBe("DguPairing");
+    expect((opPane as any).dguPairId).toBeUndefined();
+  });
+
+  it("should un-link Colour partner from a different batch/PI when Clear DLGU pane is rejected at Dispatch stage", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase, piDatabase } = await import("./pi");
+
+    const batch1022Pi: any = {
+      id: "test-pi-1022-cross",
+      piNumber: "PI-1022-CROSS",
+      customerName: "AL MAJAZ GLASS",
+      projectName: "HOTEL PROJECT",
+      totalItemsCount: 1,
+      completedItemsCount: 1,
+      status: "Completed",
+    };
+
+    const batch1023Pi: any = {
+      id: "test-pi-1023-cross",
+      piNumber: "PI-1023-CROSS",
+      customerName: "AL MAJAZ GLASS",
+      projectName: "HOTEL PROJECT",
+      totalItemsCount: 2,
+      completedItemsCount: 2,
+      status: "Completed",
+    };
+
+    piDatabase.push(batch1022Pi, batch1023Pi);
+
+    // Colour pane in Batch 1022
+    const colourPane: any = {
+      id: "item-col-cross-103",
+      serialNumber: "CROSS-S103",
+      barcode: "BC-CROSS-S103",
+      orderNo: "00821-CROSS",
+      obNo: "01361-CROSS",
+      piNumber: "PI-1022-CROSS",
+      piId: "test-pi-1022-cross",
+      posNo: "3",
+      width: 951,
+      height: 1601,
+      glassType: "8MM GUARDIAN SUNGUARD SN GREY 50 T",
+      glassCategory: "DLGU",
+      colorOrClear: "Colour",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+
+    // Two Clear panes in Batch 1023
+    const clearPane1: any = {
+      id: "item-clr-cross-001",
+      serialNumber: "CROSS-S001",
+      barcode: "BC-CROSS-S001",
+      orderNo: "00821-CROSS",
+      obNo: "01361-CROSS",
+      piNumber: "PI-1023-CROSS",
+      piId: "test-pi-1023-cross",
+      posNo: "3",
+      width: 951,
+      height: 1601,
+      glassType: "6MM CLEAR TEMPERED",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    const clearPane2: any = {
+      id: "item-clr-cross-002",
+      serialNumber: "CROSS-S002",
+      barcode: "BC-CROSS-S002",
+      orderNo: "00821-CROSS",
+      obNo: "01361-CROSS",
+      piNumber: "PI-1023-CROSS",
+      piId: "test-pi-1023-cross",
+      posNo: "3",
+      width: 951,
+      height: 1601,
+      glassType: "6MM CLEAR TEMPERED",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(colourPane, clearPane1, clearPane2);
+
+    // Reject 1 Clear pane (CROSS-S001) from Dispatch stage
+    const req: any = {
+      body: {
+        serialNumber: "CROSS-S001",
+        singlePaneOnly: true,
+        defectivePane: "IP_PLY1",
+        reason: "Edge chip found at dispatch",
+        operator: "Dispatch Inspector",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // CROSS-S001 is routed to Cutting for remake
+    expect(clearPane1.currentStage).toBe("Cutting");
+    expect(clearPane1.status).toBe("Reworking");
+
+    // Surviving Clear pane CROSS-S002 (Batch 1023) is pulled back to Glass Pairing & Buffer (Phase 1 LamPairing)
+    expect(clearPane2.currentStage).toBe("Pairing");
+    expect(clearPane2.status).toBe("Pending");
+    expect(clearPane2.dlguPhase).toBe("LamPairing");
+    expect(clearPane2.completedStages).not.toContain("Lamination");
+
+    // Surviving Colour pane CROSS-S103 (Batch 1022!) is pulled back to Glass Pairing & Buffer (Phase 2 DguPairing)
+    expect(colourPane.currentStage).toBe("Pairing");
+    expect(colourPane.status).toBe("Pending");
+    expect(colourPane.dlguPhase).toBe("DguPairing");
+    expect(colourPane.completedStages).not.toContain("DGU");
+    expect(colourPane.completedStages).not.toContain("Finished");
+
+    // Parent PI 1022 (Colour batch) status must return to "In Production" and completedItemsCount decremented to 0
+    expect(batch1022Pi.completedItemsCount).toBe(0);
+    expect(batch1022Pi.status).toBe("In Production");
+
+    // Parent PI 1023 (Clear batch) status must return to "In Production" and completedItemsCount decremented to 0
+    expect(batch1023Pi.completedItemsCount).toBe(0);
+    expect(batch1023Pi.status).toBe("In Production");
+  });
+
+  it("should reject BOTH clear panes of a DLGU unit, route both to Cutting (LamPairing), keep Colour in Pairing (DguPairing), and NOT touch unrelated clear units", async () => {
+    const { handleRejectItem } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // Unit 1: 1 Colour + 2 Clears (DLGU assembly at DGU stage)
+    const unit1Colour: any = {
+      id: "u1-col-15",
+      serialNumber: "U1-COL",
+      barcode: "U1-COL-BC",
+      piNumber: "PI-1022",
+      posNo: "15",
+      width: 740,
+      height: 2321,
+      glassType: "8MM GUARDIAN SUNGUARD SN GREY 50 T",
+      glassCategory: "DLGU",
+      colorOrClear: "Colour",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "dgu-pair-u1",
+    };
+
+    const unit1Clear1: any = {
+      id: "u1-clr1-15",
+      serialNumber: "U1-CLR1",
+      barcode: "U1-CLR1-BC",
+      piNumber: "PI-1023",
+      posNo: "15",
+      width: 740,
+      height: 2321,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      lamPairId: "lam-pair-u1",
+      dguPairId: "dgu-pair-u1",
+      dlguPhase: "DguPairing",
+    };
+
+    const unit1Clear2: any = {
+      id: "u1-clr2-15",
+      serialNumber: "U1-CLR2",
+      barcode: "U1-CLR2-BC",
+      piNumber: "PI-1023",
+      posNo: "15",
+      width: 740,
+      height: 2321,
+      glassType: "6MM CLEAR",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing", "Lamination", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      lamPairId: "lam-pair-u1",
+      dguPairId: "dgu-pair-u1",
+      dlguPhase: "DguPairing",
+    };
+
+    // Unit 2: An innocent second unit of Pos 15 currently in Lamination
+    const unit2Clear1: any = {
+      id: "u2-clr1-15",
+      serialNumber: "U2-CLR1",
+      barcode: "U2-CLR1-BC",
+      piNumber: "PI-1023",
+      posNo: "15",
+      width: 740,
+      height: 2321,
+      glassType: "13.52MM CLEAR LAMINATED",
+      glassCategory: "DLGU",
+      colorOrClear: "Clear",
+      currentStage: "Lamination",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
+      lamPairId: "lam-pair-u2",
+      dlguPhase: "LamPairing",
+    };
+
+    glassItemsDatabase.push(unit1Colour, unit1Clear1, unit1Clear2, unit2Clear1);
+
+    // Reject BOTH clear panes of Unit 1
+    const req: any = {
+      body: {
+        serialNumber: "U1-CLR1",
+        singlePaneOnly: false,
+        defectivePane: "BOTH_CLEAR",
+        reason: "Defective clear laminate plies",
+        operator: "DGU Quality Inspector",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleRejectItem(req, res, () => {});
+
+    // 1. BOTH clear panes of Unit 1 must go to Cutting as Reworking, and dlguPhase reset to LamPairing
+    expect(unit1Clear1.currentStage).toBe("Cutting");
+    expect(unit1Clear1.status).toBe("Reworking");
+    expect(unit1Clear1.dlguPhase).toBe("LamPairing");
+    expect(unit1Clear1.completedStages).toHaveLength(0);
+
+    expect(unit1Clear2.currentStage).toBe("Cutting");
+    expect(unit1Clear2.status).toBe("Reworking");
+    expect(unit1Clear2.dlguPhase).toBe("LamPairing");
+    expect(unit1Clear2.completedStages).toHaveLength(0);
+
+    // 2. Unit 1 Colour pane must wait in Pairing stage at DguPairing
+    expect(unit1Colour.currentStage).toBe("Pairing");
+    expect(unit1Colour.status).toBe("Pending");
+    expect(unit1Colour.dlguPhase).toBe("DguPairing");
+    expect(unit1Colour.completedStages).toEqual(["Cutting"]);
+
+    // 3. CRITICAL: Unit 2 Clear pane must NOT be affected or moved to Pairing buffer!
+    expect(unit2Clear1.currentStage).toBe("Lamination");
+    expect(unit2Clear1.status).toBe("In Progress");
+  });
+
+  it("should advance ONLY the selected DGU unit to Finished/Dispatch and never sweep other units of the same position", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // Unit 1 in DGU stage
+    const unit1Colour: any = {
+      id: "dgu-adv-u1-col",
+      serialNumber: "ADV-U1-COL",
+      barcode: "ADV-U1-COL-BC",
+      piNumber: "PI-DGU-ADV",
+      posNo: "20",
+      width: 800,
+      height: 1500,
+      glassType: "6MM GREY TINT",
+      glassCategory: "DGU",
+      colorOrClear: "Colour",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "dgu-pair-adv-1",
+    };
+
+    const unit1Clear: any = {
+      id: "dgu-adv-u1-clr",
+      serialNumber: "ADV-U1-CLR",
+      barcode: "ADV-U1-CLR-BC",
+      piNumber: "PI-DGU-ADV",
+      posNo: "20",
+      width: 800,
+      height: 1500,
+      glassType: "6MM CLEAR",
+      glassCategory: "DGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "dgu-pair-adv-1",
+    };
+
+    // Unit 2 in DGU stage (same position #20, same dimensions, same PI!)
+    const unit2Colour: any = {
+      id: "dgu-adv-u2-col",
+      serialNumber: "ADV-U2-COL",
+      barcode: "ADV-U2-COL-BC",
+      piNumber: "PI-DGU-ADV",
+      posNo: "20",
+      width: 800,
+      height: 1500,
+      glassType: "6MM GREY TINT",
+      glassCategory: "DGU",
+      colorOrClear: "Colour",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "dgu-pair-adv-2",
+    };
+
+    const unit2Clear: any = {
+      id: "dgu-adv-u2-clr",
+      serialNumber: "ADV-U2-CLR",
+      barcode: "ADV-U2-CLR-BC",
+      piNumber: "PI-DGU-ADV",
+      posNo: "20",
+      width: 800,
+      height: 1500,
+      glassType: "6MM CLEAR",
+      glassCategory: "DGU",
+      colorOrClear: "Clear",
+      currentStage: "DGU",
+      status: "In Progress",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      dguPairId: "dgu-pair-adv-2",
+    };
+
+    glassItemsDatabase.push(unit1Colour, unit1Clear, unit2Colour, unit2Clear);
+
+    // Operator advances ONLY Unit 1
+    const req: any = {
+      body: {
+        serialNumbers: ["ADV-U1-COL", "ADV-U1-CLR"],
+        operator: "DGU Station Operator",
+        remarks: "DGU Unit 1 completed assembly",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+
+    // Unit 1 panes MUST be completed and advanced to Finished
+    expect(unit1Colour.currentStage).toBe("Finished");
+    expect(unit1Colour.status).toBe("Completed");
+    expect(unit1Clear.currentStage).toBe("Finished");
+    expect(unit1Clear.status).toBe("Completed");
+
+    // Unit 2 panes MUST strictly remain in DGU stage!
+    expect(unit2Colour.currentStage).toBe("DGU");
+    expect(unit2Colour.status).toBe("In Progress");
+    expect(unit2Clear.currentStage).toBe("DGU");
+    expect(unit2Clear.status).toBe("In Progress");
+  });
 });
+
+describe("Dispatch Stage & Dispatched History Storage", () => {
+  it("should successfully dispatch finished units and mark them with isDispatched=true and lifelong metadata", async () => {
+    const { handleDispatchItems } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const finishedPane1: any = {
+      id: "DISP-PANE-1",
+      serialNumber: "SN-DISP-001",
+      barcode: "10126270013490001",
+      piNumber: "PI/TEST/DISP-1",
+      piId: "PI-DISP-1",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      glassCategory: "DGU",
+      dguPairId: "PAIR-DISP-100",
+      qty: 1,
+      sqm: 1.5,
+      isDispatched: false,
+    };
+
+    const finishedPane2: any = {
+      id: "DISP-PANE-2",
+      serialNumber: "SN-DISP-002",
+      barcode: "10126270013490002",
+      piNumber: "PI/TEST/DISP-1",
+      piId: "PI-DISP-1",
+      currentStage: "Finished",
+      status: "Completed",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      glassCategory: "DGU",
+      dguPairId: "PAIR-DISP-100",
+      qty: 1,
+      sqm: 1.5,
+      isDispatched: false,
+    };
+
+    glassItemsDatabase.push(finishedPane1, finishedPane2);
+
+    const req: any = {
+      body: {
+        serialNumbers: ["SN-DISP-001"], // Dispatching pane 1 will auto-include partner pane 2
+        dispatchNoteNo: "DN-TEST-9999",
+        vehicleNo: "DXB-7788",
+        driverName: "Ahmed",
+        remarks: "Delivered to construction site",
+        operator: "Dispatch Lead",
+      },
+    };
+
+    let responseData: any = null;
+    const res: any = {
+      status: (code: number) => ({ json: (d: any) => { responseData = { code, ...d }; } }),
+      json: (d: any) => { responseData = d; },
+    };
+
+    handleDispatchItems(req, res, () => {});
+
+    expect(responseData).toBeDefined();
+    expect(responseData.dispatchNoteNo).toBe("DN-TEST-9999");
+    expect(finishedPane1.isDispatched).toBe(true);
+    expect(finishedPane1.currentStage).toBe("Dispatched");
+    expect(finishedPane1.dispatchNoteNo).toBe("DN-TEST-9999");
+    expect(finishedPane1.vehicleNo).toBe("DXB-7788");
+    expect(finishedPane1.dispatchedAt).toBeDefined();
+
+    // Partner pane must also be dispatched together
+    expect(finishedPane2.isDispatched).toBe(true);
+    expect(finishedPane2.currentStage).toBe("Dispatched");
+    expect(finishedPane2.dispatchNoteNo).toBe("DN-TEST-9999");
+
+    // Dashboard stats must NOT show dispatched items in cutting, pairing, dgu, lamination, or finished
+    const { handleGetDashboardStats } = await import("./production");
+    let statsData: any = null;
+    const statsRes: any = { json: (d: any) => { statsData = d; } };
+    handleGetDashboardStats({} as any, statsRes, () => {});
+    const dispItemsInStats = statsData.items.filter((i: any) => i.id === "DISP-PANE-1" || i.id === "DISP-PANE-2");
+    expect(dispItemsInStats.every((i: any) => i.isDispatched && i.currentStage === "Dispatched")).toBe(true);
+    expect(statsData.dispatchedItems).toBeGreaterThanOrEqual(1);
+
+    // Clean up to prevent affecting subsequent tests
+    const idx1 = glassItemsDatabase.indexOf(finishedPane1);
+    if (idx1 !== -1) glassItemsDatabase.splice(idx1, 1);
+    const idx2 = glassItemsDatabase.indexOf(finishedPane2);
+    if (idx2 !== -1) glassItemsDatabase.splice(idx2, 1);
+  });
+
+  it("should correctly split multi-customer and multi-project sticker batches into dedicated customer sub-batches", async () => {
+    const { handleStickerUpload } = await import("./production");
+    const { piDatabase, glassItemsDatabase } = await import("./pi");
+
+    const mockReq: any = {
+      body: {
+        batchTitle: "TEST-MIX-101",
+        batchNo: "101",
+        fileName: "Test_Mix_Unique_101.pdf",
+        colorOrClear: "Clear",
+        glassCategory: "DGU",
+        items: [
+          // Ashbilia item - DISTRICT_O
+          {
+            stickerNo: 1,
+            orderNo: "1997",
+            obNo: "3360",
+            sfoNo: "201666",
+            batchNo: "101",
+            posNo: "49",
+            qty: 1,
+            width: 1790,
+            height: 3764,
+            glassCode: "AL 10 L 2098 GL 01 0",
+            glassType: "8MM CLEAR",
+            customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
+            projectName: "DISTRICT_O",
+          },
+          // Meraki item 1 - DISTRICT_O
+          {
+            stickerNo: 2,
+            orderNo: "2311",
+            obNo: "4250",
+            sfoNo: "15211",
+            batchNo: "101",
+            posNo: "3",
+            qty: 2,
+            width: 738,
+            height: 1144,
+            glassCode: "5C AL11 GL01 SK 02 S",
+            glassType: "8MM CLEAR WITH SANDBLASTING",
+            customerName: "MERAKI FACADE AND GLAZING SYSTEMS L.L.C",
+            projectName: "DISTRICT_O",
+          },
+          // Meraki item 2 - HAVEN_BY_A
+          {
+            stickerNo: 3,
+            orderNo: "1722",
+            obNo: "3123",
+            sfoNo: "15194",
+            batchNo: "101",
+            posNo: "3",
+            qty: 1,
+            width: 947,
+            height: 2668,
+            glassCode: "WD6 3 GL SH1 SEJALFA",
+            glassType: "8MM CLEAR",
+            customerName: "MERAKI FACADE AND GLAZING SYSTEMS L.L.C",
+            projectName: "HAVEN_BY_A",
+          },
+        ],
+      },
+    };
+
+    let responseData: any = null;
+    const mockRes: any = {
+      status: () => mockRes,
+      json: (data: any) => {
+        responseData = data;
+      },
+    };
+
+    await handleStickerUpload(mockReq, mockRes, () => {});
+
+    expect(responseData).toBeDefined();
+    expect(responseData.subBatches).toBeDefined();
+    expect(responseData.subBatches.length).toBe(3);
+
+    // Verify sub-batch PI numbers and customers
+    const ashbiliaBatch = responseData.subBatches.find((b: any) => b.customerName === "ASHBILIA ALUMINIUM & GLASS L.L.C");
+    expect(ashbiliaBatch).toBeDefined();
+    expect(ashbiliaBatch.piNumber).toBe("TEST-MIX-101-ASHBILIA");
+    expect(ashbiliaBatch.projectName).toBe("DISTRICT_O");
+    expect(ashbiliaBatch.itemsCount).toBe(1);
+
+    const merakiDistrictBatch = responseData.subBatches.find(
+      (b: any) => b.customerName === "MERAKI FACADE AND GLAZING SYSTEMS L.L.C" && b.projectName === "DISTRICT_O"
+    );
+    expect(merakiDistrictBatch).toBeDefined();
+    expect(merakiDistrictBatch.piNumber).toBe("TEST-MIX-101-MERAKI-DISTRICT_O");
+    expect(merakiDistrictBatch.itemsCount).toBe(1);
+
+    const merakiHavenBatch = responseData.subBatches.find(
+      (b: any) => b.customerName === "MERAKI FACADE AND GLAZING SYSTEMS L.L.C" && b.projectName === "HAVEN_BY_A"
+    );
+    expect(merakiHavenBatch).toBeDefined();
+    expect(merakiHavenBatch.piNumber).toBe("TEST-MIX-101-MERAKI-HAVEN_BY_A");
+    expect(merakiHavenBatch.itemsCount).toBe(1);
+
+    // Verify individual GlassItems have customerName and projectName populated
+    const importedItems = responseData.items;
+    expect(importedItems.length).toBe(3);
+    const ashItem = importedItems.find((i: any) => i.customerName === "ASHBILIA ALUMINIUM & GLASS L.L.C");
+    expect(ashItem).toBeDefined();
+    expect(ashItem.projectName).toBe("DISTRICT_O");
+    expect(ashItem.piNumber).toBe("TEST-MIX-101-ASHBILIA");
+    expect(ashItem.batchNo).toBe("101");
+
+    // Clean up created test items and sub-batches
+    responseData.subBatches.forEach((sb: any) => {
+      const pIdx = piDatabase.findIndex((p) => p.id === sb.id);
+      if (pIdx !== -1) piDatabase.splice(pIdx, 1);
+    });
+    importedItems.forEach((it: any) => {
+      const iIdx = glassItemsDatabase.findIndex((g) => g.id === it.id);
+      if (iIdx !== -1) glassItemsDatabase.splice(iIdx, 1);
+    });
+  });
+
+  it("should keep single batch structure for single-customer PDF uploads without adding suffixes", async () => {
+    const { handleStickerUpload } = await import("./production");
+    const { piDatabase, glassItemsDatabase } = await import("./pi");
+
+    const mockReq: any = {
+      body: {
+        batchTitle: "9911",
+        batchNo: "9911",
+        fileName: "Single_Customer_Test.pdf",
+        customerName: "AL MAJAZ GLASS",
+        projectName: "HOTEL PROJECT",
+        colorOrClear: "Clear",
+        glassCategory: "DGU",
+        items: [
+          {
+            stickerNo: 1,
+            orderNo: "001",
+            obNo: "002",
+            posNo: "1",
+            qty: 1,
+            width: 1000,
+            height: 1500,
+            glassCode: "GL-01",
+            glassType: "6MM CLEAR TEMPERED",
+            customerName: "AL MAJAZ GLASS",
+            projectName: "HOTEL PROJECT",
+          },
+        ],
+      },
+    };
+
+    let responseData: any = null;
+    const mockRes: any = {
+      status: () => mockRes,
+      json: (data: any) => {
+        responseData = data;
+      },
+    };
+
+    await handleStickerUpload(mockReq, mockRes, () => {});
+
+    expect(responseData).toBeDefined();
+    expect(responseData.batch).toBeDefined();
+    expect(responseData.batch.piNumber).toBe("9911"); // No suffix added
+    expect(responseData.batch.customerName).toBe("AL MAJAZ GLASS");
+
+    // Clean up
+    const pIdx = piDatabase.findIndex((p) => p.id === responseData.batch.id);
+    if (pIdx !== -1) piDatabase.splice(pIdx, 1);
+    const iIdx = glassItemsDatabase.findIndex((g) => g.piId === responseData.batch.id);
+    if (iIdx !== -1) glassItemsDatabase.splice(iIdx, 1);
+  });
+
+  it("should match DGU pairs within the same customer and project and reject cross-customer pairing", async () => {
+    const { isStickerPairMatch } = await import("./production");
+
+    // Ashbilia Emicool Colour pane (from Mix2)
+    const ashbiliaColourPane: any = {
+      orderNo: "1997",
+      obNo: "3360",
+      posNo: "49",
+      width: 1790,
+      height: 3764,
+      glassCode: "AL 10 L 2098 GL 01 0",
+      glassType: "8MM EMICOOL DSR III ON CLEAR",
+      glassCategory: "DGU",
+      category: "Coloured Glass",
+      colorOrClear: "Colour",
+      customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
+      projectName: "DISTRICT_O",
+    };
+
+    // Ashbilia Clear pane (from Mix1)
+    const ashbiliaClearPane: any = {
+      orderNo: "1997",
+      obNo: "3360",
+      posNo: "49",
+      width: 1790,
+      height: 3764,
+      glassCode: "AL 10 L 2098 GL 01 0",
+      glassType: "8MM CLEAR",
+      glassCategory: "DGU",
+      category: "Clear Glass",
+      colorOrClear: "Clear",
+      customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
+      projectName: "DISTRICT_O",
+    };
+
+    // Meraki Clear pane with identical dimensions and order to test cross-customer isolation
+    const merakiClearPane: any = {
+      orderNo: "1997",
+      obNo: "3360",
+      posNo: "49",
+      width: 1790,
+      height: 3764,
+      glassCode: "AL 10 L 2098 GL 01 0",
+      glassType: "8MM CLEAR",
+      glassCategory: "DGU",
+      category: "Clear Glass",
+      colorOrClear: "Clear",
+      customerName: "MERAKI FACADE AND GLAZING SYSTEMS L.L.C",
+      projectName: "DISTRICT_O",
+    };
+
+    // Meraki pane with different project
+    const merakiDifferentProjectPane: any = {
+      orderNo: "1997",
+      obNo: "3360",
+      posNo: "49",
+      width: 1790,
+      height: 3764,
+      glassCode: "AL 10 L 2098 GL 01 0",
+      glassType: "8MM CLEAR",
+      glassCategory: "DGU",
+      category: "Clear Glass",
+      colorOrClear: "Clear",
+      customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
+      projectName: "HAVEN_BY_A",
+    };
+
+    // Same customer & project => PASS
+    expect(isStickerPairMatch(ashbiliaColourPane, ashbiliaClearPane)).toBe(true);
+
+    // Cross customer => FAIL
+    expect(isStickerPairMatch(ashbiliaColourPane, merakiClearPane)).toBe(false);
+
+    // Cross project => FAIL
+    expect(isStickerPairMatch(ashbiliaColourPane, merakiDifferentProjectPane)).toBe(false);
+  });
+});
+

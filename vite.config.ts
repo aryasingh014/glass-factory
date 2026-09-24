@@ -8,20 +8,48 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    allowedHosts: [
-      ".ngrok-free.dev",
-      ".ngrok.io",
-      ".trycloudflare.com",
-      "altitude-quintuple-compile.ngrok-free.dev",
-      "zoology-collector-unelected.ngrok-free.dev",
-    ],
+    allowedHosts: true, // Allow all ngrok and tunnel hosts automatically
     fs: {
       allow: ["./client", "./shared", "index.html"],
       deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
     },
   },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "lucide-react",
+      "recharts",
+      "xlsx",
+      "pdfjs-dist",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-select",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-tooltip",
+      "sonner",
+      "clsx",
+      "tailwind-merge",
+    ],
+  },
   build: {
     outDir: "dist/spa",
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("pdfjs-dist")) return "vendor-pdfjs";
+            if (id.includes("xlsx")) return "vendor-xlsx";
+            if (id.includes("recharts")) return "vendor-charts";
+            if (id.includes("lucide-react")) return "vendor-icons";
+            if (id.includes("react/") || id.includes("react-dom/") || id.includes("react-router-dom/")) {
+              return "vendor-react";
+            }
+          }
+        },
+      },
+    },
   },
   plugins: [react(), expressPlugin()],
   resolve: {

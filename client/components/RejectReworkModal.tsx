@@ -6,17 +6,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertOctagon, RefreshCw, Factory } from "lucide-react";
 import { GlassItem, ProductionStage } from "@shared/api";
 import { toast } from "sonner";
-import { getItemFinish, getGlassPaneRole } from "@/lib/utils";
+import { getItemFinish, getGlassPaneRole, isDlguGlass, isDguGlass, isLaminatedGlass } from "@/lib/utils";
 
 interface RejectReworkModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: "reject" | "rework";
   item: GlassItem | null;
+  allItems?: GlassItem[];
   onSuccess: () => void;
 }
 
 export const DEFECT_ORIGIN_STATIONS = [
+  "Transit / Delivery to Customer",
+  "Finished Goods / Dispatch Warehouse",
+  "Customer Site / Unloading Damage",
   "Tempering Furnace / Toughening",
   "Edging / CNC / Grinding / Drilling",
   "Cutting Table",
@@ -28,6 +32,10 @@ export const DEFECT_ORIGIN_STATIONS = [
 ];
 
 const REJECT_REASONS = [
+  "Transit / Delivery: Broken in Transit / Customer Delivery",
+  "Dispatch / Handling: Broken during Stillage Loading / Transport",
+  "Customer Site: Broken on Arrival / Unloading Damage",
+  "Final Inspection / Dispatch Warehouse Defect",
   "Tempering: Furnace Breakage / Explosion",
   "Tempering: Roller Wave / Optical Distortion",
   "Tempering: White Haze / Surface Burn",
@@ -46,7 +54,6 @@ const REJECT_REASONS = [
 ];
 
 // Active processing stages available for rework target selection.
-// Note: "Finished" is intentionally excluded as rework targets must be active processing workstations.
 const REWORK_TARGET_STAGES: Exclude<ProductionStage, "Finished">[] = ["Cutting", "DGU", "Lamination"];
 
 export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
@@ -54,9 +61,10 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   onOpenChange,
   mode,
   item,
+  allItems = [],
   onSuccess,
 }) => {
-  const [defectStation, setDefectStation] = useState<string>("Tempering Furnace / Toughening");
+  const [defectStation, setDefectStation] = useState<string>("Transit / Delivery to Customer");
   const [reason, setReason] = useState(REJECT_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
   const [targetStage, setTargetStage] = useState<ProductionStage>("Cutting");
@@ -67,53 +75,202 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   if (!item) return null;
 
   const partnerItem = (item as any).partnerItem as GlassItem | undefined;
-  const allSerials = ((item as any).allSerials as string[] | undefined) || (partnerItem ? [item.serialNumber, partnerItem.serialNumber] : [item.serialNumber]);
-  const isPairUnit = Boolean(partnerItem || (allSerials && allSerials.length > 1) || (item as any).isDguPair || item.currentStage === "DGU" || item.currentStage === "Lamination");
-  const glassCat = (item as any).glassCategory || item.glassType;
+  const glassCat = (item as any).glassCategory || item.glassType || "";
+
+  const isDlgu = Boolean(
+    glassCat === "DLGU" ||
+    (item as any).glassCategory === "DLGU" ||
+    isDlguGlass(item) ||
+    partnerItem?.glassCategory === "DLGU" ||
+    /dlgu/i.test(item.category || "") ||
+    /dlgu/i.test(item.glassType || "") ||
+    (/laminated/i.test(item.glassType || "") && /dgu|dlgu/i.test(item.glassType || item.category || ""))
+  );
+
+  const isDgu = Boolean(
+    !isDlgu &&
+    (isDguGlass(item) ||
+      item.glassCategory === "DGU" ||
+      (item as any).glassCategory === "DGU" ||
+      /dgu/i.test(item.category || "") ||
+      item.processRoute?.includes("DGU"))
+  );
+
+  const isLam = Boolean(
+    !isDlgu &&
+    !isDgu &&
+    (isLaminatedGlass(item) ||
+      item.glassCategory === "Lamination" ||
+      (item as any).glassCategory === "Lamination" ||
+      /lamination/i.test(item.category || "") ||
+      item.processRoute?.includes("Lamination"))
+  );
+
+  const isCompositeUnit = Boolean(
+    isDlgu ||
+    isDgu ||
+    isLam ||
+    partnerItem ||
+    ((item as any).allSerials && (item as any).allSerials.length > 1) ||
+    (item as any).isDguPair ||
+    item.currentStage === "DGU" ||
+    item.currentStage === "Lamination"
+  );
+
+  const isPairUnit = isCompositeUnit;
+
+  // Sibling panes lookup — finds the other physical panes that belong to the SAME unit as `item`.
+  // Priority: (1) shared dguPairId, (2) shared lamPairId, (3) positional fallback scoped to same stage.
+  // Always excludes `item` itself and Rejected panes.
+  const siblingPanes = React.useMemo(() => {
+    if (!allItems || allItems.length === 0 || !item) return [];
+
+    const dguPairId = (item as any).dguPairId;
+    const lamPairId = (item as any).lamPairId;
+
+    // 1. Tightest bond: shared dguPairId (all 3 panes of a DLGU unit share this after Phase-2 pairing)
+    if (dguPairId) {
+      const byDguPair = allItems.filter(
+        (other) =>
+          other.id !== item.id &&
+          other.serialNumber !== item.serialNumber &&
+          other.status !== "Rejected" &&
+          (other as any).dguPairId === dguPairId
+      );
+      if (byDguPair.length > 0) return byDguPair;
+    }
+
+    // 2. lamPairId (links the 2 clear panes during Phase-1 / Lamination stage)
+    if (lamPairId) {
+      const byLamPair = allItems.filter(
+        (other) =>
+          other.id !== item.id &&
+          other.serialNumber !== item.serialNumber &&
+          other.status !== "Rejected" &&
+          (other as any).lamPairId === lamPairId
+      );
+      if (byLamPair.length > 0) return byLamPair;
+    }
+
+    // 3. Positional fallback: same posNo + PI + dimensions + same currentStage (avoids picking a
+    //    pane from a different unit at the same position that's at a different production stage).
+    return allItems.filter(
+      (other) =>
+        other.id !== item.id &&
+        other.serialNumber !== item.serialNumber &&
+        other.status !== "Rejected" &&
+        other.posNo === item.posNo &&
+        other.currentStage === item.currentStage &&
+        (other.piId === item.piId || other.piNumber === item.piNumber || other.sfoNo === item.sfoNo) &&
+        Math.abs((other.width || 0) - (item.width || 0)) < 2 &&
+        Math.abs((other.height || 0) - (item.height || 0)) < 2
+    );
+  }, [allItems, item]);
+
+  // DLGU Panes (1 Colour OP + 2 Clear IP)
+  const dlguPanes = React.useMemo(() => {
+    if (!isDlgu) return { opItem: null, ip1Item: null, ip2Item: null, allSerials: [] };
+    const colours = siblingPanes.filter((p) => getItemFinish(p) === "Colour");
+    const clears = siblingPanes.filter((p) => getItemFinish(p) === "Clear");
+
+    const op = getItemFinish(item) === "Colour" ? item : (colours[0] || partnerItem || null);
+    
+    let ip1: GlassItem | null = null;
+    let ip2: GlassItem | null = null;
+
+    if (getItemFinish(item) === "Clear") {
+      ip1 = item;
+      const otherClear = clears.find((c) => c.serialNumber !== item.serialNumber && c.id !== item.id) || clears[1];
+      ip2 = otherClear || (partnerItem && partnerItem.serialNumber !== item.serialNumber ? partnerItem : null);
+    } else {
+      ip1 = clears[0] || (partnerItem && getItemFinish(partnerItem) === "Clear" ? partnerItem : null);
+      ip2 = clears[1] || (clears[0] && clears.length > 1 ? clears[1] : null);
+    }
+
+    const serials = [op?.serialNumber, ip1?.serialNumber, ip2?.serialNumber].filter(Boolean) as string[];
+    return { opItem: op, ip1Item: ip1, ip2Item: ip2, allSerials: serials };
+  }, [isDlgu, siblingPanes, item, partnerItem]);
+
+  // DGU Panes (1 Colour OP + 1 Clear IP)
+  const dguPanes = React.useMemo(() => {
+    if (!isDgu) return { opItem: null, ipItem: null, allSerials: [] };
+    const colours = siblingPanes.filter((p) => getItemFinish(p) === "Colour");
+    const clears = siblingPanes.filter((p) => getItemFinish(p) === "Clear");
+
+    const op = getItemFinish(item) === "Colour" ? item : (colours[0] || partnerItem || null);
+    const ip = getItemFinish(item) === "Clear" ? item : (clears[0] || partnerItem || null);
+    const serials = [op?.serialNumber, ip?.serialNumber].filter(Boolean) as string[];
+    return { opItem: op, ipItem: ip, allSerials: serials };
+  }, [isDgu, siblingPanes, item, partnerItem]);
+
+  // Lamination Panes (2 Clear Panes)
+  const lamPanes = React.useMemo(() => {
+    if (!isLam) return { ply1Item: null, ply2Item: null, allSerials: [] };
+    const clears = siblingPanes;
+    const ply1 = item;
+    const ply2 = clears.find((c) => c.serialNumber !== item.serialNumber && c.id !== item.id) || partnerItem || null;
+    const serials = [ply1?.serialNumber, ply2?.serialNumber].filter(Boolean) as string[];
+    return { ply1Item: ply1, ply2Item: ply2, allSerials: serials };
+  }, [isLam, siblingPanes, item, partnerItem]);
 
   const primaryRole = getGlassPaneRole(item);
   const primaryFinish = getItemFinish(item);
   const partnerRole = partnerItem ? getGlassPaneRole(partnerItem) : null;
   const partnerFinish = partnerItem ? getItemFinish(partnerItem) : null;
 
-  const isDlgu = Boolean(
-    glassCat === "DLGU" ||
-    (item as any).glassCategory === "DLGU" ||
-    partnerItem?.glassCategory === "DLGU" ||
-    /dlgu/i.test(item.glassType || "") ||
-    /laminated/i.test(item.glassType || partnerItem?.glassType || "")
-  );
-
-  const isPrimaryOp = primaryRole.code === "OP";
-  const opItem = isPrimaryOp ? item : partnerItem;
-  const ipItem = isPrimaryOp ? partnerItem : item;
+  const allSerials = React.useMemo(() => {
+    if (isDlgu && dlguPanes.allSerials.length > 0) return dlguPanes.allSerials;
+    if (isDgu && dguPanes.allSerials.length > 0) return dguPanes.allSerials;
+    if (isLam && lamPanes.allSerials.length > 0) return lamPanes.allSerials;
+    if ((item as any).allSerials && Array.isArray((item as any).allSerials)) return (item as any).allSerials;
+    if (partnerItem) return [item.serialNumber, partnerItem.serialNumber];
+    return [item.serialNumber];
+  }, [isDlgu, isDgu, isLam, dlguPanes, dguPanes, lamPanes, item, partnerItem]);
 
   // Sync / Reset initial selection when modal opens or item changes
   React.useEffect(() => {
     if (open) {
       if (isDlgu) {
-        setSelectedDefectivePane("OP");
+        if (getItemFinish(item) === "Clear") {
+          setSelectedDefectivePane("IP_PLY1");
+        } else {
+          setSelectedDefectivePane("OP");
+        }
+      } else if (isDgu) {
+        if (getItemFinish(item) === "Clear") {
+          setSelectedDefectivePane("IP");
+        } else {
+          setSelectedDefectivePane("OP");
+        }
+      } else if (isLam) {
+        setSelectedDefectivePane("IP_PLY1");
       } else if (isPairUnit) {
         setSelectedDefectivePane("PRIMARY");
       } else {
         setSelectedDefectivePane(primaryRole.code || "SINGLE");
       }
-      // Smartly set default station based on item context if applicable
-      if (item?.currentStage === "DGU") {
+
+      // Smartly set default station based on item context
+      if (item?.currentStage === "Finished" || item?.status === "Completed") {
+        setDefectStation("Transit / Delivery to Customer");
+        setReason("Transit / Delivery: Broken in Transit / Customer Delivery");
+      } else if (item?.currentStage === "DGU") {
         setDefectStation("DGU Assembly Line");
+        setReason("Spacer Misalignment / Primary Seal Defect");
       } else if (item?.currentStage === "Lamination") {
         setDefectStation("Lamination Line / Autoclave");
+        setReason("Lamination: Delamination / Interlayer Bubble");
       } else {
         setDefectStation("Tempering Furnace / Toughening");
+        setReason("Tempering: Furnace Breakage / Explosion");
       }
       setCustomReason("");
-      setReason(REJECT_REASONS[0]);
     }
-  }, [open, item?.id, item?.serialNumber, item?.currentStage]);
+  }, [open, item?.id, item?.serialNumber, item?.currentStage, isDlgu, isDgu, isLam, isPairUnit]);
 
   // Dynamically resolve the active pane details based on current selection
   const activePaneInfo = React.useMemo(() => {
-    if (!isPairUnit) {
+    if (!isPairUnit && !isDlgu && !isDgu && !isLam) {
       return {
         badgeText: `${primaryRole.code} • ${primaryRole.name}`,
         badgeClass: primaryRole.colorClass,
@@ -131,124 +288,207 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
     if (isDlgu) {
       if (selectedDefectivePane === "OP") {
+        const op = dlguPanes.opItem || item;
         return {
           badgeText: "OP • OUTER PANE",
           badgeClass: "bg-purple-100 text-purple-800 border-purple-200",
           finishText: "OP • Colour",
           finishClass: "bg-purple-100 text-purple-800 border-purple-200",
-          serialNumber: opItem?.serialNumber || item.serialNumber,
-          glassType: opItem?.glassType || "8MM GUARDIAN SUNGUARD SN GREY 50 T",
-          glassCode: opItem?.glassCode || opItem?.itemCode || item.itemCode,
+          serialNumber: op?.serialNumber || item.serialNumber,
+          glassType: op?.glassType || "8MM GUARDIAN SUNGUARD SN GREY 50 T",
+          glassCode: op?.glassCode || op?.itemCode || item.itemCode,
           paneTitle: "Outer Pane (Coated / Face A)",
-          width: opItem?.width || item.width,
-          height: opItem?.height || item.height,
+          width: op?.width || item.width,
+          height: op?.height || item.height,
           roleCode: "OP",
         };
       }
-      if (selectedDefectivePane === "IP_PLY1") {
+      if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "IP1") {
+        const ip1 = dlguPanes.ip1Item || item;
         return {
-          badgeText: "IP • INNER LAMI PLY 1",
+          badgeText: "IP 1 • INNER LAMI PLY 1",
           badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
-          finishText: "IP • Ply 1 (Clear)",
+          finishText: "IP 1 • Clear",
           finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
-          serialNumber: ipItem?.serialNumber || item.serialNumber,
-          glassType: ipItem?.glassType || "6MM CLEAR (Front Laminated Pane)",
-          glassCode: ipItem?.glassCode || ipItem?.itemCode || item.itemCode,
+          serialNumber: ip1?.serialNumber || item.serialNumber,
+          glassType: ip1?.glassType || "6MM CLEAR (Front Laminated Pane)",
+          glassCode: ip1?.glassCode || ip1?.itemCode || item.itemCode,
           paneTitle: "Inner Lami Lite 1 (Front Clear Float)",
-          width: ipItem?.width || item.width,
-          height: ipItem?.height || item.height,
+          width: ip1?.width || item.width,
+          height: ip1?.height || item.height,
           roleCode: "IP",
         };
       }
-      if (selectedDefectivePane === "IP_PLY2") {
+      if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "IP2") {
+        const ip2 = dlguPanes.ip2Item;
         return {
-          badgeText: "IP • INNER LAMI PLY 2",
+          badgeText: "IP 2 • INNER LAMI PLY 2",
           badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
-          finishText: "IP • Ply 2 (Clear)",
+          finishText: "IP 2 • Clear",
           finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
-          serialNumber: ipItem ? `${ipItem.serialNumber}-B` : `${item.serialNumber}-B`,
-          glassType: ipItem?.glassType || "6MM CLEAR (Back Laminated Pane)",
-          glassCode: ipItem?.glassCode || ipItem?.itemCode || item.itemCode,
+          serialNumber: ip2?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`),
+          glassType: ip2?.glassType || "6MM CLEAR (Back Laminated Pane)",
+          glassCode: ip2?.glassCode || ip2?.itemCode || item.itemCode,
           paneTitle: "Inner Lami Lite 2 (Back Clear Float)",
-          width: ipItem?.width || item.width,
-          height: ipItem?.height || item.height,
+          width: ip2?.width || item.width,
+          height: ip2?.height || item.height,
           roleCode: "IP",
         };
       }
-      // ASSEMBLY
+      if (selectedDefectivePane === "BOTH_CLEAR" || selectedDefectivePane === "BOTH_IP" || selectedDefectivePane === "IP_BOTH") {
+        const ip1 = dlguPanes.ip1Item || (getItemFinish(item) === "Clear" ? item : null);
+        const ip1Serial = ip1?.serialNumber || (getItemFinish(item) === "Clear" ? item.serialNumber : "IP1");
+        const ip2Serial = dlguPanes.ip2Item?.serialNumber || (ip1?.serialNumber ? `${ip1.serialNumber}-B` : `${item.serialNumber}-B`);
+        return {
+          badgeText: "BOTH CLEAR • INNER LAMI (IP 1 + IP 2)",
+          badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          finishText: "Both Clears (IP 1 + IP 2)",
+          finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          serialNumber: `${ip1Serial} & ${ip2Serial}`,
+          glassType: ip1?.glassType || "6MM CLEAR (Both Inner Laminated Panes)",
+          glassCode: ip1?.glassCode || ip1?.itemCode || item.itemCode,
+          paneTitle: "Both Inner Lami Panes (IP 1 + IP 2 • Front & Back Clear)",
+          width: item.width,
+          height: item.height,
+          roleCode: "BOTH_CLEAR",
+        };
+      }
+      // FULL DLGU UNIT
       return {
-        badgeText: "WHOLE UNIT • ASSEMBLY",
-        badgeClass: "bg-slate-100 text-slate-700 border-slate-300",
-        finishText: "Complete DLGU Unit",
-        finishClass: "bg-slate-100 text-slate-700 border-slate-200",
+        badgeText: "FULL GLASS • WHOLE DLGU UNIT",
+        badgeClass: "bg-red-100 text-red-800 border-red-200",
+        finishText: "Full DLGU Unit (3 Panes)",
+        finishClass: "bg-red-100 text-red-800 border-red-200",
         serialNumber: allSerials.join(" + "),
-        glassType: item.glassType || "DLGU 3-Pane Unit",
+        glassType: item.glassType || "DLGU 3-Pane Unit (OP + IP1 + IP2)",
         glassCode: item.itemCode,
-        paneTitle: "Unit Assembly / Spacer / Interlayer",
+        paneTitle: "Full DLGU Unit (All 3 Panes)",
         width: item.width,
         height: item.height,
         roleCode: "UNIT",
       };
     }
 
-    // Standard 2-Pane Pair
-    if (selectedDefectivePane === "PRIMARY") {
+    if (isDgu) {
+      if (selectedDefectivePane === "OP") {
+        const op = dguPanes.opItem || item;
+        return {
+          badgeText: "OP • OUTER PANE",
+          badgeClass: "bg-purple-100 text-purple-800 border-purple-200",
+          finishText: "OP • Colour",
+          finishClass: "bg-purple-100 text-purple-800 border-purple-200",
+          serialNumber: op?.serialNumber || item.serialNumber,
+          glassType: op?.glassType || "Coated / Colour Glass Lite",
+          glassCode: op?.glassCode || item.itemCode,
+          paneTitle: "Outer Pane (Coated / Colour)",
+          width: op?.width || item.width,
+          height: op?.height || item.height,
+          roleCode: "OP",
+        };
+      }
+      if (selectedDefectivePane === "IP") {
+        const ip = dguPanes.ipItem || item;
+        return {
+          badgeText: "IP • INNER PANE",
+          badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          finishText: "IP • Clear",
+          finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          serialNumber: ip?.serialNumber || item.serialNumber,
+          glassType: ip?.glassType || "Clear Float Glass Lite",
+          glassCode: ip?.glassCode || item.itemCode,
+          paneTitle: "Inner Pane (Clear Float)",
+          width: ip?.width || item.width,
+          height: ip?.height || item.height,
+          roleCode: "IP",
+        };
+      }
       return {
-        badgeText: `${primaryRole.code} • ${primaryRole.name}`,
-        badgeClass: primaryRole.colorClass,
-        finishText: `${primaryRole.code} • ${primaryFinish}`,
-        finishClass: primaryFinish === "Colour" ? "bg-purple-100 text-purple-800 border-purple-200" : "bg-cyan-100 text-cyan-800 border-cyan-200",
-        serialNumber: item.serialNumber,
-        glassType: item.glassType || item.glassCode || "Glass Lite",
-        glassCode: item.glassCode || item.itemCode,
-        paneTitle: primaryRole.name,
+        badgeText: "FULL GLASS • WHOLE DGU UNIT",
+        badgeClass: "bg-red-100 text-red-800 border-red-200",
+        finishText: "Full DGU Unit (Both Panes)",
+        finishClass: "bg-red-100 text-red-800 border-red-200",
+        serialNumber: allSerials.join(" + "),
+        glassType: item.glassType || "DGU 2-Pane Unit (OP + IP)",
+        glassCode: item.itemCode,
+        paneTitle: "Full DGU Unit (Both Panes)",
         width: item.width,
         height: item.height,
-        roleCode: primaryRole.code,
-      };
-    }
-    if (selectedDefectivePane === "PARTNER") {
-      const code = partnerRole?.code || (primaryRole.code === "OP" ? "IP" : "OP");
-      const name = partnerRole?.name || (code === "OP" ? "Outer Pane" : "Inner Pane");
-      const finish = partnerFinish || (code === "OP" ? "Colour" : "Clear");
-      const colorClass = partnerRole?.colorClass || (code === "OP" ? "bg-purple-100 text-purple-800 border-purple-200" : "bg-cyan-100 text-cyan-800 border-cyan-200");
-      return {
-        badgeText: `${code} • ${name}`,
-        badgeClass: colorClass,
-        finishText: `${code} • ${finish}`,
-        finishClass: finish === "Colour" ? "bg-purple-100 text-purple-800 border-purple-200" : "bg-cyan-100 text-cyan-800 border-cyan-200",
-        serialNumber: partnerItem?.serialNumber || "Partner Lite",
-        glassType: partnerItem?.glassType || partnerItem?.glassCode || (code === "OP" ? "Coated Glass Lite" : "Clear Float Glass Lite"),
-        glassCode: partnerItem?.glassCode || partnerItem?.itemCode || item.itemCode,
-        paneTitle: name,
-        width: partnerItem?.width || item.width,
-        height: partnerItem?.height || item.height,
-        roleCode: code,
+        roleCode: "UNIT",
       };
     }
 
-    // ASSEMBLY for standard pair
+    if (isLam) {
+      if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "PLY1") {
+        const ply1 = lamPanes.ply1Item || item;
+        return {
+          badgeText: "IP 1 • LAMI PLY 1",
+          badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          finishText: "IP 1 • Clear",
+          finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          serialNumber: ply1?.serialNumber || item.serialNumber,
+          glassType: ply1?.glassType || "Clear Float Glass Lite",
+          glassCode: ply1?.glassCode || item.itemCode,
+          paneTitle: "Front Laminated Pane (Ply 1)",
+          width: ply1?.width || item.width,
+          height: ply1?.height || item.height,
+          roleCode: "IP",
+        };
+      }
+      if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "PLY2") {
+        const ply2 = lamPanes.ply2Item;
+        return {
+          badgeText: "IP 2 • LAMI PLY 2",
+          badgeClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          finishText: "IP 2 • Clear",
+          finishClass: "bg-cyan-100 text-cyan-800 border-cyan-200",
+          serialNumber: ply2?.serialNumber || `${item.serialNumber}-B`,
+          glassType: ply2?.glassType || "Clear Float Glass Lite",
+          glassCode: ply2?.glassCode || item.itemCode,
+          paneTitle: "Back Laminated Pane (Ply 2)",
+          width: ply2?.width || item.width,
+          height: ply2?.height || item.height,
+          roleCode: "IP",
+        };
+      }
+      return {
+        badgeText: "FULL GLASS • WHOLE LAMI UNIT",
+        badgeClass: "bg-red-100 text-red-800 border-red-200",
+        finishText: "Full Laminated Unit (Both Panes)",
+        finishClass: "bg-red-100 text-red-800 border-red-200",
+        serialNumber: allSerials.join(" + "),
+        glassType: item.glassType || "Laminated Glass Unit (Ply 1 + Ply 2)",
+        glassCode: item.itemCode,
+        paneTitle: "Full Laminated Unit (Both Panes)",
+        width: item.width,
+        height: item.height,
+        roleCode: "UNIT",
+      };
+    }
+
+    // Default Fallback
     return {
-      badgeText: "WHOLE UNIT • ASSEMBLY",
-      badgeClass: "bg-slate-100 text-slate-700 border-slate-300",
-      finishText: "Complete Paired Unit",
-      finishClass: "bg-slate-100 text-slate-700 border-slate-200",
-      serialNumber: allSerials.join(" + "),
-      glassType: item.glassType || "Paired Glass Unit",
-      glassCode: item.itemCode,
-      paneTitle: "Unit Assembly / Sealant / Spacer",
+      badgeText: `${primaryRole.code} • ${primaryRole.name}`,
+      badgeClass: primaryRole.colorClass,
+      finishText: `${primaryRole.code} • ${primaryFinish}`,
+      finishClass: primaryFinish === "Colour" ? "bg-purple-100 text-purple-800 border-purple-200" : "bg-cyan-100 text-cyan-800 border-cyan-200",
+      serialNumber: item.serialNumber,
+      glassType: item.glassType || item.glassCode || "Glass Lite",
+      glassCode: item.glassCode || item.itemCode,
+      paneTitle: primaryRole.name,
       width: item.width,
       height: item.height,
-      roleCode: "UNIT",
+      roleCode: primaryRole.code,
     };
   }, [
     isPairUnit,
     isDlgu,
+    isDgu,
+    isLam,
     selectedDefectivePane,
     item,
-    opItem,
-    ipItem,
-    partnerItem,
+    dlguPanes,
+    dguPanes,
+    lamPanes,
     primaryRole,
     primaryFinish,
     partnerRole,
@@ -265,60 +505,91 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
       return;
     }
 
-    if (mode === "reject" && isCompletedOrFinished) {
-      toast.error("Glass items completed at the Finished stage cannot be rejected.");
-      return;
-    }
-
     let defectiveCode = "SINGLE";
     let defectiveSerial: string | undefined = item.serialNumber;
     let targetSerialsToProcess: string[] = [item.serialNumber];
     let isSinglePane = true;
 
-    if (!isPairUnit) {
-      defectiveCode = primaryRole.code || "SINGLE";
-      defectiveSerial = item.serialNumber;
-      targetSerialsToProcess = [item.serialNumber];
-      isSinglePane = true;
-    } else if (isDlgu) {
+    if (isDlgu) {
       if (selectedDefectivePane === "OP") {
         defectiveCode = "OP";
-        defectiveSerial = opItem?.serialNumber || item.serialNumber;
+        defectiveSerial = dlguPanes.opItem?.serialNumber || item.serialNumber;
         targetSerialsToProcess = [defectiveSerial];
         isSinglePane = true;
-      } else if (selectedDefectivePane === "IP_PLY1") {
+      } else if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "IP1") {
         defectiveCode = "IP_PLY1";
-        defectiveSerial = ipItem?.serialNumber || item.serialNumber;
+        defectiveSerial = dlguPanes.ip1Item?.serialNumber || item.serialNumber;
         targetSerialsToProcess = [defectiveSerial];
         isSinglePane = true;
-      } else if (selectedDefectivePane === "IP_PLY2") {
+      } else if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "IP2") {
         defectiveCode = "IP_PLY2";
-        defectiveSerial = ipItem ? `${ipItem.serialNumber}-B` : "IP-Ply2";
-        targetSerialsToProcess = [ipItem?.serialNumber || item.serialNumber];
+        defectiveSerial = dlguPanes.ip2Item?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`);
+        targetSerialsToProcess = dlguPanes.ip2Item?.serialNumber ? [dlguPanes.ip2Item.serialNumber] : [item.serialNumber];
+        isSinglePane = true;
+      } else if (selectedDefectivePane === "BOTH_CLEAR" || selectedDefectivePane === "BOTH_IP" || selectedDefectivePane === "IP_BOTH") {
+        defectiveCode = "BOTH_CLEAR";
+        const clearSerials: string[] = [];
+        if (dlguPanes.ip1Item?.serialNumber) clearSerials.push(dlguPanes.ip1Item.serialNumber);
+        if (dlguPanes.ip2Item?.serialNumber) clearSerials.push(dlguPanes.ip2Item.serialNumber);
+        if (clearSerials.length === 0) {
+          if (getItemFinish(item) === "Clear") {
+            clearSerials.push(item.serialNumber);
+          } else {
+            const clears = siblingPanes.filter((p) => getItemFinish(p) === "Clear");
+            clears.forEach((c) => clearSerials.push(c.serialNumber));
+          }
+        }
+        if (clearSerials.length === 1 && dlguPanes.ip1Item?.serialNumber) {
+          clearSerials.push(`${dlguPanes.ip1Item.serialNumber}-B`);
+        }
+        targetSerialsToProcess = clearSerials.length > 0 ? clearSerials : [item.serialNumber];
+        defectiveSerial = targetSerialsToProcess.join(" + ");
+        isSinglePane = false;
+      } else {
+        defectiveCode = "WHOLE_UNIT";
+        defectiveSerial = undefined;
+        targetSerialsToProcess = allSerials;
+        isSinglePane = false;
+      }
+    } else if (isDgu) {
+      if (selectedDefectivePane === "OP") {
+        defectiveCode = "OP";
+        defectiveSerial = dguPanes.opItem?.serialNumber || item.serialNumber;
+        targetSerialsToProcess = [defectiveSerial];
+        isSinglePane = true;
+      } else if (selectedDefectivePane === "IP") {
+        defectiveCode = "IP";
+        defectiveSerial = dguPanes.ipItem?.serialNumber || item.serialNumber;
+        targetSerialsToProcess = [defectiveSerial];
         isSinglePane = true;
       } else {
-        defectiveCode = "ASSEMBLY";
+        defectiveCode = "WHOLE_UNIT";
+        defectiveSerial = undefined;
+        targetSerialsToProcess = allSerials;
+        isSinglePane = false;
+      }
+    } else if (isLam) {
+      if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "PLY1") {
+        defectiveCode = "IP_PLY1";
+        defectiveSerial = lamPanes.ply1Item?.serialNumber || item.serialNumber;
+        targetSerialsToProcess = [defectiveSerial];
+        isSinglePane = true;
+      } else if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "PLY2") {
+        defectiveCode = "IP_PLY2";
+        defectiveSerial = lamPanes.ply2Item?.serialNumber || `${item.serialNumber}-B`;
+        targetSerialsToProcess = lamPanes.ply2Item?.serialNumber ? [lamPanes.ply2Item.serialNumber] : [item.serialNumber];
+        isSinglePane = true;
+      } else {
+        defectiveCode = "WHOLE_UNIT";
         defectiveSerial = undefined;
         targetSerialsToProcess = allSerials;
         isSinglePane = false;
       }
     } else {
-      if (selectedDefectivePane === "PRIMARY") {
-        defectiveCode = primaryRole.code;
-        defectiveSerial = item.serialNumber;
-        targetSerialsToProcess = [item.serialNumber];
-        isSinglePane = true;
-      } else if (selectedDefectivePane === "PARTNER") {
-        defectiveCode = partnerRole?.code || (primaryRole.code === "OP" ? "IP" : "OP");
-        defectiveSerial = partnerItem?.serialNumber || "PARTNER";
-        targetSerialsToProcess = partnerItem?.serialNumber ? [partnerItem.serialNumber] : [item.serialNumber];
-        isSinglePane = true;
-      } else {
-        defectiveCode = "ASSEMBLY";
-        defectiveSerial = undefined;
-        targetSerialsToProcess = allSerials;
-        isSinglePane = false;
-      }
+      defectiveCode = primaryRole.code || "SINGLE";
+      defectiveSerial = item.serialNumber;
+      targetSerialsToProcess = [item.serialNumber];
+      isSinglePane = true;
     }
 
     const finalReason = customReason.trim() || reason;
@@ -346,14 +617,18 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
         if (!res.ok) throw new Error("Failed to reject item");
         if (autoReworkEnabled) {
-          if (!isSinglePane && isPairUnit) {
-            toast.error(`Paired Unit (${allSerials.join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
+          if (defectiveCode === "BOTH_CLEAR") {
+            toast.error(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
+          } else if (!isSinglePane && isCompositeUnit) {
+            toast.error(`Full Unit (${allSerials.join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
           } else {
             toast.error(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) marked as REJECTED & Remake dispatched to Cutting`);
           }
         } else {
-          if (!isSinglePane && isPairUnit) {
-            toast.error(`Paired Unit (${allSerials.join(" + ")}) marked as REJECTED (${defectiveCode})`);
+          if (defectiveCode === "BOTH_CLEAR") {
+            toast.error(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) marked as REJECTED`);
+          } else if (!isSinglePane && isCompositeUnit) {
+            toast.error(`Full Unit (${allSerials.join(" + ")}) marked as REJECTED (${defectiveCode})`);
           } else {
             toast.error(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) marked as REJECTED`);
           }
@@ -377,8 +652,10 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
         });
 
         if (!res.ok) throw new Error("Failed to send item to rework");
-        if (!isSinglePane && isPairUnit) {
-          toast.warning(`Paired Unit (${allSerials.join(" + ")}) sent to REWORK at ${targetStage} stage`);
+        if (defectiveCode === "BOTH_CLEAR") {
+          toast.warning(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) sent to REWORK at ${targetStage} stage`);
+        } else if (!isSinglePane && isCompositeUnit) {
+          toast.warning(`Full Unit (${allSerials.join(" + ")}) sent to REWORK at ${targetStage} stage`);
         } else {
           toast.warning(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) sent to REWORK at ${targetStage} stage`);
         }
@@ -387,7 +664,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
       onSuccess();
       onOpenChange(false);
     } catch (err: any) {
-      toast.error(err.message || "Error processing request");
+      toast.error(err.message || "Failed to process request");
     } finally {
       setLoading(false);
     }
@@ -401,12 +678,12 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             {mode === "reject" ? (
               <>
                 <AlertOctagon className="w-5 h-5 text-red-600" />
-                {isPairUnit ? (isDlgu ? "Mark DLGU Unit as REJECTED" : "Mark Paired Unit as REJECTED") : "Mark Glass Item as REJECTED"}
+                {isDlgu ? "Mark DLGU Unit as REJECTED" : isDgu ? "Mark DGU Unit as REJECTED" : isLam ? "Mark Laminated Unit as REJECTED" : "Mark Glass Item as REJECTED"}
               </>
             ) : (
               <>
                 <RefreshCw className="w-5 h-5 text-amber-600" />
-                {isPairUnit ? (isDlgu ? "Send DLGU Unit to REWORK" : "Send Paired Unit to REWORK") : "Send Glass Item to REWORK"}
+                {isDlgu ? "Send DLGU Unit to REWORK" : isDgu ? "Send DGU Unit to REWORK" : isLam ? "Send Laminated Unit to REWORK" : "Send Glass Item to REWORK"}
               </>
             )}
           </DialogTitle>
@@ -430,38 +707,42 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
           {/* Finished / Completed Block Banner */}
           {mode === "reject" && isCompletedOrFinished && (
-            <div className="p-3 rounded-xl border bg-slate-100 border-slate-300 text-slate-800 flex items-start gap-2.5">
-              <AlertOctagon className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+            <div className="p-3 rounded-xl border bg-amber-50/80 border-amber-300 text-amber-900 flex items-start gap-2.5">
+              <AlertOctagon className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <div className="font-extrabold text-xs text-slate-900">
-                  Completed Glass Unit (Finished Stage)
+                <div className="font-extrabold text-xs text-amber-950">
+                  Completed / Dispatched Stage Unit Rejection
                 </div>
-                <div className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
-                  Glass items that have completed all processing stages and reached the Finished stage cannot be rejected.
+                <div className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                  Glass unit has reached Finished / Dispatch stage (e.g. broken during delivery to customer). Rejecting will record the scrap defect and immediately route a replacement remake ticket to Cutting.
                 </div>
               </div>
             </div>
           )}
 
-          {/* Paired Unit Banner */}
-          {isPairUnit && (
+          {/* Multi-Pane Composite Unit Banner */}
+          {isCompositeUnit && (
             <div className={`p-3 rounded-xl border flex items-start gap-2.5 ${mode === "reject" ? "bg-red-50/80 border-red-200 text-red-900" : "bg-amber-50/80 border-amber-200 text-amber-900"}`}>
               <AlertOctagon className={`w-4 h-4 shrink-0 mt-0.5 ${mode === "reject" ? "text-red-600" : "text-amber-600"}`} />
               <div>
                 <div className="font-extrabold text-xs">
-                  {isDlgu ? "DLGU 3-Pane Unit (Outer Lite + 2 Lami Inner Lites)" : "Paired Glass Unit (1+1)"}
+                  {isDlgu
+                    ? "DLGU 3-Pane Unit (Outer Lite + 2 Laminated Clear Inner Lites)"
+                    : isDgu
+                    ? "DGU Paired Glass Unit (Outer Lite + Inner Lite)"
+                    : "Laminated Glass Unit (Ply 1 + Ply 2)"}
                 </div>
                 <div className="text-[11px] mt-0.5 opacity-90 leading-relaxed">
                   {isDlgu
-                    ? "DLGU has 1 Outer Coated Lite and 2 Laminated Clear Inner Lites. Select the exact lite that has the defect."
-                    : "Select which exact pane (Outer / Inner / Assembly) caused the defect so the cutting shop-floor knows what to re-cut."}
+                    ? "Select whether OP (Colour), IP 1 (Clear), IP 2 (Clear), Both Clears (IP 1 + IP 2), or Full Glass is defective so cutting knows what to re-cut."
+                    : "Select whether OP (Colour), IP (Clear), or Full Glass is defective."}
                 </div>
               </div>
             </div>
           )}
 
           {/* Defective Pane Selector */}
-          {isPairUnit && (
+          {isCompositeUnit && (
             <div className="space-y-1.5">
               <Label className="text-slate-800 font-bold flex items-center justify-between text-xs">
                 <span>Which Pane Has the Defect?</span>
@@ -487,10 +768,10 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Outer Pane (OP • Coated) — #{opItem?.serialNumber || item.serialNumber}
+                            Outer Pane (OP • Coated) — #{dlguPanes.opItem?.serialNumber || (getItemFinish(item) === "Colour" ? item.serialNumber : "OP Colour Lite")}
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
-                            {opItem?.glassType || "8MM GUARDIAN SUNGUARD SN GREY 50 T"}
+                            {dlguPanes.opItem?.glassType || "8MM GUARDIAN SUNGUARD SN GREY 50 T"}
                           </div>
                         </div>
                       </div>
@@ -499,9 +780,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                       </span>
                     </label>
 
-                    {/* DLGU Option 2: Inner Lami Lite 1 (Ply A) */}
+                    {/* DLGU Option 2: Inner Lami Lite 1 (IP 1) */}
                     <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedDefectivePane === "IP_PLY1"
+                      selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "IP1"
                         ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
                         : "bg-white border-slate-200 hover:bg-slate-50"
                     }`}>
@@ -509,27 +790,27 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         <input
                           type="radio"
                           name="defectivePaneSelection"
-                          checked={selectedDefectivePane === "IP_PLY1"}
+                          checked={selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "IP1"}
                           onChange={() => setSelectedDefectivePane("IP_PLY1")}
                           className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Inner Lami Lite 1 (IP • Ply A) — #{ipItem?.serialNumber || item.serialNumber}
+                            Inner Lami Lite 1 (IP 1 • Ply A) — #{dlguPanes.ip1Item?.serialNumber || (getItemFinish(item) === "Clear" ? item.serialNumber : "IP 1 Clear Lite")}
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
-                            6MM CLEAR (Front Laminated Pane)
+                            {dlguPanes.ip1Item?.glassType || "6MM CLEAR (Front Laminated Pane)"}
                           </div>
                         </div>
                       </div>
                       <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
-                        IP • Ply 1
+                        IP 1 • Clear
                       </span>
                     </label>
 
-                    {/* DLGU Option 3: Inner Lami Lite 2 (Ply B) */}
+                    {/* DLGU Option 3: Inner Lami Lite 2 (IP 2) */}
                     <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedDefectivePane === "IP_PLY2"
+                      selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "IP2"
                         ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
                         : "bg-white border-slate-200 hover:bg-slate-50"
                     }`}>
@@ -537,57 +818,85 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         <input
                           type="radio"
                           name="defectivePaneSelection"
-                          checked={selectedDefectivePane === "IP_PLY2"}
+                          checked={selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "IP2"}
                           onChange={() => setSelectedDefectivePane("IP_PLY2")}
                           className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Inner Lami Lite 2 (IP • Ply B) — #{ipItem ? `${ipItem.serialNumber}-B` : "Partner Lite"}
+                            Inner Lami Lite 2 (IP 2 • Ply B) — #{dlguPanes.ip2Item?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`)}
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
-                            6MM CLEAR (Back Laminated Pane)
+                            {dlguPanes.ip2Item?.glassType || "6MM CLEAR (Back Laminated Pane)"}
                           </div>
                         </div>
                       </div>
                       <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
-                        IP • Ply 2
+                        IP 2 • Clear
                       </span>
                     </label>
 
-                    {/* DLGU Option 4: Assembly Defect */}
+                    {/* DLGU Option 4: Both Inner Clear Lites (IP 1 + IP 2) */}
                     <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedDefectivePane === "ASSEMBLY"
-                        ? "bg-slate-100 border-slate-400 ring-2 ring-slate-300"
+                      selectedDefectivePane === "BOTH_CLEAR" || selectedDefectivePane === "BOTH_IP" || selectedDefectivePane === "IP_BOTH"
+                        ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
                         : "bg-white border-slate-200 hover:bg-slate-50"
                     }`}>
                       <div className="flex items-center gap-2.5">
                         <input
                           type="radio"
                           name="defectivePaneSelection"
-                          checked={selectedDefectivePane === "ASSEMBLY"}
-                          onChange={() => setSelectedDefectivePane("ASSEMBLY")}
-                          className="text-slate-600 focus:ring-slate-500 w-3.5 h-3.5"
+                          checked={selectedDefectivePane === "BOTH_CLEAR" || selectedDefectivePane === "BOTH_IP" || selectedDefectivePane === "IP_BOTH"}
+                          onChange={() => setSelectedDefectivePane("BOTH_CLEAR")}
+                          className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Unit Assembly / Spacer / PVB Delamination
+                            Both Clear Lites (IP 1 + IP 2 • Lami Pair) — #{dlguPanes.ip1Item?.serialNumber || (getItemFinish(item) === "Clear" ? item.serialNumber : "IP1")} & #{dlguPanes.ip2Item?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`)}
                           </div>
-                          <div className="text-[10.5px] text-slate-500">
-                            Spacer misalignment, butyl leak, or interlayer bubble
+                          <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
+                            Both laminated clear float panes defective (OP Colour stays intact)
                           </div>
                         </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 border border-slate-200 text-slate-700">
-                        Whole Unit
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
+                        Both Clear
+                      </span>
+                    </label>
+
+                    {/* DLGU Option 5: Full DLGU Glass / Whole Unit */}
+                    <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
+                        ? "bg-red-50/80 border-red-400 ring-2 ring-red-200"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="defectivePaneSelection"
+                          checked={selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"}
+                          onChange={() => setSelectedDefectivePane("ASSEMBLY")}
+                          className="text-red-600 focus:ring-red-500 w-3.5 h-3.5"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">
+                            Full Glass / Whole DLGU Unit (All 3 Panes)
+                          </div>
+                          <div className="text-[10.5px] text-slate-500">
+                            Entire unit rejected (OP + IP 1 + IP 2 all sent for remake)
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-100 border border-red-200 text-red-800">
+                        Full Glass
                       </span>
                     </label>
                   </>
-                ) : (
+                ) : isDgu ? (
                   <>
-                    {/* Standard Pair Option 1: Primary Pane */}
+                    {/* DGU Option 1: Outer Pane (OP) */}
                     <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedDefectivePane === "PRIMARY"
+                      selectedDefectivePane === "OP"
                         ? "bg-purple-50/80 border-purple-400 ring-2 ring-purple-200"
                         : "bg-white border-slate-200 hover:bg-slate-50"
                     }`}>
@@ -595,210 +904,233 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         <input
                           type="radio"
                           name="defectivePaneSelection"
-                          checked={selectedDefectivePane === "PRIMARY"}
-                          onChange={() => setSelectedDefectivePane("PRIMARY")}
+                          checked={selectedDefectivePane === "OP"}
+                          onChange={() => setSelectedDefectivePane("OP")}
                           className="text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            {primaryRole.code === "OP" ? "Outer Pane (OP)" : "Inner Pane (IP)"} — #{item.serialNumber}
+                            Outer Pane (OP • Coated/Colour) — #{dguPanes.opItem?.serialNumber || item.serialNumber}
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
-                            {item.glassType || item.glassCode || "Glass Lite"}
+                            {dguPanes.opItem?.glassType || "Coated / Colour Glass Lite"}
                           </div>
                         </div>
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${primaryRole.colorClass}`}>
-                        {primaryRole.code} • {primaryFinish}
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-purple-100 text-purple-800 border-purple-200">
+                        OP • Colour
                       </span>
                     </label>
 
-                    {/* Standard Pair Option 2: Partner Pane */}
-                    {partnerItem && partnerRole ? (
-                      <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                        selectedDefectivePane === "PARTNER"
-                          ? "bg-purple-50/80 border-purple-400 ring-2 ring-purple-200"
-                          : "bg-white border-slate-200 hover:bg-slate-50"
-                      }`}>
-                        <div className="flex items-center gap-2.5">
-                          <input
-                            type="radio"
-                            name="defectivePaneSelection"
-                            checked={selectedDefectivePane === "PARTNER"}
-                            onChange={() => setSelectedDefectivePane("PARTNER")}
-                            className="text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
-                          />
-                          <div>
-                            <div className="font-bold text-slate-900 text-xs">
-                              {partnerRole.code === "OP" ? "Outer Pane (OP)" : "Inner Pane (IP)"} — #{partnerItem.serialNumber}
-                            </div>
-                            <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
-                              {partnerItem.glassType || partnerItem.glassCode || "Glass Lite"}
-                            </div>
-                          </div>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${partnerRole.colorClass}`}>
-                          {partnerRole.code} • {partnerFinish}
-                        </span>
-                      </label>
-                    ) : (
-                      <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                        selectedDefectivePane === "PARTNER"
-                          ? "bg-purple-50/80 border-purple-400 ring-2 ring-purple-200"
-                          : "bg-white border-slate-200 hover:bg-slate-50"
-                      }`}>
-                        <div className="flex items-center gap-2.5">
-                          <input
-                            type="radio"
-                            name="defectivePaneSelection"
-                            checked={selectedDefectivePane === "PARTNER"}
-                            onChange={() => setSelectedDefectivePane("PARTNER")}
-                            className="text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
-                          />
-                          <div>
-                            <div className="font-bold text-slate-900 text-xs">
-                              {primaryRole.code === "OP" ? "Matching Inner Pane (IP)" : "Matching Outer Pane (OP)"}
-                            </div>
-                            <div className="text-[10.5px] text-slate-500">
-                              Opposite partner lite in this unit
-                            </div>
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">
-                          {primaryRole.code === "OP" ? "IP • Clear" : "OP • Colour"}
-                        </span>
-                      </label>
-                    )}
-
-                    {/* Standard Pair Option 3: Assembly Defect */}
+                    {/* DGU Option 2: Inner Pane (IP) */}
                     <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedDefectivePane === "ASSEMBLY"
-                        ? "bg-slate-100 border-slate-400 ring-2 ring-slate-300"
+                      selectedDefectivePane === "IP" || selectedDefectivePane === "IP_PLY1"
+                        ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
                         : "bg-white border-slate-200 hover:bg-slate-50"
                     }`}>
                       <div className="flex items-center gap-2.5">
                         <input
                           type="radio"
                           name="defectivePaneSelection"
-                          checked={selectedDefectivePane === "ASSEMBLY"}
-                          onChange={() => setSelectedDefectivePane("ASSEMBLY")}
-                          className="text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
+                          checked={selectedDefectivePane === "IP" || selectedDefectivePane === "IP_PLY1"}
+                          onChange={() => setSelectedDefectivePane("IP")}
+                          className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Unit Assembly Defect (Both Panes / Sealant / PVB)
+                            Inner Pane (IP • Clear Float) — #{dguPanes.ipItem?.serialNumber || item.serialNumber}
                           </div>
-                          <div className="text-[10.5px] text-slate-500">
-                            Spacer misalignment, butyl smear, or delamination
+                          <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
+                            {dguPanes.ipItem?.glassType || "Clear Float Glass Lite"}
                           </div>
                         </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 border border-slate-200 text-slate-700">
-                        Whole Unit
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
+                        IP • Clear
+                      </span>
+                    </label>
+
+                    {/* DGU Option 3: Full Glass / Both Panes */}
+                    <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
+                        ? "bg-red-50/80 border-red-400 ring-2 ring-red-200"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="defectivePaneSelection"
+                          checked={selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"}
+                          onChange={() => setSelectedDefectivePane("ASSEMBLY")}
+                          className="text-red-600 focus:ring-red-500 w-3.5 h-3.5"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">
+                            Full Glass / Whole DGU Unit (Both Panes)
+                          </div>
+                          <div className="text-[10.5px] text-slate-500">
+                            Entire unit rejected (OP + IP both sent for remake)
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-100 border border-red-200 text-red-800">
+                        Full Glass
                       </span>
                     </label>
                   </>
-                )}
+                ) : isLam ? (
+                  <>
+                    {/* Lam Option 1: Ply 1 */}
+                    <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "PLY1"
+                        ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="defectivePaneSelection"
+                          checked={selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "PLY1"}
+                          onChange={() => setSelectedDefectivePane("IP_PLY1")}
+                          className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">
+                            Lami Lite 1 (IP 1 • Front Ply) — #{lamPanes.ply1Item?.serialNumber || item.serialNumber}
+                          </div>
+                          <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
+                            {lamPanes.ply1Item?.glassType || "Clear Float Glass Lite"}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
+                        IP 1 • Clear
+                      </span>
+                    </label>
+
+                    {/* Lam Option 2: Ply 2 */}
+                    <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "PLY2"
+                        ? "bg-cyan-50/80 border-cyan-400 ring-2 ring-cyan-200"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="defectivePaneSelection"
+                          checked={selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "PLY2"}
+                          onChange={() => setSelectedDefectivePane("IP_PLY2")}
+                          className="text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">
+                            Lami Lite 2 (IP 2 • Back Ply) — #{lamPanes.ply2Item?.serialNumber || `${item.serialNumber}-B`}
+                          </div>
+                          <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
+                            {lamPanes.ply2Item?.glassType || "Clear Float Glass Lite"}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black border bg-cyan-100 text-cyan-800 border-cyan-200">
+                        IP 2 • Clear
+                      </span>
+                    </label>
+
+                    {/* Lam Option 3: Full Glass / Both Panes */}
+                    <label className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
+                        ? "bg-red-50/80 border-red-400 ring-2 ring-red-200"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="defectivePaneSelection"
+                          checked={selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"}
+                          onChange={() => setSelectedDefectivePane("ASSEMBLY")}
+                          className="text-red-600 focus:ring-red-500 w-3.5 h-3.5"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 text-xs">
+                            Full Glass / Whole Laminated Unit (Both Panes)
+                          </div>
+                          <div className="text-[10.5px] text-slate-500">
+                            Entire laminated unit rejected (Ply 1 + Ply 2 both sent for remake)
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-100 border border-red-200 text-red-800">
+                        Full Glass
+                      </span>
+                    </label>
+                  </>
+                ) : null}
               </div>
             </div>
           )}
 
-          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5 font-mono transition-all">
-            {/* Top row: PI Number and dynamic Pane Badge */}
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <span className="text-slate-500 font-sans text-[11px]">PI Number:</span>{" "}
-                <span className="font-bold text-purple-700">{item.piNumber}</span>
+          {/* Active Target Pane Summary Details Card */}
+          <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-slate-600 text-[11px] font-semibold">
+                PI Number: <span className="font-bold text-purple-900">{item.piNumber || item.batchNo}</span>
               </div>
-              <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-black border uppercase tracking-wide font-sans shadow-2xs ${activePaneInfo.badgeClass}`}>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activePaneInfo.badgeClass}`}>
                 {activePaneInfo.badgeText}
               </span>
             </div>
 
-            {/* Batch & Position */}
-            <div className="flex items-center justify-between text-xs">
-              <div>
-                <span className="text-slate-500 font-sans text-[11px]">Batch / Pos:</span>{" "}
-                <span className="font-bold text-slate-900">{item.batchNo || item.sfoNo || "—"}</span> /{" "}
-                <span className="text-indigo-700 font-black">POS {item.posNo || "—"}</span>
+            <div className="flex items-center justify-between">
+              <div className="text-slate-600 text-[11px] font-semibold">
+                Batch / Pos: <span className="font-bold text-slate-900">{item.batchNo || item.piNumber}</span> / POS <span className="font-bold text-purple-900">{item.posNo}</span>
               </div>
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activePaneInfo.finishClass}`}>
                 {activePaneInfo.finishText}
               </span>
             </div>
 
-            {/* Selected Lite Serial */}
-            <div className="text-xs">
-              <span className="text-slate-500 font-sans text-[11px]">Selected Lite:</span>{" "}
-              <span className="font-bold text-slate-900 bg-white px-1.5 py-0.5 rounded border border-slate-200">
-                #{activePaneInfo.serialNumber}
-              </span>
-              <span className="text-slate-500 font-sans text-[10.5px] ml-1.5 font-medium">
-                ({activePaneInfo.paneTitle})
-              </span>
+            <div className="flex items-center justify-between text-slate-700">
+              <span>Selected Lite: <strong className="font-mono font-bold text-slate-900">#{activePaneInfo.serialNumber}</strong></span>
+              <span className="text-[11px] text-slate-500">({activePaneInfo.paneTitle})</span>
             </div>
 
-            {/* Glass Spec / Description */}
-            <div className="text-xs">
-              <span className="text-slate-500 font-sans text-[11px]">Glass Spec:</span>{" "}
-              <span className="font-bold text-slate-800 text-[11px] leading-tight">
-                {activePaneInfo.glassType}
-              </span>
+            <div className="text-[11px] text-slate-700">
+              <span className="text-slate-500">Glass Spec:</span> <strong className="font-mono">{activePaneInfo.glassType}</strong>
             </div>
 
-            {/* Item & Category */}
-            <div>
-              <span className="text-slate-500 font-sans text-[11px]">Item / Category:</span>{" "}
-              <span className="font-bold text-slate-900">{activePaneInfo.glassCode || item.itemCode || "—"}</span>{" "}
-              {glassCat && <span className="text-purple-700 font-bold font-sans">({glassCat})</span>}
-            </div>
-            
-            {/* Current Stage & Dimensions */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
-              <div>
-                <span className="text-slate-500 font-sans text-[11px]">Current Stage:</span>{" "}
-                <span className="text-amber-700 font-bold font-sans">{item.currentStage}</span>
+            {item.itemCode && (
+              <div className="text-[11px] text-slate-700 truncate">
+                <span className="text-slate-500">Item / Category:</span> <strong>{item.itemCode}</strong>
+                {isDlgu && <span className="ml-1 text-purple-700 font-bold">(DLGU)</span>}
               </div>
-              {activePaneInfo.width > 0 && activePaneInfo.height > 0 && (
-                <div className="text-[11px] font-bold text-slate-600">
-                  {activePaneInfo.width} × {activePaneInfo.height} mm
-                </div>
-              )}
+            )}
+
+            <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 text-[11px]">
+              <span className="text-slate-500">
+                Current Stage: <strong className="text-amber-700">{item.currentStage || "Cutting"}</strong>
+              </span>
+              <span className="text-slate-500 font-mono font-bold">
+                {item.width} × {item.height} mm
+              </span>
             </div>
           </div>
 
-          {mode === "rework" && (
-            <div>
-              <Label className="text-slate-700 font-bold mb-1 block">Select Target Rework Stage</Label>
-              <Select value={targetStage} onValueChange={(val) => setTargetStage(val as ProductionStage)}>
-                <SelectTrigger className="bg-white border-slate-300 text-slate-900 font-semibold">
-                  <SelectValue placeholder="Select target stage" />
-                </SelectTrigger>
-                <SelectContent className="bg-white border-slate-200 text-slate-900">
-                  {REWORK_TARGET_STAGES.map((stg) => (
-                    <SelectItem key={stg} value={stg}>{stg} Stage</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          {/* Defect Origin Station Dropdown */}
-          <div>
-            <Label className="text-slate-700 font-bold mb-1 flex items-center justify-between">
+          {/* Defect Origin Station Field */}
+          <div className="space-y-1.5">
+            <Label className="text-slate-800 font-bold flex items-center justify-between text-xs">
               <span className="flex items-center gap-1.5">
-                <Factory className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Defect Origin Station</span>
+                <Factory className="w-3.5 h-3.5 text-purple-600" />
+                Defect Origin Station
               </span>
-              <span className="text-[10.5px] font-semibold text-slate-400">Where defect occurred</span>
+              <span className="text-[10px] font-semibold text-slate-500">Where defect occurred</span>
             </Label>
             <Select value={defectStation} onValueChange={setDefectStation}>
-              <SelectTrigger className="bg-white border-slate-300 text-slate-900 font-bold">
-                <SelectValue placeholder="Select station" />
+              <SelectTrigger className="w-full bg-white border-slate-300 text-slate-900 h-9 font-medium">
+                <SelectValue placeholder="Select station where defect occurred" />
               </SelectTrigger>
-              <SelectContent className="bg-white border-slate-200 text-slate-900">
+              <SelectContent className="bg-white border-slate-200 text-slate-900 shadow-xl max-h-56">
                 {DEFECT_ORIGIN_STATIONS.map((station) => (
-                  <SelectItem key={station} value={station} className="font-semibold cursor-pointer">
+                  <SelectItem key={station} value={station} className="text-xs focus:bg-purple-50 focus:text-purple-900 cursor-pointer">
                     {station}
                   </SelectItem>
                 ))}
@@ -806,89 +1138,113 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             </Select>
           </div>
 
-          <div>
-            <Label className="text-slate-700 font-bold mb-1 block">Defect / Reason</Label>
+          {/* Defect Reason Field */}
+          <div className="space-y-1.5">
+            <Label className="text-slate-800 font-bold text-xs">Defect / Reason</Label>
             <Select value={reason} onValueChange={setReason}>
-              <SelectTrigger className="bg-white border-slate-300 text-slate-900 font-semibold">
-                <SelectValue placeholder="Select reason" />
+              <SelectTrigger className="w-full bg-white border-slate-300 text-slate-900 h-9 font-medium">
+                <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-white border-slate-200 text-slate-900">
+              <SelectContent className="bg-white border-slate-200 text-slate-900 shadow-xl max-h-56">
                 {REJECT_REASONS.map((r) => (
-                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                  <SelectItem key={r} value={r} className="text-xs focus:bg-purple-50 focus:text-purple-900 cursor-pointer">
+                    {r}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div>
-            <Label className="text-slate-700 font-bold mb-1 block">Additional Remarks (Optional)</Label>
+          {/* Optional Remarks Field */}
+          <div className="space-y-1">
+            <Label className="text-slate-700 text-xs">Additional Remarks (Optional)</Label>
             <input
               type="text"
+              placeholder="e.g. Surface scratch on bottom right side"
               value={customReason}
               onChange={(e) => setCustomReason(e.target.value)}
-              placeholder="e.g. Surface scratch on bottom right side"
-              className="w-full bg-white border border-slate-300 rounded p-2 text-slate-900 placeholder:text-slate-400 font-medium"
+              className="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-hidden"
             />
           </div>
 
-          {mode === "reject" && (
-            <div className="bg-emerald-50/90 border border-emerald-300/80 p-3 rounded-xl flex items-start gap-2.5 transition-all">
-              <input
-                type="checkbox"
-                id="auto-rework-checkbox"
-                checked={autoReworkEnabled}
-                onChange={(e) => setAutoReworkEnabled(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-              />
-              <label htmlFor="auto-rework-checkbox" className="cursor-pointer select-none">
-                <div className="font-bold text-emerald-900 text-xs flex items-center gap-1.5">
-                  <span>Automatically dispatch Remake ticket to Cutting</span>
-                  <span className="bg-emerald-200 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded font-black">
-                    RECOMMENDED
-                  </span>
-                </div>
-                <div className="text-[11px] text-emerald-700 mt-0.5 leading-relaxed">
-                  Logs rejection to QA scrap report while immediately routing replacement piece to the Cutting queue for re-cutting.
-                </div>
+          {/* Rework Target Stage (When in Rework Mode) */}
+          {mode === "rework" && (
+            <div className="space-y-1.5">
+              <Label className="text-slate-800 font-bold text-xs">Send Directly to Target Stage</Label>
+              <Select value={targetStage} onValueChange={(val) => setTargetStage(val as ProductionStage)}>
+                <SelectTrigger className="w-full bg-white border-slate-300 text-slate-900 h-9 font-medium">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-white border-slate-200 text-slate-900 shadow-xl">
+                  {REWORK_TARGET_STAGES.map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs focus:bg-purple-50 focus:text-purple-900 cursor-pointer">
+                      {s} Workstation
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Auto Remake Ticket Toggle (When in Reject Mode) */}
+          {mode === "reject" && !isCuttingStage && (
+            <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-1.5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoReworkEnabled}
+                  onChange={(e) => setAutoReworkEnabled(e.target.checked)}
+                  className="rounded text-purple-600 focus:ring-purple-500 h-4 w-4"
+                />
+                <span className="font-extrabold text-purple-950 text-xs">
+                  Automatically Create & Dispatch Remake Ticket to Cutting Table
+                </span>
               </label>
+              <p className="text-[11px] text-purple-800 ml-6 leading-relaxed">
+                {selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
+                  ? "All panes (Full Glass) will be queued in Cutting as remake pieces."
+                  : `Only defective pane (${activePaneInfo.badgeText}) will be queued in Cutting. Surviving partner panes wait in the pairing buffer.`}
+              </p>
             </div>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="text-slate-600 hover:text-slate-900 text-xs">
+        {/* Modal Action Buttons */}
+        <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-200">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+            className="text-xs"
+          >
             Cancel
           </Button>
           <Button
-            disabled={loading || (mode === "reject" && isCompletedOrFinished) || isCuttingStage}
+            type="button"
+            size="sm"
             onClick={handleSubmit}
-            className={`text-white font-bold text-xs ${
-              (mode === "reject" && isCompletedOrFinished) || isCuttingStage
-                ? "bg-slate-400 cursor-not-allowed"
-                : mode === "reject"
-                ? autoReworkEnabled
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-rose-700 hover:bg-rose-800"
+            disabled={loading || isCuttingStage}
+            className={`text-xs font-bold gap-1.5 text-white ${
+              mode === "reject"
+                ? "bg-red-600 hover:bg-red-700"
                 : "bg-amber-600 hover:bg-amber-700"
             }`}
           >
-            {loading
-              ? "Saving..."
-              : isCuttingStage
-              ? "Disabled at Cutting Stage"
-              : mode === "reject"
-              ? isCompletedOrFinished
-                ? "Cannot Reject Finished Glass"
-                : autoReworkEnabled
-                ? isPairUnit
-                  ? "Reject & Send Remake to Cutting"
-                  : "Reject & Send Remake to Cutting"
-                : isPairUnit
-                ? "Confirm Reject Unit (Scrap Only)"
-                : "Confirm Reject (Scrap Only)"
-              : isPairUnit
-              ? "Send Unit to Rework"
-              : "Send to Rework"}
+            {loading ? (
+              "Processing..."
+            ) : mode === "reject" ? (
+              <>
+                <AlertOctagon className="w-3.5 h-3.5" />
+                Confirm Rejection & Remake
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3.5 h-3.5" />
+                Confirm Rework Routing
+              </>
+            )}
           </Button>
         </div>
       </DialogContent>

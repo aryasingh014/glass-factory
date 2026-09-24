@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 
 interface ManualPIItemInput {
   id: string;
@@ -43,6 +44,7 @@ export const ManualPIModal: React.FC<ManualPIModalProps> = ({
   onOpenChange,
   onSuccess,
 }) => {
+  const { getAuthHeaders } = useAuth();
   const [customerName, setCustomerName] = useState("");
   const [projectName, setProjectName] = useState("");
   const [proformaInvNo, setProformaInvNo] = useState("");
@@ -178,9 +180,12 @@ export const ManualPIModal: React.FC<ManualPIModalProps> = ({
         })),
       };
 
-      const res = await fetch("/api/upload-excel", {
+      const res = await fetch("/api/excel/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify(payload),
       });
 

@@ -12,7 +12,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { getDguEffectiveQtyAndSqm, formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
+import { getDguEffectiveQtyAndSqm, formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { formatSejalBarcode } from "@/lib/barcode";
 import {
   Trash2,
   CheckCircle,
@@ -55,9 +56,9 @@ import {
   Truck,
   Building2,
   Users,
-  Grid,
   ChevronUp,
   ClipboardList,
+  PackageCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -66,6 +67,7 @@ import {
   exportSelectedItemsToExcel,
   exportPartialDispatchNoteToExcel,
 } from "@/lib/excelExport";
+import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
 
 interface ProductionStageViewProps {
   stage: ProductionStage;
@@ -78,6 +80,7 @@ interface ProductionStageViewProps {
   onReject: (item: GlassItem) => void;
   onRework: (item: GlassItem) => void;
   onPrintSticker: (item: GlassItem) => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 // Stage color map
@@ -103,6 +106,7 @@ interface StageRowItem {
   id: string; // unique row id
   item: GlassItem; // Primary glass pane (in DGU: Colour Glass pane if paired/unpaired colour, Clear pane if unpaired clear)
   partnerItem?: GlassItem | null; // Paired partner pane (in DGU: Clear Glass pane)
+  partnerItems?: GlassItem[]; // All paired partner panes (e.g. DLGU 2 clear panes)
   isDguPair: boolean; // true if paired 1 Col + 1 Clr unit
   dguPairReady: boolean;
   dguWaitingFinish?: "Clear" | "Colour";
@@ -113,6 +117,18 @@ interface StageRowItem {
   displaySerial: string;
   displayBarcode: string;
   glassCategory?: "DGU" | "DLGU" | "Laminated" | "General";
+}
+
+export function resolveValidBarcode(item?: any, fallback?: string): string {
+  const b = String(fallback || item?.barcode || "").trim();
+  // Valid barcodes are pure numeric digits (e.g. 1012627016100044) and not alphanumeric glass codes (e.g. SACW...)
+  if (b && /^\d{10,24}$/.test(b) && !/width|height/i.test(b)) {
+    return b;
+  }
+  const sfo = item?.sfoNo || item?.orderNo || item?.piNumber || "1344";
+  const numPart = item?.serialNumber ? String(item.serialNumber).replace(/\D/g, "") : "";
+  const seq = numPart || item?.posNo || "1";
+  return formatSejalBarcode(sfo, seq);
 }
 
 export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
@@ -126,6 +142,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   onReject,
   onRework,
   onPrintSticker,
+  onNavigateTab,
 }) => {
   // Batch selection state (for Cutting stage drill-down)
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -155,6 +172,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const [rangeFromInput, setRangeFromInput] = useState<string>("1");
   const [rangeToInput, setRangeToInput] = useState<string>("10");
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  // Finished/Dispatch stage: tracks which rows have the partner IP-glass panel expanded
+  const [expandedPartnerRows, setExpandedPartnerRows] = useState<Set<string>>(new Set());
+  const togglePartnerExpand = (rowId: string) =>
+    setExpandedPartnerRows((prev) => {
+      const next = new Set(prev);
+      next.has(rowId) ? next.delete(rowId) : next.add(rowId);
+      return next;
+    });
   const [loading, setLoading] = useState(false);
   const [expandedSheets, setExpandedSheets] = useState<Record<string, boolean>>({});
 
@@ -232,53 +257,63 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   };
 
   // Build Batch Summaries across all items & PIs
-  const batchSummaries = useMemo(() => {
+  const allBatchSummaries = useMemo(() => {
     const map = new Map<
       string,
       {
         id: string;
         piNumber: string;
+        batchNo?: string;
         customerName: string;
         projectName: string;
         jobOrderNumber: string;
         sfoNo: string;
+        fileName?: string;
         items: GlassItem[];
         stageItems: GlassItem[];
       }
     >();
 
     items.forEach((item) => {
+      if (isDispatchedItem(item)) return;
+      if (item.status === "Rejected") return;
+
       const key = item.piId || item.piNumber || item.batchNo || "default";
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
       if (!map.has(key)) {
         map.set(key, {
           id: key,
           piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
+          batchNo: parentPI?.batchNo || item.batchNo || "",
           customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
           projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
           sfoNo: item.sfoNo || parentPI?.sfoNo || "",
+          fileName: parentPI?.fileName || (item as any).fileName || "",
           items: [],
           stageItems: [],
         });
       }
       const b = map.get(key)!;
       b.items.push(item);
-      if (item.currentStage?.toLowerCase() === stage?.toLowerCase() && item.status !== "Rejected") {
+      if (item.currentStage?.toLowerCase() === stage?.toLowerCase()) {
         b.stageItems.push(item);
       }
     });
 
-    // Also include any PIs from Master if not present
+    // Also include any PIs from Master if not present and not completed
     pis.forEach((p) => {
+      if (p.status === "Completed" || (p as any).status === "Dispatched") return;
       if (!map.has(p.id) && !map.has(p.piNumber)) {
         map.set(p.id, {
           id: p.id,
           piNumber: (p.piNumber || "").replace(/^STK-/i, ""),
+          batchNo: p.batchNo || "",
           customerName: p.customerName || "Customer",
           projectName: p.projectName || "Project",
           jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
           sfoNo: p.sfoNo || "",
+          fileName: p.fileName || "",
           items: [],
           stageItems: [],
         });
@@ -327,10 +362,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       return {
         id: b.id,
         piNumber: b.piNumber,
+        batchNo: (b as any).batchNo || parentPI?.batchNo || "",
         customerName: b.customerName,
         projectName: b.projectName,
         jobOrderNumber: b.jobOrderNumber,
         sfoNo: b.sfoNo,
+        fileName: (b as any).fileName || parentPI?.fileName || "",
         totalItems: totalCount,
         stageItemsCount: stageItemsPieces,
         completedCount: completedCount,
@@ -349,6 +386,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     });
   }, [items, pis, stage]);
 
+  const batchSummaries = useMemo(() => {
+    return allBatchSummaries.filter((b) => {
+      if (stage === "Cutting" && b.stageItemsCount === 0) return false;
+      return true;
+    });
+  }, [allBatchSummaries, stage]);
+
   // Filtered Batches for the Cutting Table View
   const filteredBatches = useMemo(() => {
     return batchSummaries
@@ -364,6 +408,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           b.piNumber.toLowerCase().includes(q) ||
           b.customerName.toLowerCase().includes(q) ||
           b.projectName.toLowerCase().includes(q) ||
+          ((b as any).fileName && (b as any).fileName.toLowerCase().includes(q)) ||
           (b.jobOrderNumber && b.jobOrderNumber.toLowerCase().includes(q)) ||
           (b.sfoNo && b.sfoNo.toLowerCase().includes(q))
         );
@@ -402,7 +447,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   };
 
   // Cutting Batch Selection - Customer Grouped View State (Default Closed)
-  const [batchViewMode, setBatchViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
   const [expandedBatchCustomers, setExpandedBatchCustomers] = useState<Record<string, boolean>>({});
 
   const toggleBatchCustomerExpanded = (customerName: string) => {
@@ -425,7 +469,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   };
 
   // Non-Cutting Stages (DGU, Lamination, Finished) Customer Grouped View State (Default Closed)
-  const [stageViewMode, setStageViewMode] = useState<"CUSTOMER" | "FLAT">("CUSTOMER");
   const [expandedStageCustomers, setExpandedStageCustomers] = useState<Record<string, boolean>>({});
 
   const toggleStageCustomerExpanded = (customerName: string) => {
@@ -634,15 +677,126 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     }
   };
 
+  // Dispatch shipment modal state
+  const [dispatchDialog, setDispatchDialog] = useState<{
+    open: boolean;
+    loading: boolean;
+    rows: StageRowItem[];
+    dispatchNoteNo: string;
+    vehicleNo: string;
+    driverName: string;
+    remarks: string;
+    dispatchedAt: string;
+  }>({
+    open: false,
+    loading: false,
+    rows: [],
+    dispatchNoteNo: "",
+    vehicleNo: "",
+    driverName: "",
+    remarks: "",
+    dispatchedAt: "",
+  });
+
+  const openDispatchModal = (targetRows: StageRowItem[]) => {
+    if (!targetRows || targetRows.length === 0) {
+      toast.warning("No glass units selected to dispatch.");
+      return;
+    }
+
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+    const randSuffix = String(Math.floor(1000 + Math.random() * 9000));
+    const suggestedNoteNo = `DN-${dateStr}-${randSuffix}`;
+    const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+    setDispatchDialog({
+      open: true,
+      loading: false,
+      rows: targetRows,
+      dispatchNoteNo: suggestedNoteNo,
+      vehicleNo: "",
+      driverName: "",
+      remarks: "",
+      dispatchedAt: localIso,
+    });
+  };
+
+  const handleConfirmDispatch = async () => {
+    if (!dispatchDialog.rows || dispatchDialog.rows.length === 0) return;
+
+    setDispatchDialog((prev) => ({ ...prev, loading: true }));
+    try {
+      const serialsToDispatch = new Set<string>();
+      const itemIdsToDispatch = new Set<string>();
+
+      for (const r of dispatchDialog.rows) {
+        if (r.allSerials && r.allSerials.length > 0) {
+          r.allSerials.forEach((s) => serialsToDispatch.add(s));
+        } else if (r.item?.serialNumber) {
+          serialsToDispatch.add(r.item.serialNumber);
+        }
+        if (r.item?.id) itemIdsToDispatch.add(r.item.id);
+        if (r.partnerItem?.id) itemIdsToDispatch.add(r.partnerItem.id);
+      }
+
+      const res = await fetch("/api/production/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serialNumbers: Array.from(serialsToDispatch),
+          itemIds: Array.from(itemIdsToDispatch),
+          dispatchNoteNo: dispatchDialog.dispatchNoteNo.trim(),
+          vehicleNo: dispatchDialog.vehicleNo.trim(),
+          driverName: dispatchDialog.driverName.trim(),
+          remarks: dispatchDialog.remarks.trim(),
+          dispatchedAt: dispatchDialog.dispatchedAt ? new Date(dispatchDialog.dispatchedAt).toISOString() : new Date().toISOString(),
+          operator: operator || "Dispatch Officer",
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to dispatch items.");
+      }
+
+      const data = await res.json();
+      toast.success(
+        `Successfully dispatched ${dispatchDialog.rows.length} units (${data.count} pieces) under Note #${dispatchDialog.dispatchNoteNo}!`,
+        {
+          action: onNavigateTab
+            ? {
+                label: "View History",
+                onClick: () => onNavigateTab("dispatched-history"),
+              }
+            : undefined,
+          duration: 6000,
+        }
+      );
+
+      setDispatchDialog((prev) => ({ ...prev, open: false, loading: false, rows: [] }));
+      setSelectedRowIds([]);
+
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to dispatch items.");
+      setDispatchDialog((prev) => ({ ...prev, loading: false }));
+    }
+  };
+
   // Selected Batch Information (Only relevant for Cutting stage drilldown)
   const selectedBatch = useMemo(() => {
     if (!selectedBatchId || stage !== "Cutting") return null;
-    return batchSummaries.find((b) => b.id === selectedBatchId || b.piNumber === selectedBatchId) || null;
-  }, [batchSummaries, selectedBatchId, stage]);
+    return allBatchSummaries.find((b) => b.id === selectedBatchId || b.piNumber === selectedBatchId) || null;
+  }, [allBatchSummaries, selectedBatchId, stage]);
 
   // Base raw items for this stage (filtered by selected batch ONLY in Cutting stage)
   const stageItems = useMemo(() => {
     return items.filter((item) => {
+      // Dispatched items must strictly only appear in Dispatched History
+      if (isDispatchedItem(item)) return false;
       if (item.currentStage?.toLowerCase() !== stage?.toLowerCase()) return false;
       if (item.status === "Rejected") return false;
       if (stage === "Cutting" && selectedBatchId) {
@@ -719,7 +873,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         allSerials: [item.serialNumber],
         effectiveSqm: item.sqm || 0,
         displaySerial: item.serialNumber,
-        displayBarcode: item.barcode,
+        displayBarcode: resolveValidBarcode(item),
       }));
     }
 
@@ -818,7 +972,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         // Render paired groups (each lamPairId = 1 row)
         byPairId.forEach((panes, pid) => {
           // Primary pane = shorter glassType name (6MM before 13.52MM)
-          const sorted = [...panes].sort((a, b) => a.glassType.localeCompare(b.glassType));
+          const sorted = [...panes].sort((a, b) => String(a.glassType || "").localeCompare(String(b.glassType || "")));
           const paneA = sorted[0];
           const paneB = sorted[1];
           panes.forEach((p) => usedLam.add(p.serialNumber));
@@ -834,7 +988,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: panes.map((p) => p.serialNumber),
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
             displaySerial: paneA.serialNumber,
-            displayBarcode: paneA.barcode,
+            displayBarcode: resolveValidBarcode(paneA),
           });
         });
 
@@ -868,7 +1022,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               allSerials: match ? [paneA.serialNumber, match.serialNumber] : [paneA.serialNumber],
               effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
               displaySerial: paneA.serialNumber,
-              displayBarcode: paneA.barcode,
+              displayBarcode: resolveValidBarcode(paneA),
             });
           });
           // Any unmatched typeB
@@ -886,7 +1040,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               allSerials: [paneB.serialNumber],
               effectiveSqm: paneB.sqm || parseFloat(((paneB.width * paneB.height) / 1000000).toFixed(2)),
               displaySerial: paneB.serialNumber,
-              displayBarcode: paneB.barcode,
+              displayBarcode: resolveValidBarcode(paneB),
             });
           });
         }
@@ -924,7 +1078,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [paneA.serialNumber, match.serialNumber],
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
             displaySerial: paneA.serialNumber,
-            displayBarcode: paneA.barcode,
+            displayBarcode: resolveValidBarcode(paneA),
           });
         } else {
           usedLam.add(paneA.serialNumber);
@@ -939,7 +1093,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [paneA.serialNumber],
             effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
             displaySerial: paneA.serialNumber,
-            displayBarcode: paneA.barcode,
+            displayBarcode: resolveValidBarcode(paneA),
           });
         }
       }
@@ -967,10 +1121,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       if (dlguColourPanes.length > 0) {
         dlguColourPanes.forEach((col) => {
-          // Find all clear panes belonging to this DLGU unit (same position, dimensions, order/PI)
-          const matchingClears = dlguClearPanes.filter(
-            (clr) => !usedDlguClear.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
-          );
+          // Find clear panes belonging to this DLGU unit (same position, dimensions, order/PI)
+          const colDguPairId = (col as any).dguPairId;
+          let matchingClears = colDguPairId
+            ? dlguClearPanes.filter(
+                (clr) => !usedDlguClear.has(clr.serialNumber) && (clr as any).dguPairId === colDguPairId
+              ).slice(0, 2)
+            : [];
+
+          if (matchingClears.length === 0) {
+            matchingClears = dlguClearPanes.filter(
+              (clr) => !usedDlguClear.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
+            ).slice(0, 2);
+          }
 
           const primaryClear = matchingClears[0] || null;
           const allUnitSerials = [col.serialNumber];
@@ -990,7 +1153,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: allUnitSerials,
             effectiveSqm: col.sqm || parseFloat(((col.width * col.height) / 1000000).toFixed(2)),
             displaySerial: col.serialNumber,
-            displayBarcode: col.barcode,
+            displayBarcode: resolveValidBarcode(col),
           });
         });
 
@@ -1008,7 +1171,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               allSerials: [clr.serialNumber],
               effectiveSqm: clr.sqm || parseFloat(((clr.width * clr.height) / 1000000).toFixed(2)),
               displaySerial: clr.serialNumber,
-              displayBarcode: clr.barcode,
+              displayBarcode: resolveValidBarcode(clr),
             });
           }
         });
@@ -1044,7 +1207,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               allSerials: [paneA.serialNumber, match.serialNumber],
               effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
               displaySerial: paneA.serialNumber,
-              displayBarcode: paneA.barcode,
+              displayBarcode: resolveValidBarcode(paneA),
             });
           } else {
             usedDlguClear.add(paneA.serialNumber);
@@ -1058,7 +1221,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               allSerials: [paneA.serialNumber],
               effectiveSqm: paneA.sqm || parseFloat(((paneA.width * paneA.height) / 1000000).toFixed(2)),
               displaySerial: paneA.serialNumber,
-              displayBarcode: paneA.barcode,
+              displayBarcode: resolveValidBarcode(paneA),
             });
           }
         }
@@ -1086,7 +1249,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [col.serialNumber, match.serialNumber],
             effectiveSqm: col.sqm || parseFloat(((col.width * col.height) / 1000000).toFixed(2)),
             displaySerial: col.serialNumber,
-            displayBarcode: col.barcode,
+            displayBarcode: resolveValidBarcode(col),
           });
         } else {
           rows.push({
@@ -1099,7 +1262,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [col.serialNumber],
             effectiveSqm: col.sqm || parseFloat(((col.width * col.height) / 1000000).toFixed(2)),
             displaySerial: col.serialNumber,
-            displayBarcode: col.barcode,
+            displayBarcode: resolveValidBarcode(col),
           });
         }
       });
@@ -1116,7 +1279,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [clr.serialNumber],
             effectiveSqm: clr.sqm || parseFloat(((clr.width * clr.height) / 1000000).toFixed(2)),
             displaySerial: clr.serialNumber,
-            displayBarcode: clr.barcode,
+            displayBarcode: resolveValidBarcode(clr),
           });
         }
       });
@@ -1154,7 +1317,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [paneA.serialNumber, match.serialNumber],
             effectiveSqm: calcEffectiveSqm,
             displaySerial: paneA.serialNumber,
-            displayBarcode: paneA.barcode,
+            displayBarcode: resolveValidBarcode(paneA),
           });
         } else {
           usedFinishedLam.add(paneA.serialNumber);
@@ -1169,7 +1332,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [paneA.serialNumber],
             effectiveSqm: calcEffectiveSqm,
             displaySerial: paneA.serialNumber,
-            displayBarcode: paneA.barcode,
+            displayBarcode: resolveValidBarcode(paneA),
           });
         }
       }
@@ -1187,7 +1350,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           allSerials: [item.serialNumber],
           effectiveSqm: calcEffectiveSqm,
           displaySerial: item.serialNumber,
-          displayBarcode: item.barcode,
+          displayBarcode: resolveValidBarcode(item),
         });
       });
 
@@ -1204,9 +1367,16 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
     // 1. For each Colour pane, find matching Clear pane matching all sticker criteria (Order No, OB #, POS #, Width, Height, Glass Code, etc.)
     stageColourPanes.forEach((col) => {
-      const match = stageClearPanes.find(
-        (clr) => !usedClearSet.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
-      );
+      const colDguPairId = (col as any).dguPairId;
+      let match = colDguPairId
+        ? stageClearPanes.find((clr) => !usedClearSet.has(clr.serialNumber) && (clr as any).dguPairId === colDguPairId)
+        : undefined;
+
+      if (!match) {
+        match = stageClearPanes.find(
+          (clr) => !usedClearSet.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
+        );
+      }
 
       const isDlgu =
         isDlguGlass(col) ||
@@ -1215,6 +1385,27 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       if (match) {
         usedClearSet.add(match.serialNumber);
+
+        const allUnitSerials = [col.serialNumber, match.serialNumber];
+        if (isDlgu) {
+          const matchLamPairId = (match as any).lamPairId;
+          const matchDguPairId = (match as any).dguPairId;
+          const siblingClear = stageClearPanes.find(
+            (clr) =>
+              !usedClearSet.has(clr.serialNumber) &&
+              clr.id !== match!.id &&
+              (
+                (matchDguPairId && (clr as any).dguPairId === matchDguPairId) ||
+                (matchLamPairId && (clr as any).lamPairId === matchLamPairId) ||
+                isDguStickerPairMatch(col, clr)
+              )
+          );
+          if (siblingClear) {
+            usedClearSet.add(siblingClear.serialNumber);
+            allUnitSerials.push(siblingClear.serialNumber);
+          }
+        }
+
         rows.push({
           id: `${stage.toLowerCase()}-pair-${col.serialNumber}-${match.serialNumber}`,
           item: col, // Colour Glass is the primary unit pane (Outer Panel)
@@ -1222,10 +1413,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           isDguPair: true,
           dguPairReady: true,
           glassCategory: isDlgu ? "DLGU" : "DGU",
-          allSerials: [col.serialNumber, match.serialNumber],
+          allSerials: allUnitSerials,
           effectiveSqm: col.sqm || parseFloat(((col.width * col.height) / 1000000).toFixed(2)),
           displaySerial: col.serialNumber,
-          displayBarcode: col.barcode,
+          displayBarcode: resolveValidBarcode(col),
         });
       } else {
         // Unpaired Colour pane
@@ -1240,7 +1431,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           allSerials: [col.serialNumber],
           effectiveSqm: col.sqm || parseFloat(((col.width * col.height) / 1000000).toFixed(2)),
           displaySerial: col.serialNumber,
-          displayBarcode: col.barcode,
+          displayBarcode: resolveValidBarcode(col),
         });
       }
     });
@@ -1260,7 +1451,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             allSerials: [clr.serialNumber],
             effectiveSqm: clr.sqm || parseFloat(((clr.width * clr.height) / 1000000).toFixed(2)),
             displaySerial: clr.serialNumber,
-            displayBarcode: clr.barcode,
+            displayBarcode: resolveValidBarcode(clr),
           });
         }
       });
@@ -1355,6 +1546,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           row.partnerItem.glassType.toLowerCase().includes(query)
         : false;
 
+      const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
+
       return (
         row.displaySerial.toLowerCase().includes(query) ||
         row.displayBarcode.toLowerCase().includes(query) ||
@@ -1364,6 +1557,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         (item.orderNo && item.orderNo.toLowerCase().includes(query)) ||
         (item.batchNo && item.batchNo.toLowerCase().includes(query)) ||
         (item.rackNo && item.rackNo.toLowerCase().includes(query)) ||
+        (parentPI?.fileName && parentPI.fileName.toLowerCase().includes(query)) ||
+        (parentPI?.customerName && parentPI.customerName.toLowerCase().includes(query)) ||
+        (parentPI?.projectName && parentPI.projectName.toLowerCase().includes(query)) ||
         partnerMatch
       );
     });
@@ -1979,7 +2175,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           {/* Top Row: Queue Tabs (Left) & Export Batches Button (Right) */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             {/* DLGU vs DGU vs LAMINATION PROCESS QUEUE TABS */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 overflow-x-auto">
+            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 overflow-x-auto no-scrollbar">
               <button
                 type="button"
                 onClick={() => setBatchCategoryFilter("ALL")}
@@ -2111,9 +2307,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               )}
             </div>
 
-            {/* View Mode Switcher Toggle (Right side, parallel to search bar) */}
+            {/* Right side: Expand/Collapse All */}
             <div className="flex items-center gap-2 flex-wrap">
-              {batchViewMode === "CUSTOMER" && groupedCustomerBatches.length > 0 && (
+              {groupedCustomerBatches.length > 0 && (
                 <div className="flex items-center gap-1 mr-1">
                   <Button
                     size="sm"
@@ -2134,55 +2330,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   </Button>
                 </div>
               )}
-
-              <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setBatchViewMode("CUSTOMER")}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                    batchViewMode === "CUSTOMER"
-                      ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>Group by Customer</span>
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      batchViewMode === "CUSTOMER" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                    }`}
-                  >
-                    {groupedCustomerBatches.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setBatchViewMode("FLAT")}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                    batchViewMode === "FLAT"
-                      ? "bg-white text-purple-700 shadow-xs ring-1 ring-purple-100"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <ClipboardList className="w-3.5 h-3.5" />
-                  <span>All Batches (Flat)</span>
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      batchViewMode === "FLAT" ? "bg-purple-100 text-purple-800" : "bg-slate-200 text-slate-600"
-                    }`}
-                  >
-                    {filteredBatches.length}
-                  </span>
-                </button>
-              </div>
             </div>
           </div>
         </div>
 
         {/* ── VIEW 1: GROUP BY CUSTOMER (DEFAULT CLOSED) ── */}
-        {batchViewMode === "CUSTOMER" && (
-          <div className="space-y-3">
+        <div className="space-y-3">
             {groupedCustomerBatches.length > 0 ? (
               groupedCustomerBatches.map((customer) => {
                 const isExpanded = isBatchCustomerExpanded(customer.customerName);
@@ -2334,8 +2487,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     {/* Collapsible Customer Sub-Table */}
                     {isExpanded && (
                       <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
-                        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-2xs">
-                          <table className="w-full text-left text-xs border-collapse">
+                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                          <TableHorizontalScrollWrapper>
+                            <table className="w-full text-left text-xs border-collapse">
                             <thead>
                               <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
                                 <th className="py-2.5 px-3.5 whitespace-nowrap">BATCH NO</th>
@@ -2373,7 +2527,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   >
                                     <td className="py-2.5 px-3.5 font-bold font-mono text-purple-700">
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span>{formatBatchNumber(b.piNumber)}</span>
+                                        <span>{formatBatchNumber((b as any).batchNo || b.piNumber)}</span>
                                         {b.glassCategory === "DLGU" ? (
                                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
                                             <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
@@ -2451,7 +2605,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               })}
                             </tbody>
                           </table>
-                        </div>
+                        </TableHorizontalScrollWrapper>
+                      </div>
                       </div>
                     )}
                   </div>
@@ -2464,185 +2619,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </div>
             )}
           </div>
-        )}
-
-        {/* ── VIEW 2: FLAT BATCH TABLE ── */}
-        {batchViewMode === "FLAT" && (
-          <div className="bg-white border border-slate-300 rounded-2xl shadow-xs overflow-hidden">
-            {filteredBatches.length > 0 ? (
-              <div className="overflow-x-auto w-full">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
-                      <th
-                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                        onClick={() => handleBatchSort("piNumber")}
-                      >
-                        BATCH NO {renderSortIcon("piNumber")}
-                      </th>
-                      <th
-                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                        onClick={() => handleBatchSort("customerName")}
-                      >
-                        CUSTOMER {renderSortIcon("customerName")}
-                      </th>
-                      <th
-                        className="py-3 px-3.5 cursor-pointer whitespace-nowrap"
-                        onClick={() => handleBatchSort("projectName")}
-                      >
-                        PROJECT {renderSortIcon("projectName")}
-                      </th>
-                      <th
-                        className="py-3 px-3 cursor-pointer whitespace-nowrap text-center"
-                        onClick={() => handleBatchSort("finish")}
-                      >
-                        FINISH {renderSortIcon("finish")}
-                      </th>
-                      <th
-                        className="py-3 px-3 cursor-pointer text-center whitespace-nowrap"
-                        onClick={() => handleBatchSort("completedCount")}
-                      >
-                        COMPLETED {renderSortIcon("completedCount")}
-                      </th>
-                      <th
-                        className="py-3 px-3 cursor-pointer text-right whitespace-nowrap"
-                        onClick={() => handleBatchSort("totalSqm")}
-                      >
-                        SQM {renderSortIcon("totalSqm")}
-                      </th>
-                      <th
-                        className="py-3 px-3 cursor-pointer whitespace-nowrap"
-                        onClick={() => handleBatchSort("createdAt")}
-                      >
-                        UPLOADED AT {renderSortIcon("createdAt")}
-                      </th>
-                      <th className="py-3 px-3 text-center whitespace-nowrap">
-                        STATUS
-                      </th>
-                      <th className="py-3 px-3.5 text-right whitespace-nowrap">
-                        ACTION
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredBatches.map((b) => {
-                      const isBatchCompleted =
-                        b.stageItemsCount === 0 &&
-                        b.totalItems > 0 &&
-                        (b.completedCount >= b.totalItems || b.status === "Completed");
-
-                      return (
-                        <tr
-                          key={b.id}
-                          onClick={() => {
-                            if (!isBatchCompleted) {
-                              setSelectedBatchId(b.id);
-                              setSelectedSheetRackNo("ALL");
-                              setExpandedSheets({});
-                            }
-                          }}
-                          className={`transition-colors ${
-                            isBatchCompleted
-                              ? "bg-slate-50/40 hover:bg-slate-50/70 cursor-default"
-                              : "hover:bg-purple-50/40 cursor-pointer group"
-                          }`}
-                        >
-                          <td className="py-3 px-3.5 font-bold font-mono text-purple-700">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span>{formatBatchNumber(b.piNumber)}</span>
-                              {b.glassCategory === "DLGU" ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
-                                  <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
-                                </span>
-                              ) : b.glassCategory === "DGU" ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
-                                  <Boxes className="w-3 h-3 text-teal-600" /> DGU
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs">
-                                  <Layers className="w-3 h-3 text-amber-700" /> Lamination
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3.5 font-medium text-slate-800">
-                            {b.customerName}
-                          </td>
-                          <td className="py-3 px-3.5 text-slate-600">
-                            <span className="font-semibold text-slate-800">{b.projectName || "—"}</span>
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
-                                b.finish === "Colour"
-                                  ? "bg-purple-100 text-purple-800 border-purple-200"
-                                  : "bg-cyan-100 text-cyan-800 border-cyan-200"
-                              }`}
-                            >
-                              {b.finish === "Colour" ? "Colour" : "Clear"}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-mono">
-                            <span className="font-bold text-emerald-700">{b.completedCount}</span>
-                            <span className="text-slate-400 text-[10px]"> / {b.totalItems}</span>
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
-                            {b.totalSqm.toFixed(2)} m²
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap font-mono text-xs">
-                            <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                              <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                              {formatPlatformDate(b.createdAt || b.issueDate)}
-                            </div>
-                            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">
-                              <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              {formatPlatformTime(b.createdAt)}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <StatusBadge status={isBatchCompleted ? "Completed" : "In Production"} />
-                          </td>
-                          <td className="py-3 px-3.5 text-right">
-                            {isBatchCompleted ? (
-                              <Button
-                                size="sm"
-                                disabled={true}
-                                className="bg-slate-100 text-slate-400 border border-slate-200 text-xs font-bold gap-1 rounded-xl shadow-none h-7 px-3 cursor-not-allowed opacity-80"
-                                title="All glass cut and completed for this batch"
-                              >
-                                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>All Cut</span>
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedBatchId(b.id);
-                                  setSelectedSheetRackNo("ALL");
-                                  setExpandedSheets({});
-                                }}
-                                className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
-                              >
-                                <span>Open Floor</span>
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
-                          </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="py-12 text-center text-slate-400">
-              <Box className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-semibold">No batches found matching the filters.</p>
-            </div>
-          )}
-          </div>
-        )}
       </div>
     );
   }
@@ -2653,7 +2629,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
       {/* ── Cutting Batch Breadcrumb Header ── */}
-      {stage === "Cutting" && selectedBatch && (
+      {stage === "Cutting" && selectedBatchId && (
         <div className="bg-white border-2 border-purple-300 rounded-2xl p-3.5 shadow-xs flex items-center justify-between flex-wrap gap-3">
           {/* Left: Back button + Batch info */}
           <div className="flex items-center gap-3 shrink-0">
@@ -2664,42 +2640,45 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 setSelectedBatchId(null);
                 setSelectedSheetRackNo("ALL");
               }}
-              className="border-purple-200 text-purple-700 hover:bg-purple-50 h-8 w-8 p-0 rounded-xl shrink-0"
+              className="border-purple-300 text-purple-800 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 h-9 px-3 gap-1.5 rounded-xl shrink-0 font-extrabold text-xs shadow-2xs transition-all cursor-pointer"
               title="Back to All Batches"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 text-purple-700" />
+              <span>Back to Batches</span>
             </Button>
             <div className="whitespace-nowrap">
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-slate-900 text-sm">
-                  Batch: {formatBatchNumber(selectedBatch.piNumber)}
+                  Batch: {formatBatchNumber((selectedBatch as any)?.batchNo || selectedBatch?.piNumber || selectedBatchId)}
                 </span>
-                {selectedBatch.glassCategory === "DLGU" ? (
+                {selectedBatch?.glassCategory === "DLGU" ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 inline-flex items-center gap-1">
                     <Sparkles className="w-3 h-3 text-purple-700" /> DLGU Queue ➔ Pairing
                   </span>
-                ) : selectedBatch.glassCategory === "DGU" ? (
+                ) : selectedBatch?.glassCategory === "DGU" ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 inline-flex items-center gap-1">
                     <Boxes className="w-3 h-3 text-teal-600" /> DGU Queue ➔ Pairing
                   </span>
-                ) : (
+                ) : selectedBatch?.glassCategory === "Lamination" ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-200 inline-flex items-center gap-1">
                     <Layers className="w-3 h-3 text-amber-700" /> Lamination Queue ➔ Buffer
                   </span>
+                ) : null}
+                {selectedBatch?.finish && (
+                  <span
+                    className={`px-2 py-0.2 rounded-full text-[10px] font-black border ${
+                      selectedBatch.finish === "Colour"
+                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                        : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                    }`}
+                  >
+                    {selectedBatch.finish === "Colour" ? "Colour Finish" : "Clear Finish"}
+                  </span>
                 )}
-                <span
-                  className={`px-2 py-0.2 rounded-full text-[10px] font-black border ${
-                    selectedBatch.finish === "Colour"
-                      ? "bg-purple-100 text-purple-800 border-purple-200"
-                      : "bg-cyan-100 text-cyan-800 border-cyan-200"
-                  }`}
-                >
-                  {selectedBatch.finish === "Colour" ? "Colour Finish" : "Clear Finish"}
-                </span>
               </div>
               <p className="text-[11px] text-slate-500 font-medium leading-tight mt-0.5">
-                {selectedBatch.customerName} • {selectedBatch.projectName}
-                {selectedBatch.jobOrderNumber ? ` • JO: ${selectedBatch.jobOrderNumber}` : ""}
+                {selectedBatch?.customerName || "Customer"} • {selectedBatch?.projectName || "Project"}
+                {selectedBatch?.jobOrderNumber ? ` • JO: ${selectedBatch.jobOrderNumber}` : ""}
               </p>
             </div>
           </div>
@@ -2821,7 +2800,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 <span className="text-slate-500 font-medium">
                   {stage === "DGU" ? "Colour Lite Barcode" : "Barcode"}
                 </span>
-                <span className="font-mono font-bold text-slate-900">{scanRow.displayBarcode}</span>
+                <span className="font-mono font-bold text-slate-900">{resolveValidBarcode(scanRow.item, scanRow.displayBarcode)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500 font-medium">Dimensions</span>
@@ -2886,7 +2865,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   value={scanInput}
                   onChange={(e) => setScanInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleScanVerify()}
-                  placeholder={stage === "DGU" ? `Scan Colour Barcode (${scanRow.displayBarcode})...` : "Scan barcode here..."}
+                  placeholder={stage === "DGU" ? `Scan Colour Barcode (${resolveValidBarcode(scanRow.item, scanRow.displayBarcode)})...` : "Scan barcode here..."}
                   className="font-mono text-sm border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
                   autoFocus
                 />
@@ -2927,277 +2906,560 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         </div>
       )}
 
-      {/* ── Unified Single-Line Header Controls: Finish Tabs + Search + Action Buttons (For Non-Cutting Workstations or General Stage View) ── */}
+      {/* ── Unified Header Controls: Finish Tabs + Action Buttons + Search & Filters (For Non-Cutting Workstations or General Stage View) ── */}
       {stage !== "Cutting" && (
-        <div className="bg-white p-3 rounded-2xl border border-slate-300 shadow-xs flex items-center justify-between flex-wrap gap-3">
-          {/* Left: Finish Filter Tabs */}
-          <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 shrink-0 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setFinishFilter("ALL")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                finishFilter === "ALL"
-                  ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-              }`}
-            >
-              <span>{stage === "DGU" ? "All DGU Queue" : stage === "Finished" ? "All Finished" : stage === "Lamination" ? "All Lamination Line" : "All Glass"}</span>
-              <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
+          {/* Row 1: Category / Finish Filter Tabs (Left) & Primary Action Buttons (Right) */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            {/* Left: Finish Filter Tabs */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setFinishFilter("ALL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  finishFilter === "ALL"
+                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
                 }`}
               >
-                {totalStagePieces}
-              </span>
-            </button>
+                <span>{stage === "DGU" ? "All DGU Queue" : stage === "Finished" ? "All Finished" : stage === "Lamination" ? "All Lamination Line" : "All Glass"}</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                  }`}
+                >
+                  {totalStagePieces}
+                </span>
+              </button>
 
-            {stage === "Lamination" ? (
-              <>
-                {lamDirectCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DIRECT_LAM")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DIRECT_LAM"
-                        ? "bg-amber-600 text-white shadow-xs"
-                        : "text-amber-800 hover:bg-amber-100/60"
-                    }`}
-                  >
-                    <span>Direct Laminated Glass</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DIRECT_LAM" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+              {stage === "Lamination" ? (
+                <>
+                  {lamDirectCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DIRECT_LAM")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DIRECT_LAM"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
-                      {lamDirectCount}
-                    </span>
-                  </button>
-                )}
+                      <span>Direct Laminated Glass</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DIRECT_LAM" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                        }`}
+                      >
+                        {lamDirectCount}
+                      </span>
+                    </button>
+                  )}
 
-                {lamDlguCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DLGU_LAM")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DLGU_LAM"
-                        ? "bg-purple-600 text-white shadow-xs"
-                        : "text-purple-800 hover:bg-purple-100/60"
-                    }`}
-                  >
-                    <span>DLGU Sub-Assembly</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DLGU_LAM" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                  {lamDlguCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DLGU_LAM")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DLGU_LAM"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-purple-800 hover:bg-purple-100/60"
                       }`}
                     >
-                      {lamDlguCount}
-                    </span>
-                  </button>
-                )}
-              </>
-            ) : stage === "DGU" ? (
-              <>
-                {dguStandardCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DGU")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DGU"
-                        ? "bg-teal-600 text-white shadow-xs"
-                        : "text-teal-800 hover:bg-teal-100/60"
-                    }`}
-                  >
-                    <span>Standard DGU Units</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
+                      <span>DLGU Sub-Assembly</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DLGU_LAM" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}
+                      >
+                        {lamDlguCount}
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : stage === "DGU" ? (
+                <>
+                  {dguStandardCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DGU")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DGU"
+                          ? "bg-teal-600 text-white shadow-xs"
+                          : "text-teal-800 hover:bg-teal-100/60"
                       }`}
                     >
-                      {dguStandardCount}
-                    </span>
-                  </button>
-                )}
+                      <span>Standard DGU Units</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
+                        }`}
+                      >
+                        {dguStandardCount}
+                      </span>
+                    </button>
+                  )}
 
-                {dguDlguCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DLGU")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DLGU"
-                        ? "bg-purple-600 text-white shadow-xs"
-                        : "text-purple-800 hover:bg-purple-100/60"
-                    }`}
-                  >
-                    <span>DLGU Units</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                  {dguDlguCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DLGU")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DLGU"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-purple-800 hover:bg-purple-100/60"
                       }`}
                     >
-                      {dguDlguCount}
-                    </span>
-                  </button>
-                )}
+                      <span>DLGU Units</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}
+                      >
+                        {dguDlguCount}
+                      </span>
+                    </button>
+                  )}
 
-                {stageRows.some((r) => !r.isDguPair) && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("WAITING")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "WAITING"
-                        ? "bg-amber-600 text-white shadow-xs"
-                        : "text-amber-800 hover:bg-amber-100/60"
-                    }`}
-                  >
-                    <span>⏳ Waiting Panes</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "WAITING" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                  {stageRows.some((r) => !r.isDguPair) && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("WAITING")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "WAITING"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
-                      {stageRows.filter((r) => !r.isDguPair).length}
-                    </span>
-                  </button>
-                )}
-              </>
-            ) : stage === "Finished" ? (
-              <>
-                {finishedDlguCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DLGU")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DLGU"
-                        ? "bg-purple-600 text-white shadow-xs"
-                        : "text-purple-800 hover:bg-purple-100/60"
-                    }`}
-                  >
-                    <span>DLGU Units</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                      <span>⏳ Waiting Panes</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "WAITING" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                        }`}
+                      >
+                        {stageRows.filter((r) => !r.isDguPair).length}
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : stage === "Finished" ? (
+                <>
+                  {finishedDlguCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DLGU")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DLGU"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-purple-800 hover:bg-purple-100/60"
                       }`}
                     >
-                      {finishedDlguCount}
-                    </span>
-                  </button>
-                )}
+                      <span>DLGU Units</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}
+                      >
+                        {finishedDlguCount}
+                      </span>
+                    </button>
+                  )}
 
-                {finishedDguCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("DGU")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "DGU"
-                        ? "bg-teal-600 text-white shadow-xs"
-                        : "text-teal-800 hover:bg-teal-100/60"
-                    }`}
-                  >
-                    <span>DGU / IGU Units</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
+                  {finishedDguCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("DGU")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "DGU"
+                          ? "bg-teal-600 text-white shadow-xs"
+                          : "text-teal-800 hover:bg-teal-100/60"
                       }`}
                     >
-                      {finishedDguCount}
-                    </span>
-                  </button>
-                )}
+                      <span>DGU / IGU Units</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
+                        }`}
+                      >
+                        {finishedDguCount}
+                      </span>
+                    </button>
+                  )}
 
-                {finishedLamCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("LAMINATION")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "LAMINATION"
-                        ? "bg-amber-600 text-white shadow-xs"
-                        : "text-amber-800 hover:bg-amber-100/60"
-                    }`}
-                  >
-                    <span>Laminated Glass</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "LAMINATION" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                  {finishedLamCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("LAMINATION")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "LAMINATION"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
-                      {finishedLamCount}
-                    </span>
-                  </button>
-                )}
+                      <span>Laminated Glass</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "LAMINATION" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                        }`}
+                      >
+                        {finishedLamCount}
+                      </span>
+                    </button>
+                  )}
 
-                {finishedGenCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("GENERAL")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "GENERAL"
-                        ? "bg-indigo-600 text-white shadow-xs"
-                        : "text-indigo-800 hover:bg-indigo-100/60"
-                    }`}
-                  >
-                    <span>General Glass</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "GENERAL" ? "bg-white/20 text-white" : "bg-indigo-200 text-indigo-900"
+                  {finishedGenCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("GENERAL")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "GENERAL"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-indigo-800 hover:bg-indigo-100/60"
                       }`}
                     >
-                      {finishedGenCount}
-                    </span>
-                  </button>
-                )}
-              </>
-            ) : (
-              <>
-                {rawClearCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("CLEAR")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "CLEAR"
-                        ? "bg-cyan-600 text-white shadow-xs"
-                        : "text-cyan-800 hover:bg-cyan-100/60"
-                    }`}
-                  >
-                    <span>Clear Glass</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                      <span>General Glass</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "GENERAL" ? "bg-white/20 text-white" : "bg-indigo-200 text-indigo-900"
+                        }`}
+                      >
+                        {finishedGenCount}
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  {rawClearCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("CLEAR")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "CLEAR"
+                          ? "bg-cyan-600 text-white shadow-xs"
+                          : "text-cyan-800 hover:bg-cyan-100/60"
                       }`}
                     >
-                      {rawClearCount}
-                    </span>
-                  </button>
-                )}
+                      <span>Clear Glass</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                        }`}
+                      >
+                        {rawClearCount}
+                      </span>
+                    </button>
+                  )}
 
-                {rawColourCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setFinishFilter("COLOUR")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      finishFilter === "COLOUR"
-                        ? "bg-purple-600 text-white shadow-xs"
-                        : "text-purple-800 hover:bg-purple-100/60"
-                    }`}
-                  >
-                    <span>Coloured Glass</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                  {rawColourCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFinishFilter("COLOUR")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                        finishFilter === "COLOUR"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-purple-800 hover:bg-purple-100/60"
                       }`}
                     >
-                      {rawColourCount}
+                      <span>Coloured Glass</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}
+                      >
+                        {rawColourCount}
+                      </span>
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Right: Primary Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {stage === "DGU" && (
+                selectedRowIds.length > 0 ? (
+                  <Button
+                    size="sm"
+                    onClick={handleBatchComplete}
+                    disabled={
+                      loading ||
+                      stageRows
+                        .filter((r) => selectedRowIds.includes(r.id))
+                        .filter((r) => r.dguPairReady).length === 0
+                    }
+                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in ${
+                      stageRows
+                        .filter((r) => selectedRowIds.includes(r.id))
+                        .filter((r) => r.dguPairReady).length === 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
+                    }`}
+                    title={
+                      stageRows
+                        .filter((r) => selectedRowIds.includes(r.id))
+                        .filter((r) => r.dguPairReady).length === 0
+                        ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
+                        : "Send ready paired DGU units to Dispatch"
+                    }
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>
+                      Send Selected to Dispatch (
+                      {
+                        stageRows
+                          .filter((r) => selectedRowIds.includes(r.id))
+                          .filter((r) => r.dguPairReady).length
+                      } Paired)
                     </span>
-                  </button>
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={handleSendAllDguToDispatch}
+                    disabled={loading || displayedRows.filter((r) => r.dguPairReady).length === 0}
+                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 ${
+                      displayedRows.filter((r) => r.dguPairReady).length === 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
+                    }`}
+                    title="Send all ready paired DGU units to Dispatch"
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>Send All to Dispatch ({displayedRows.filter((r) => r.dguPairReady).length} Paired)</span>
+                  </Button>
+                )
+              )}
+
+              {stage === "Lamination" && (
+                selectedRowIds.length > 0 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleBatchComplete}
+                    disabled={
+                      loading ||
+                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                    }
+                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all ${
+                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
+                    }`}
+                    title={
+                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                        ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
+                        : "Advance selected ready items from Lamination"
+                    }
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>
+                      Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
+                    </span>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSendAllToFinished}
+                    disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
+                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
+                      displayedRows.filter((r) => !r.isHolding).length === 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
+                    }`}
+                    title={
+                      displayedRows.filter((r) => !r.isHolding).length === 0
+                        ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
+                        : "Advance ready items from Lamination"
+                    }
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
+                  </Button>
+                )
+              )}
+
+              {stage === "Finished" && (
+                selectedRowIds.length > 0 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
+                      openDispatchModal(selectedRows);
+                    }}
+                    disabled={loading || stageRows.filter((r) => selectedRowIds.includes(r.id)).length === 0}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all cursor-pointer"
+                    title="Dispatch selected glass units to Dispatched History"
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>
+                      Send Selected to Dispatch ({stageRows.filter((r) => selectedRowIds.includes(r.id)).length} Units)
+                    </span>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => openDispatchModal(displayedRows)}
+                    disabled={loading || displayedRows.length === 0}
+                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
+                      displayedRows.length === 0
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                    }`}
+                    title="Dispatch all ready glass units to Dispatched History"
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>Send All to Dispatch ({displayedRows.length} Units)</span>
+                  </Button>
+                )
+              )}
+
+              {/* EXPORT EXCEL DROPDOWN BUTTON (Header Position) */}
+              <div className="relative inline-block text-left shrink-0" ref={exportMenuRef}>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setIsExportMenuOpen((prev) => !prev)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Export Excel</span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
+                </Button>
+
+                {isExportMenuOpen && (
+                  <div className="absolute right-0 mt-1.5 w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl z-50 p-2 space-y-1 animate-in fade-in zoom-in-95">
+                    <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                      Export Excel Options ({stage})
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsExportMenuOpen(false);
+                        const exportItems = displayedRows.map((r) => r.item);
+                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2 cursor-pointer"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <div>
+                        <div>Export Current Stage WIP ({displayedRows.length} Items)</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Active table queue & details</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setIsExportMenuOpen(false);
+                        try {
+                          toast.info(`Fetching completed ${stage} stage logs...`);
+                          const res = await fetch("/api/reports");
+                          const data = await res.json();
+                          exportStageHistoryToExcel(stage, data.history || [], items);
+                        } catch {
+                          toast.error("Failed to fetch stage completion history.");
+                        }
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50 hover:text-blue-900 transition-colors flex items-center gap-2 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                      <div>
+                        <div>Export Stage Completion Log</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Audit history of completed scans</div>
+                      </div>
+                    </button>
+
+                    {selectedRowIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsExportMenuOpen(false);
+                          const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
+                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-purple-50 hover:text-purple-900 transition-colors flex items-center gap-2 cursor-pointer"
+                      >
+                        <CheckSquare className="w-4 h-4 text-purple-600 shrink-0" />
+                        <div>
+                          <div>Export Selected Rows ({selectedRowIds.length})</div>
+                          <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
+                        </div>
+                      </button>
+                    )}
+
+                    {stage === "Finished" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsExportMenuOpen(false);
+                          const targetItems = selectedRowIds.length > 0
+                            ? stageRows.filter((r) => selectedRowIds.includes(r.id)).map((r) => r.item)
+                            : displayedRows.map((r) => r.item);
+
+                          const parentPI = pis.find((p) => p.id === targetItems[0]?.piId || p.piNumber === targetItems[0]?.piNumber);
+                          exportPartialDispatchNoteToExcel(parentPI, targetItems);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-emerald-950 bg-emerald-50 hover:bg-emerald-100 transition-colors flex items-center gap-2 border border-emerald-200 cursor-pointer"
+                      >
+                        <Truck className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <div>
+                          <div>Export Partial Delivery Note (.xlsx)</div>
+                          <div className="text-[10px] text-emerald-700 font-medium">
+                            {selectedRowIds.length > 0 ? `${selectedRowIds.length} items selected for shipment` : "Full warehouse delivery note"}
+                          </div>
+                        </div>
+                      </button>
+                    )}
+                  </div>
                 )}
-              </>
-            )}
+              </div>
+
+              {stage === "Finished" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => onNavigateTab ? onNavigateTab("dispatched-history") : undefined}
+                  className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+                  title="View complete historical archive of all dispatched glass items and units"
+                >
+                  <PackageCheck className="w-3.5 h-3.5" />
+                  <span>Dispatched History</span>
+                </Button>
+              )}
+            </div>
           </div>
 
-          {/* Center & Right: Client Filter + Search Input + Export Excel Dropdown */}
-          <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-2xl justify-end flex-wrap sm:flex-nowrap">
+          {/* Row 2: Universal Search + Client Filter */}
+          <div className="flex items-center gap-3 pt-2.5 border-t border-slate-100 flex-wrap sm:flex-nowrap">
+            {/* Universal Search Bar */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={`Search ${stage} queue by Serial, Barcode, Order #, Dimensions...`}
+                className="pl-9 pr-8 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white transition-all w-full"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Client Filter Dropdown */}
             {availableCustomers.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs shrink-0">
-                <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+              <div className="flex items-center gap-1.5 bg-slate-100/90 px-2.5 py-1 rounded-xl border border-slate-200 text-xs shrink-0">
+                <span className="text-[11px] font-extrabold text-slate-600 flex items-center gap-1">
                   <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Client:
                 </span>
                 <select
@@ -3206,7 +3468,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     setSelectedCustomerFilter(e.target.value);
                     setSelectedRowIds([]);
                   }}
-                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer w-[120px] sm:w-[140px] lg:w-[160px] truncate"
+                  className="bg-white text-slate-900 font-extrabold text-xs rounded-lg px-2.5 py-1 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer min-w-[130px] max-w-[240px] truncate"
                   title="Filter stage queue by Customer Name"
                 >
                   <option value="ALL">All Clients ({availableCustomers.length})</option>
@@ -3218,230 +3480,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </select>
               </div>
             )}
-
-            <div className="relative flex-1 min-w-[160px]">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <Input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder={`Search ${stage} queue by Serial, Barcode, Size...`}
-                className="pl-9 h-9 bg-slate-50 border-slate-200 text-slate-900 text-xs rounded-xl focus:bg-white"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm("")}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Primary Action Button in Top Right (e.g. DGU Send to Dispatch / Lamination Advance) */}
-            {stage === "DGU" && (
-              selectedRowIds.length > 0 ? (
-                <Button
-                  size="sm"
-                  onClick={handleBatchComplete}
-                  disabled={
-                    loading ||
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                  }
-                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in ${
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    stageRows
-                      .filter((r) => selectedRowIds.includes(r.id))
-                      .filter((r) => r.dguPairReady).length === 0
-                      ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
-                      : "Send ready paired DGU units to Dispatch"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>
-                    Send Selected to Dispatch (
-                    {
-                      stageRows
-                        .filter((r) => selectedRowIds.includes(r.id))
-                        .filter((r) => r.dguPairReady).length
-                    } Paired)
-                  </span>
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={handleSendAllDguToDispatch}
-                  disabled={loading || displayedRows.filter((r) => r.dguPairReady).length === 0}
-                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 ${
-                    displayedRows.filter((r) => r.dguPairReady).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title="Send all ready paired DGU units to Dispatch"
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>Send All to Dispatch ({displayedRows.filter((r) => r.dguPairReady).length} Paired)</span>
-                </Button>
-              )
-            )}
-
-            {stage === "Lamination" && (
-              selectedRowIds.length > 0 ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleBatchComplete}
-                  disabled={
-                    loading ||
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                  }
-                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all ${
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                      ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
-                      : "Advance selected ready items from Lamination"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>
-                    Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
-                  </span>
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleSendAllToFinished}
-                  disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
-                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
-                    displayedRows.filter((r) => !r.isHolding).length === 0
-                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700 text-white"
-                  }`}
-                  title={
-                    displayedRows.filter((r) => !r.isHolding).length === 0
-                      ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
-                      : "Advance ready items from Lamination"
-                  }
-                >
-                  <Truck className="w-3.5 h-3.5" />
-                  <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
-                </Button>
-              )
-            )}
-
-            {/* EXPORT EXCEL DROPDOWN BUTTON (Header Position) */}
-            <div className="relative inline-block text-left shrink-0" ref={exportMenuRef}>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setIsExportMenuOpen((prev) => !prev)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-xs transition-all"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Export Excel</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
-              </Button>
-
-              {isExportMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl z-50 p-2 space-y-1 animate-in fade-in zoom-in-95">
-                  <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                    Export Excel Options ({stage})
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsExportMenuOpen(false);
-                      const exportItems = displayedRows.map((r) => r.item);
-                      exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2"
-                  >
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <div>
-                      <div>Export Current Stage WIP ({displayedRows.length} Items)</div>
-                      <div className="text-[10px] text-slate-400 font-normal">Active table queue & details</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setIsExportMenuOpen(false);
-                      try {
-                        toast.info(`Fetching completed ${stage} stage logs...`);
-                        const res = await fetch("/api/reports");
-                        const data = await res.json();
-                        exportStageHistoryToExcel(stage, data.history || [], items);
-                      } catch {
-                        toast.error("Failed to fetch stage completion history.");
-                      }
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50 hover:text-blue-900 transition-colors flex items-center gap-2"
-                  >
-                    <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                    <div>
-                      <div>Export Stage Completion Log</div>
-                      <div className="text-[10px] text-slate-400 font-normal">Audit history of completed scans</div>
-                    </div>
-                  </button>
-
-                  {selectedRowIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsExportMenuOpen(false);
-                        const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                        exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-purple-50 hover:text-purple-900 transition-colors flex items-center gap-2"
-                    >
-                      <CheckSquare className="w-4 h-4 text-purple-600 shrink-0" />
-                      <div>
-                        <div>Export Selected Rows ({selectedRowIds.length})</div>
-                        <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
-                      </div>
-                    </button>
-                  )}
-
-                  {stage === "Finished" && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsExportMenuOpen(false);
-                        const targetItems = selectedRowIds.length > 0
-                          ? stageRows.filter((r) => selectedRowIds.includes(r.id)).map((r) => r.item)
-                          : displayedRows.map((r) => r.item);
-
-                        const parentPI = pis.find((p) => p.id === targetItems[0]?.piId || p.piNumber === targetItems[0]?.piNumber);
-                        exportPartialDispatchNoteToExcel(parentPI, targetItems);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-emerald-950 bg-emerald-50 hover:bg-emerald-100 transition-colors flex items-center gap-2 border border-emerald-200"
-                    >
-                      <Truck className="w-4 h-4 text-emerald-700 shrink-0" />
-                      <div>
-                        <div>Export Partial Delivery Note (.xlsx)</div>
-                        <div className="text-[10px] text-emerald-700 font-medium">
-                          {selectedRowIds.length > 0 ? `${selectedRowIds.length} items selected for shipment` : "Full warehouse delivery note"}
-                        </div>
-                      </div>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
@@ -3847,58 +3885,26 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </div>
             )}
 
-            {stage !== "Cutting" && (
-              <div className="flex items-center gap-2 flex-wrap ml-2">
-                {/* View Switcher: Customer vs Flat */}
-                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setStageViewMode("CUSTOMER")}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                      stageViewMode === "CUSTOMER"
-                        ? "bg-indigo-600 text-white shadow-xs"
-                        : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
-                    }`}
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    <span>Group by Customer</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStageViewMode("FLAT")}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                      stageViewMode === "FLAT"
-                        ? "bg-indigo-600 text-white shadow-xs"
-                        : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
-                    }`}
-                  >
-                    <Grid className="w-3.5 h-3.5" />
-                    <span>Flat Table</span>
-                  </button>
-                </div>
-
-                {stageViewMode === "CUSTOMER" && groupedStageCustomerRows.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setAllStageCustomersExpanded(true)}
-                      className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
-                    >
-                      Expand All
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setAllStageCustomersExpanded(false)}
-                      className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
-                    >
-                      Collapse All
-                    </Button>
-                  </div>
-                )}
+            {stage !== "Cutting" && groupedStageCustomerRows.length > 0 && (
+              <div className="flex items-center gap-1 ml-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAllStageCustomersExpanded(true)}
+                  className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
+                >
+                  Expand All
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAllStageCustomersExpanded(false)}
+                  className="h-6 px-2 text-[10px] font-extrabold border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg shadow-2xs"
+                >
+                  Collapse All
+                </Button>
               </div>
             )}
           </div>
@@ -3920,20 +3926,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
 
             <div className="text-[11px] text-slate-500 font-mono">
-              {stage === "Cutting" && currentGroup ? (
+              {stage === "Cutting" ? (
                 <>
-                  SFO: <strong className="text-purple-700">{currentGroup.sfoList.join(", ")}</strong>
-                  {currentGroup.obList.length > 0 && <span className="ml-1.5">(OB: {currentGroup.obList.join(", ")})</span>}
-                </>
-              ) : stage === "Cutting" && selectedBatch ? (
-                <>
-                  SFO:{" "}
-                  <strong className="text-purple-700">
-                    {selectedBatch.sfoNo || selectedBatch.jobOrderNumber || "Batch"}
+                  Total in Cutting Queue:{" "}
+                  <strong className="text-purple-700 font-bold">
+                    {displayedSheetGroups.length} {displayedSheetGroups.length === 1 ? "Sheet" : "Sheets"} ({stageRows.length} pcs)
                   </strong>
-                  {selectedBatch.jobOrderNumber && (
-                    <span className="ml-1.5">(JO: {selectedBatch.jobOrderNumber})</span>
-                  )}
                 </>
               ) : stage === "DGU" ? (
                 <>
@@ -3946,7 +3944,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 <>
                   Total in Lamination Queue:{" "}
                   <strong className="text-amber-700 font-bold">
-                    {stageRows.length} {stageRows.length === 1 ? "Laminated Unit" : "Laminated Units"} ({stageItems.length} Panes)
+                    {stageRows.length} {stageRows.length === 1 ? "Laminated Unit" : "Laminated Units"}
                   </strong>
                 </>
               ) : stage === "Finished" ? (
@@ -3970,8 +3968,42 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           /* Cutting Workstation: Sheet-Grouped View (Each Sheet shown ONE time, Click Sheet to view all data) */
           <div className="space-y-3 p-3 bg-slate-50/50">
             {displayedSheetGroups.length === 0 ? (
-              <div className="text-center py-10 text-slate-400">
-                No raw sheets found in this cutting queue.
+              <div className="text-center py-12 px-4 bg-white rounded-2xl border-2 border-dashed border-purple-200 max-w-xl mx-auto my-6 space-y-4 shadow-xs">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
+                  <CheckCircle className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-800 text-base">
+                    All sheets in this batch have been cut!
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    All raw glass sheets have been cut and successfully advanced to the next stage (Glass Pairing / Buffer).
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-3 pt-2 flex-wrap">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setSelectedBatchId(null);
+                      setSelectedSheetRackNo("ALL");
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs h-9 px-4 gap-2 rounded-xl shadow-xs transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back to All Batches</span>
+                  </Button>
+                  {onNavigateTab && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => onNavigateTab("Pairing")}
+                      className="border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-extrabold text-xs h-9 px-4 gap-2 rounded-xl transition-all cursor-pointer"
+                    >
+                      <span>Go to Glass Pairing</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
             ) : (
               displayedSheetGroups.map((group) => {
@@ -4097,7 +4129,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
                     {/* Expanded Data Table (Shows all panels for this sheet) */}
                     {isExpanded && (
-                      <div className="overflow-x-auto w-full border-t border-slate-100 bg-white">
+                      <TableHorizontalScrollWrapper className="border-t border-slate-100 bg-white">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
                             <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/70">
@@ -4172,7 +4204,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     <span className="text-purple-700">{row.displaySerial}</span>
                                   </td>
                                   <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
-                                    {row.displayBarcode}
+                                    {resolveValidBarcode(item, row.displayBarcode)}
                                   </td>
                                   <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
                                     <span className="px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-200 shadow-2xs">
@@ -4275,7 +4307,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             })}
                           </tbody>
                         </table>
-                      </div>
+                      </TableHorizontalScrollWrapper>
                     )}
                   </div>
                 );
@@ -4307,7 +4339,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               };
 
               return (
-                <div className="overflow-x-auto w-full">
+                <TableHorizontalScrollWrapper>
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/60">
@@ -4338,19 +4370,20 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <th className="py-2.5 px-2">
                           {stage === "DGU" ? "Outer Panel Barcode" : "Barcode"}
                         </th>
-                        <th className="py-2.5 px-2 text-center">{stage === "DGU" ? "QTY (Units)" : stage === "Finished" ? "QTY (Units/Pcs)" : "QTY"}</th>
+                        <th className="py-2.5 px-2 text-center">{stage === "DGU" || stage === "Lamination" ? "QTY (Units)" : stage === "Finished" ? "QTY (Units/Pcs)" : "QTY"}</th>
                         <th className="py-2.5 px-2 text-right">SQM</th>
                         <th className="py-2.5 px-2">Size (W × H)</th>
                         <th className="py-2.5 px-2">{stage === "DGU" ? "Outer Panel Glass Spec" : "Glass Type / Specification"}</th>
                         <th className="py-2.5 px-2">{stage === "Finished" ? "Product Type & Finish" : "Finish"}</th>
                         <th className="py-2.5 px-2">Route Flow</th>
+                        {stage === "Finished" && <th className="py-2.5 px-2 text-center whitespace-nowrap">IP Glass</th>}
                         <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {rows.length === 0 ? (
                         <tr>
-                          <td colSpan={stage === "Finished" ? 12 : 13} className="text-center py-12 text-slate-500">
+                          <td colSpan={stage === "Finished" ? 13 : 13} className="text-center py-12 text-slate-500">
                             <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
                               <span className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center font-bold text-lg">
                                 🪟
@@ -4370,15 +4403,36 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         rows.map((row) => {
                           const isSelected = selectedRowIds.includes(row.id);
                           const item = row.item;
-                          const partner = row.partnerItem;
+                          let partner = row.partnerItem;
+                          if (!partner && stage === "Finished") {
+                            partner =
+                              items.find(
+                                (other) =>
+                                  other.id !== item.id &&
+                                  other.serialNumber !== item.serialNumber &&
+                                  isDguStickerPairMatch(item, other)
+                              ) || null;
+                          }
+
+                          const allPartners: GlassItem[] =
+                            row.partnerItems && row.partnerItems.length > 0
+                              ? row.partnerItems
+                              : partner
+                              ? [partner]
+                              : [];
+
                           const itemFinish = getItemFinish(item);
+                          const hasPartner = stage === "Finished" && allPartners.length > 0;
+                          const isPartnerExpanded = expandedPartnerRows.has(row.id);
+                          // Column count for the partner sub-row colspan
+                          const colSpanCount = 13;
 
                           return (
+                            <React.Fragment key={row.id}>
                             <tr
-                              key={row.id}
                               className={`hover:bg-teal-50/30 transition-colors ${
                                 isSelected ? "bg-teal-50/60" : ""
-                              }`}
+                              } ${hasPartner && isPartnerExpanded ? "border-b-0 bg-teal-50/20" : ""}`}
                             >
                               {stage !== "Finished" && (
                                 <td className="py-2.5 px-3 text-center align-middle">
@@ -4425,7 +4479,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               </td>
 
                               {/* Sticker Serial */}
-                              <td className="py-2.5 px-2 font-mono font-bold align-middle">
+                              <td className="py-2.5 px-2 font-mono font-bold align-middle whitespace-nowrap">
                                 <span className="text-purple-700">
                                   {row.displaySerial}
                                 </span>
@@ -4454,11 +4508,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 {stage === "Finished" && (
                                   row.glassCategory === "DLGU" ? (
                                     <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                      DLGU Unit
+                                      DLGU Unit (OP)
                                     </span>
                                   ) : row.glassCategory === "DGU" || row.isDguPair ? (
                                     <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
-                                      DGU / IGU Unit
+                                      DGU Unit (OP)
                                     </span>
                                   ) : row.glassCategory === "Laminated" ? (
                                     <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
@@ -4473,16 +4527,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               </td>
 
                               {/* Barcode */}
-                              <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
-                                <div>{row.displayBarcode}</div>
+                              <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px] whitespace-nowrap">
+                                <div>{resolveValidBarcode(item, row.displayBarcode)}</div>
                                 {stage === "DGU" && (
                                   <span className="text-[9.5px] text-purple-700 block font-mono font-bold">
                                     Scan Target (Colour)
-                                  </span>
-                                )}
-                                {stage === "Finished" && row.isDguPair && partner && (
-                                  <span className="text-[9.5px] text-teal-700 block font-mono font-semibold">
-                                    + Inner: {partner.barcode}
                                   </span>
                                 )}
                               </td>
@@ -4490,7 +4539,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               {/* QTY */}
                               <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
                                 <span className="px-2 py-0.5 rounded-lg font-mono font-black text-xs bg-slate-100 text-slate-900 border border-slate-200 shadow-2xs">
-                                  {item.qty || 1} {stage === "DGU" || (stage === "Finished" && (row.isDguPair || row.glassCategory === "DGU" || row.glassCategory === "DLGU")) ? (item.qty === 1 ? "unit" : "units") : item.qty === 1 ? "pc" : "pcs"}
+                                  {item.qty || 1} {stage === "DGU" || stage === "Lamination" || (stage === "Finished" && (row.isDguPair || row.glassCategory === "DGU" || row.glassCategory === "DLGU" || row.glassCategory === "Laminated")) ? (item.qty === 1 ? "unit" : "units") : item.qty === 1 ? "pc" : "pcs"}
                                 </span>
                               </td>
 
@@ -4567,20 +4616,20 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 )}
                                 {stage === "Finished" && (
                                   row.glassCategory === "DLGU" ? (
-                                    <div className="text-[10px] text-purple-800 font-semibold flex items-center gap-1 mt-0.5">
-                                      <span>Double Laminated Glazed Unit (DLGU){partner ? ` • Inner: ${partner.serialNumber}` : ""}</span>
+                                    <div className="text-[10px] text-purple-700 font-medium mt-0.5">
+                                      Double Laminated Unit (DLGU)
                                     </div>
-                                  ) : row.glassCategory === "DGU" && row.isDguPair && partner ? (
-                                    <div className="text-[10px] text-teal-800 font-semibold flex items-center gap-1 mt-0.5">
-                                      <span>Paired DGU: Inner Lite {partner.serialNumber}</span>
+                                  ) : row.glassCategory === "DGU" || row.isDguPair ? (
+                                    <div className="text-[10px] text-teal-700 font-medium mt-0.5">
+                                      Paired DGU / IGU Unit
                                     </div>
                                   ) : row.glassCategory === "Laminated" ? (
-                                    <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1 mt-0.5">
-                                      <span>Laminated Glass • Autoclaved</span>
+                                    <div className="text-[10px] text-amber-700 font-medium mt-0.5">
+                                      Laminated Glass Unit
                                     </div>
                                   ) : (
-                                    <div className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mt-0.5">
-                                      <span>General Monolithic / Single Pane</span>
+                                    <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                      General Monolithic Glass
                                     </div>
                                   )
                                 )}
@@ -4657,10 +4706,47 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </div>
                               </td>
 
+                              {/* IP Glass expand column (Finished stage only) */}
+                              {stage === "Finished" && (
+                                <td className="py-2.5 px-2 align-middle text-center whitespace-nowrap">
+                                  {hasPartner ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => togglePartnerExpand(row.id)}
+                                      title={isPartnerExpanded ? "Hide IP (Inner Pane) Glass details" : "Show IP (Inner Pane) Glass details"}
+                                      className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg text-[10.5px] font-bold border transition-all cursor-pointer shadow-2xs ${
+                                        isPartnerExpanded
+                                          ? "bg-teal-700 text-white border-teal-800 ring-2 ring-teal-200"
+                                          : "bg-teal-50 text-teal-800 border-teal-300 hover:bg-teal-100 hover:border-teal-400"
+                                      }`}
+                                    >
+                                      <Link2 className="w-3.5 h-3.5 text-current shrink-0" />
+                                      <span>IP Glass</span>
+                                      <ChevronDown className={`w-3.5 h-3.5 text-current shrink-0 transition-transform duration-200 ${isPartnerExpanded ? "rotate-180" : ""}`} />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 font-medium px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
+                                      Single Lite
+                                    </span>
+                                  )}
+                                </td>
+                              )}
+
                               {/* Actions */}
                               <td className="py-2.5 px-3 text-right align-middle whitespace-nowrap">
                                 <div className="flex items-center justify-end gap-1.5">
-                                  {!isFinished && (
+                                  {isFinished ? (
+                                    <Button
+                                      size="sm"
+                                      disabled={loading}
+                                      onClick={() => openDispatchModal([row])}
+                                      className="h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shrink-0"
+                                      title="Dispatch this glass unit to Dispatched History"
+                                    >
+                                      <Truck className="w-3.5 h-3.5" />
+                                      <span>Dispatch</span>
+                                    </Button>
+                                  ) : (
                                     <Button
                                       size="sm"
                                       disabled={loading || (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)}
@@ -4739,16 +4825,205 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </div>
                               </td>
                             </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
+
+                            {/* ── IP Glass Partner Detail Sub-Row (Expandable Dropdown for Finished/Dispatch Stage) ── */}
+                            {stage === "Finished" && hasPartner && isPartnerExpanded && (
+                              <tr className="bg-slate-100/90 border-b-2 border-teal-400/80 shadow-inner">
+                                <td colSpan={colSpanCount} className="p-0">
+                                  <div className="sticky left-0 w-full max-w-6xl p-3 sm:p-4">
+                                    <div className="bg-white rounded-2xl border-2 border-teal-400 shadow-lg overflow-hidden">
+                                      {/* Header bar of the expanded IP pane */}
+                                      <div className="px-4 py-3 bg-gradient-to-r from-teal-50 via-slate-50 to-indigo-50/40 border-b border-teal-200/80 flex items-center justify-between flex-wrap gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                                            <Link2 className="w-4 h-4" />
+                                          </span>
+                                          <div>
+                                            <div className="text-xs font-black text-slate-900 flex items-center gap-2 flex-wrap">
+                                              <span>Partner Glass Details — Inner Pane (IP)</span>
+                                              <span className="text-slate-400 font-normal">•</span>
+                                              <span className="text-teal-800 font-bold">
+                                                Paired with Outer Pane (OP) #{item.serialNumber}
+                                              </span>
+                                            </div>
+                                            <div className="text-[10px] text-slate-500 font-medium">
+                                              Order / PI: {item.orderNo || item.piNumber || "—"} • Batch: {item.batchNo || item.sfoNo || "—"} • Position #{item.posNo || "—"}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-black border ${
+                                              row.glassCategory === "DLGU"
+                                                ? "bg-purple-100 text-purple-900 border-purple-300"
+                                                : row.glassCategory === "Laminated"
+                                                ? "bg-amber-100 text-amber-900 border-amber-300"
+                                                : "bg-teal-100 text-teal-900 border-teal-300"
+                                            }`}
+                                          >
+                                            {row.glassCategory === "DLGU"
+                                              ? "DLGU Double Laminated Unit"
+                                              : row.glassCategory === "Laminated"
+                                              ? "Laminated Unit"
+                                              : "DGU / IGU Unit"}
+                                          </span>
+
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                            Verified Complete Unit
+                                          </span>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => togglePartnerExpand(row.id)}
+                                            className="text-xs font-bold text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs ml-1"
+                                          >
+                                            <ChevronUp className="w-3.5 h-3.5" />
+                                            <span>Hide</span>
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {/* List of partner IP panes */}
+                                      <div className="p-3.5 sm:p-4 space-y-3 bg-slate-50/50">
+                                        {allPartners.map((p, pIdx) => {
+                                          const pFinish = getItemFinish(p);
+                                          const pBarcode = resolveValidBarcode(p);
+                                          return (
+                                            <div
+                                              key={p.id || p.serialNumber || pIdx}
+                                              className="bg-white rounded-xl border border-teal-200/90 p-3.5 shadow-2xs hover:border-teal-400 transition-all"
+                                            >
+                                              <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-100 mb-3">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                  <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 text-xs font-mono font-black border border-teal-200">
+                                                    IP Pane #{pIdx + 1}
+                                                  </span>
+                                                  <span className="text-xs font-mono font-black text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                                                    Serial: {p.serialNumber}
+                                                  </span>
+                                                  <span className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                                    Barcode: <span className="font-bold text-slate-900">{pBarcode}</span>
+                                                  </span>
+                                                  <span className="text-xs font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 font-bold">
+                                                    POS: {p.posNo || "—"}
+                                                  </span>
+                                                  <span
+                                                    className={`px-2 py-0.5 rounded text-[10px] font-black border ${
+                                                      pFinish === "Colour"
+                                                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                        : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                                    }`}
+                                                  >
+                                                    {pFinish} Finish
+                                                  </span>
+                                                </div>
+
+                                                <div className="flex items-center gap-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => onPrintSticker(p)}
+                                                    className="px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                                                    title="Print IP Glass Sticker"
+                                                  >
+                                                    <Tag className="w-3.5 h-3.5 text-slate-600" />
+                                                    <span>Print IP Sticker</span>
+                                                  </button>
+                                                </div>
+                                              </div>
+
+                                              {/* Grid details */}
+                                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-12 gap-2.5 text-xs">
+                                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/80 col-span-2 sm:col-span-1 md:col-span-3">
+                                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Glass Specification</div>
+                                                  <div className="font-bold text-slate-900 truncate mt-1 text-xs" title={p.glassType || p.itemCode || ""}>
+                                                    {p.glassType || p.itemCode || "Clear Float Glass"}
+                                                  </div>
+                                                </div>
+
+                                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/80 col-span-1 md:col-span-2">
+                                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dimensions (W × H)</div>
+                                                  <div className="font-bold text-slate-900 mt-1 text-xs font-mono">
+                                                    {p.width} × {p.height} mm
+                                                  </div>
+                                                </div>
+
+                                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/80 col-span-1 md:col-span-2">
+                                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Area (SQM) & QTY</div>
+                                                  <div className="font-bold text-emerald-700 mt-1 text-xs font-mono">
+                                                    {(p.sqm || ((p.width * p.height) / 1000000)).toFixed(2)} m² • {p.qty || 1} {p.qty === 1 ? "pc" : "pcs"}
+                                                  </div>
+                                                </div>
+
+                                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/80 col-span-1 md:col-span-2">
+                                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Location</div>
+                                                  <div className="font-bold text-teal-700 mt-1 text-xs flex items-center gap-1">
+                                                    <CheckCircle className="w-3 h-3 text-emerald-600 shrink-0" />
+                                                    <span>{p.currentStage || "Finished Warehouse"}</span>
+                                                  </div>
+                                                </div>
+
+                                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/80 col-span-2 sm:col-span-2 md:col-span-3">
+                                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Route Flow</div>
+                                                  <div className="flex items-center gap-1 mt-1 overflow-x-auto no-scrollbar">
+                                                    {p.processRoute.map((stg, stgIdx) => (
+                                                      <React.Fragment key={stg}>
+                                                        <span
+                                                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold whitespace-nowrap shrink-0 ${
+                                                            stg === p.currentStage
+                                                              ? "bg-teal-600 text-white"
+                                                              : p.completedStages?.includes(stg)
+                                                              ? "bg-emerald-100 text-emerald-700"
+                                                              : "bg-slate-200 text-slate-600"
+                                                          }`}
+                                                        >
+                                                          {stg}
+                                                        </span>
+                                                        {stgIdx < p.processRoute.length - 1 && (
+                                                          <ArrowRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                                                        )}
+                                                      </React.Fragment>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+
+                                      <div className="px-4 py-2 bg-teal-50/70 border-t border-teal-200/70 text-[11px] text-teal-900 flex items-center justify-between flex-wrap gap-2">
+                                        <div className="flex items-center gap-1.5 font-medium">
+                                          <Sparkles className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                                          <span>
+                                            <strong>Pair Verification:</strong> Outer Pane (OP #{item.serialNumber}) & Inner Pane (IP) are verified together in Finished Dispatch Queue.
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => togglePartnerExpand(row.id)}
+                                          className="text-[11px] font-bold text-teal-800 hover:text-teal-950 underline cursor-pointer"
+                                        >
+                                          Close Details ▲
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
                   </table>
-                </div>
+                </TableHorizontalScrollWrapper>
               );
             };
 
-            return stageViewMode === "CUSTOMER" ? (
+            return (
               <div className="space-y-3">
                 {groupedStageCustomerRows.length > 0 ? (
                   groupedStageCustomerRows.map((customer) => {
@@ -4862,7 +5137,16 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     }
                                   >
                                     {customer.totalUnits}{" "}
-                                    {stage === "DGU" || stage === "Finished"
+                                    {(stage === "DGU" ||
+                                      stage === "Lamination" ||
+                                      customer.categories.has("DGU") ||
+                                      customer.categories.has("DLGU") ||
+                                      customer.categories.has("Lamination") ||
+                                      customer.categories.has("Laminated") ||
+                                      (stage === "Finished" &&
+                                        (customer.categories.has("DGU") ||
+                                          customer.categories.has("DLGU") ||
+                                          customer.categories.has("Laminated"))))
                                       ? customer.totalUnits === 1
                                         ? "Unit"
                                         : "Units"
@@ -4874,6 +5158,22 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                                 </div>
                               </div>
+
+                              {stage === "Finished" && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openDispatchModal(customer.rows);
+                                  }}
+                                  disabled={loading || customer.rows.length === 0}
+                                  className="h-8 px-3 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer shrink-0"
+                                  title={`Dispatch all ${customer.totalUnits} units for ${customer.customerName}`}
+                                >
+                                  <Truck className="w-3.5 h-3.5" />
+                                  <span>Dispatch ({customer.totalUnits})</span>
+                                </button>
+                              )}
 
                               <div
                                 className={`p-1.5 rounded-lg transition-colors ${
@@ -4912,15 +5212,184 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   </div>
                 )}
               </div>
-            ) : (
-              /* Flat Table fallback */
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
-                {renderStageRowsTable(displayedRows)}
-              </div>
             );
           })()
         )}
       </div>
+
+      {/* Dispatch Confirmation & Details Modal */}
+      <Dialog
+        open={dispatchDialog.open}
+        onOpenChange={(open) => {
+          if (!open && !dispatchDialog.loading) {
+            setDispatchDialog((prev) => ({ ...prev, open: false }));
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl bg-white text-slate-900 border-slate-200 shadow-2xl p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="p-5 pb-3 bg-gradient-to-r from-emerald-50 via-teal-50/60 to-emerald-50 border-b border-emerald-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md">
+                  <Truck className="w-5 h-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                    <span>Dispatch Ready Glass Units</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      {dispatchDialog.rows.length} {dispatchDialog.rows.length === 1 ? "Unit" : "Units"}
+                    </span>
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500 mt-0.5">
+                    Items will be archived permanently into Dispatched History and cleared from the Dispatch workstation.
+                  </DialogDescription>
+                </div>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+            {/* Quick Metrics Banner */}
+            <div className="grid grid-cols-3 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Units</div>
+                <div className="text-lg font-black text-slate-900 font-mono mt-0.5">{dispatchDialog.rows.length}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Panes</div>
+                <div className="text-lg font-black text-slate-900 font-mono mt-0.5">
+                  {dispatchDialog.rows.reduce((acc, r) => acc + (r.allSerials?.length || 1), 0)}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Area</div>
+                <div className="text-lg font-black text-emerald-700 font-mono mt-0.5">
+                  {dispatchDialog.rows.reduce((acc, r) => acc + (r.effectiveSqm || 0), 0).toFixed(2)} m²
+                </div>
+              </div>
+            </div>
+
+            {/* Shipment Form Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
+                  Delivery Note / Challan # <span className="text-red-500">*</span>
+                </label>
+                <Input
+                  type="text"
+                  value={dispatchDialog.dispatchNoteNo}
+                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, dispatchNoteNo: e.target.value }))}
+                  placeholder="e.g. DN-2026-001"
+                  className="h-9 text-xs font-mono font-bold bg-white border-slate-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
+                  Dispatch Date & Time
+                </label>
+                <Input
+                  type="datetime-local"
+                  value={dispatchDialog.dispatchedAt}
+                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, dispatchedAt: e.target.value }))}
+                  className="h-9 text-xs font-medium bg-white border-slate-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
+                  Vehicle / Truck # (Optional)
+                </label>
+                <Input
+                  type="text"
+                  value={dispatchDialog.vehicleNo}
+                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, vehicleNo: e.target.value }))}
+                  placeholder="e.g. DXB-89412"
+                  className="h-9 text-xs font-medium bg-white border-slate-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
+                  Driver Name / Phone (Optional)
+                </label>
+                <Input
+                  type="text"
+                  value={dispatchDialog.driverName}
+                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, driverName: e.target.value }))}
+                  placeholder="e.g. John Doe / 050-1234567"
+                  className="h-9 text-xs font-medium bg-white border-slate-300"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
+                  Dispatch Remarks / Gate Pass (Optional)
+                </label>
+                <Input
+                  type="text"
+                  value={dispatchDialog.remarks}
+                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, remarks: e.target.value }))}
+                  placeholder="e.g. Loaded on Stillage A4, gate pass issued"
+                  className="h-9 text-xs font-medium bg-white border-slate-300"
+                />
+              </div>
+            </div>
+
+            {/* Selected Units Preview List */}
+            <div className="space-y-1.5 pt-1">
+              <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                <span>Items Being Dispatched ({dispatchDialog.rows.length})</span>
+                <span className="text-[10px] text-slate-400 font-normal">All paired partner panes included</span>
+              </div>
+              <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/50">
+                {dispatchDialog.rows.map((row, idx) => (
+                  <div key={row.id || idx} className="p-2.5 flex items-center justify-between text-xs hover:bg-white transition-colors">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="font-mono font-bold text-slate-800 shrink-0">#{idx + 1}</span>
+                      <span className="font-mono text-purple-700 font-extrabold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                        {row.displaySerial || row.item.serialNumber}
+                      </span>
+                      <span className="font-medium text-slate-700 truncate">{row.item.orderNo || row.item.piNumber}</span>
+                      <span className="text-slate-400">•</span>
+                      <span className="text-slate-500">{row.item.width} × {row.item.height} mm</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                        {row.glassCategory || "Monolithic"}
+                      </span>
+                      <span className="font-mono font-bold text-emerald-700">
+                        {(row.effectiveSqm || 0).toFixed(2)} m²
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={dispatchDialog.loading}
+              onClick={() => setDispatchDialog((prev) => ({ ...prev, open: false }))}
+              className="text-xs font-bold text-slate-700"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={dispatchDialog.loading || !dispatchDialog.dispatchNoteNo.trim()}
+              onClick={handleConfirmDispatch}
+              className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-5 h-9 rounded-xl shadow-xs cursor-pointer"
+            >
+              <Truck className="w-4 h-4" />
+              <span>{dispatchDialog.loading ? "Dispatching..." : `Confirm & Dispatch (${dispatchDialog.rows.length} Units)`}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Modal */}
       <Dialog

@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GlassItem, PIMaster, DashboardStats, ProductionStage } from "@shared/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
 
 interface ProductionOverviewViewProps {
   items: GlassItem[];
@@ -77,12 +77,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const totalItems = items.length;
     const totalSqm = parseFloat(items.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
-    // Stage counts (Individual Glass Panes)
-    const cuttingItemsList = items.filter((i) => i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected"));
-    const pairingItemsList = items.filter((i) => i.currentStage === "Pairing");
-    const dguItemsList = items.filter((i) => i.currentStage === "DGU");
-    const laminationItemsList = items.filter((i) => i.currentStage === "Lamination");
-    const finishedItemsList = items.filter((i) => i.currentStage === "Finished" || i.status === "Completed");
+    // Stage counts (Individual Glass Panes - exclude dispatched items which belong only in Dispatched History)
+    const cuttingItemsList = items.filter((i) => !isDispatchedItem(i) && (i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
+    const pairingItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Pairing" && i.status !== "Rejected");
+    const dguItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "DGU" && i.status !== "Rejected");
+    const laminationItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Lamination" && i.status !== "Rejected");
+    const finishedItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Finished" && i.status !== "Rejected");
     const rejectedItemsList = items.filter((i) => i.status === "Rejected");
     const reworkItemsList = items.filter((i) => i.status === "Reworking" || ((i as any).reworkCount && (i as any).reworkCount > 0));
 
@@ -223,6 +223,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const map = new Map<string, {
       id: string;
       piNumber: string;
+      batchNo?: string;
       customerName: string;
       projectName: string;
       jobOrderNumber: string;
@@ -241,6 +242,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       primaryStage: "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished";
       progress: number;
       createdAt: string | Date;
+      fileName?: string;
     }>();
 
     items.forEach((item) => {
@@ -250,10 +252,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         map.set(key, {
           id: key,
           piNumber: (item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, ""),
+          batchNo: parentPI?.batchNo || item.batchNo || "",
           customerName: parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer",
           projectName: parentPI?.projectName || (item as any).projectName || item.sectionName || "Project",
           jobOrderNumber: parentPI?.jobOrderNumber || item.orderNo || item.sfoNo || "",
           sfoNo: item.sfoNo || parentPI?.sfoNo || "",
+          fileName: parentPI?.fileName || (item as any).fileName || "",
           items: [],
           cuttingCount: 0,
           pairingCount: 0,
@@ -280,11 +284,13 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       if (item.status === "Rejected") b.rejectedCount += itemPieces;
       if (item.status === "Reworking" || ((item as any).reworkCount && (item as any).reworkCount > 0)) b.reworkCount += itemPieces;
 
-      if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
+      if (isDispatchedItem(item)) {
+        // Dispatched items belong only in Dispatched History
+      } else if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
       else if (st === "pairing") b.pairingCount += itemPieces;
       else if (st === "dgu") b.dguCount += itemPieces;
       else if (st === "lamination") b.laminationCount += itemPieces;
-      else if (st === "finished" || item.status === "Completed") b.finishedCount += itemPieces;
+      else if (st === "finished") b.finishedCount += itemPieces;
     });
 
     // Also include any PIs without direct items
@@ -297,6 +303,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           projectName: p.projectName || "Project",
           jobOrderNumber: p.jobOrderNumber || p.sfoNo || "",
           sfoNo: p.sfoNo || "",
+          fileName: p.fileName || "",
           items: [],
           cuttingCount: p.totalQty || p.itemsCount || 0,
           pairingCount: 0,
@@ -373,6 +380,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         b.piNumber.toLowerCase().includes(q) ||
         b.customerName.toLowerCase().includes(q) ||
         b.projectName.toLowerCase().includes(q) ||
+        Boolean(b.fileName && b.fileName.toLowerCase().includes(q)) ||
         b.jobOrderNumber.toLowerCase().includes(q) ||
         b.sfoNo.toLowerCase().includes(q)
       );
@@ -1107,7 +1115,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     title="Click to view full batch details"
                   >
                     <td className="py-3 px-3 font-mono font-black text-purple-700 whitespace-nowrap group-hover:underline">
-                      {formatBatchNumber(b.piNumber)}
+                      {formatBatchNumber(b.batchNo || b.piNumber)}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
                       <div className="flex flex-col gap-1">

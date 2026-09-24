@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { formatPlatformDateTime, formatBatchNumber } from "@/lib/utils";
 import * as pdfjsLib from "pdfjs-dist";
 import { formatSejalBarcode } from "@/lib/barcode";
+import { useAuth } from "@/context/AuthContext";
 
 // Set pdf.js worker URL to local public asset for fast offline/local compatibility
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
@@ -65,6 +66,7 @@ export interface ParsedStickerItem {
 }
 
 export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open, onOpenChange, onSuccess }) => {
+  const { getAuthHeaders } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +178,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     try {
       const res = await fetch("/api/sticker/check-duplicates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({
           fileName: fileObj?.name || "",
           sfoNo: sfo,
@@ -256,15 +261,54 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         const fullPageText = textBlocks.map((b) => b.text).join(" ");
         fullCorpusText += " " + fullPageText;
 
-        // 1. Dynamic Barcode Extraction
-        const barcodeBlock = textBlocks.find((b) => {
-          const clean = b.text.replace(/[\s-]/g, "");
-          return /^\d{10,24}$/.test(clean) || /^[A-Z0-9]{10,24}$/i.test(clean);
-        });
-
-        // 2. Locate Header Row dynamically (looking for Order / OB / SFO / Batch / POS / Qty / Width / Height)
+        // 1. Locate Header Row dynamically (looking for Order / OB / SFO / Batch / POS / Qty / Width / Height)
         const orderHeader = textBlocks.find((b) => /order\s*(#|no)?/i.test(b.text));
         const headerY = orderHeader ? orderHeader.y : 148;
+
+        // 2. Dynamic Barcode Extraction
+        // Factory barcode stickers have a pure numeric barcode (typically 12-20 digits, starting with 10126 or 101) printed directly under the barcode bars.
+        let detectedBarcode = "";
+
+        // Priority 1: Direct match in fullPageText for Sejal standard barcode (10126... or 101...)
+        const sejalCodeMatch = fullPageText.match(/\b(10126\d{7,15})\b/) || fullPageText.match(/\b(101\d{9,17})\b/);
+        if (sejalCodeMatch) {
+          detectedBarcode = sejalCodeMatch[1];
+        }
+
+        // Priority 2: Look in textBlocks for a pure numeric block with 12 to 22 digits
+        if (!detectedBarcode) {
+          const numericBlock = textBlocks.find((b) => {
+            const clean = b.text.replace(/[\s-]/g, "");
+            return /^\d{12,22}$/.test(clean);
+          });
+          if (numericBlock) {
+            detectedBarcode = numericBlock.text.replace(/[\s-]/g, "");
+          }
+        }
+
+        // Priority 3: Any text block with 10 to 24 pure digits located at the upper area (y >= headerY - 5)
+        if (!detectedBarcode) {
+          const upperNumericBlock = textBlocks.find((b) => {
+            const clean = b.text.replace(/[\s-]/g, "");
+            if (/^\d{2}[/.-]\d{2}[/.-]\d{4}$/.test(b.text)) return false;
+            return /^\d{10,24}$/.test(clean) && b.y >= headerY - 5;
+          });
+          if (upperNumericBlock) {
+            detectedBarcode = upperNumericBlock.text.replace(/[\s-]/g, "");
+          }
+        }
+
+        // Priority 4: Any general pure numeric block of 10 to 24 digits
+        if (!detectedBarcode) {
+          const anyNumericBlock = textBlocks.find((b) => {
+            const clean = b.text.replace(/[\s-]/g, "");
+            if (/^\d{2}[/.-]\d{2}[/.-]\d{4}$/.test(b.text)) return false;
+            return /^\d{10,24}$/.test(clean);
+          });
+          if (anyNumericBlock) {
+            detectedBarcode = anyNumericBlock.text.replace(/[\s-]/g, "");
+          }
+        }
 
         // Extract value row blocks sitting directly below header
         const valBlocks = textBlocks.filter((b) => {
@@ -333,9 +377,8 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         if (!widthVal) widthVal = 1000;
         if (!heightVal) heightVal = 1000;
 
-        // Deterministic barcode fallback based on sticker page / position
-        const cleanExtractedBarcode = barcodeBlock ? barcodeBlock.text.replace(/[\s-]/g, "") : "";
-        const finalBarcode = cleanExtractedBarcode || formatSejalBarcode(sfoNoVal || detectedSFO || orderNo || `SFO${pageNum}`, posNoVal || pageNum);
+        // Barcode extracted directly from sticker, with deterministic fallback if unavailable
+        const finalBarcode = detectedBarcode || formatSejalBarcode(sfoNoVal || detectedSFO || orderNo || `SFO${pageNum}`, posNoVal || pageNum);
 
         // 3. Dynamic Customer Name Extraction
         const custCandidates = textBlocks.filter((b) => {
@@ -426,6 +469,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
         const primaryLower = primaryPane.toLowerCase();
         const isPrimaryColour =
+          primaryLower.includes("emicool") ||
           primaryLower.includes("stopray") ||
           primaryLower.includes("sunguard") ||
           primaryLower.includes("sn ") ||
@@ -525,7 +569,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         const orderKey = (item.orderNo || "").trim().toLowerCase();
         const posKey = (item.posNo || "").trim().toLowerCase();
         const finishKey = (item.colorOrClear || "Clear").trim().toLowerCase();
-        const groupKey = `${orderKey}_pos_${posKey}_${item.width}x${item.height}_${finishKey}`;
+        const custKey = (item.customerName || "").trim().toLowerCase();
+        const projKey = (item.projectName || "").trim().toLowerCase();
+        const groupKey = `${custKey}_${projKey}_${orderKey}_pos_${posKey}_${item.width}x${item.height}_${finishKey}`;
 
         if (combinedMap.has(groupKey)) {
           const existing = combinedMap.get(groupKey)!;
@@ -598,8 +644,21 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       });
 
       const fallbackBatchId = detectedBatch || (detectedSFO ? `${detectedSFO}-B1` : `B${Date.now().toString().slice(-4)}`);
-      setCustomerName(detectedCustomer || "");
-      setProjectName(detectedProject || "");
+      const allCustomers = Array.from(new Set(extractedItems.map((i) => i.customerName?.trim()).filter(Boolean)));
+      const allProjects = Array.from(new Set(extractedItems.map((i) => i.projectName?.trim()).filter(Boolean)));
+
+      if (allCustomers.length > 1) {
+        setCustomerName(`Multiple (${allCustomers.map((c) => c.split(" ")[0]).join(", ")})`);
+      } else {
+        setCustomerName(detectedCustomer || allCustomers[0] || "");
+      }
+
+      if (allProjects.length > 1) {
+        setProjectName(`Multiple (${allProjects.join(", ")})`);
+      } else {
+        setProjectName(detectedProject || allProjects[0] || "");
+      }
+
       setSfoNo(detectedSFO || "");
       setObNo(detectedOB || "");
       setBatchNo(detectedBatch || "");
@@ -774,7 +833,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     try {
       const res = await fetch("/api/sticker/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({
           customerName: customerName || itemsToImport[0]?.customerName || "Customer",
           projectName: projectName || itemsToImport[0]?.projectName || "Project",
@@ -788,8 +850,13 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           colorOrClear: glassCategory,
           finish: glassCategory,
           glassColor: finalBatchColor,
-          glassCategory: productCategory,
-          items: itemsToImport.map((i) => ({ ...i, glassCategory: productCategory, finish: glassCategory })),
+          items: itemsToImport.map((i) => ({
+            ...i,
+            customerName: i.customerName || (customerName.startsWith("Multiple") ? undefined : customerName),
+            projectName: i.projectName || (projectName.startsWith("Multiple") ? undefined : projectName),
+            glassCategory: productCategory,
+            finish: glassCategory,
+          })),
         }),
       });
 
@@ -831,7 +898,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       String(row.glassCode).toLowerCase().includes(term) ||
       String(row.glassType).toLowerCase().includes(term) ||
       String(row.colorOrClear).toLowerCase().includes(term) ||
-      String(row.glassColor).toLowerCase().includes(term)
+      String(row.glassColor).toLowerCase().includes(term) ||
+      String(row.customerName || "").toLowerCase().includes(term) ||
+      String(row.projectName || "").toLowerCase().includes(term)
     );
   });
 
@@ -1290,6 +1359,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                           <th className="px-3 py-2.5 w-14 text-center">SL NO.</th>
                           <th className="px-3 py-2.5 w-24 text-center">PI</th>
                           <th className="px-3 py-2.5 w-24 text-center">POS NO.</th>
+                          <th className="px-3 py-2.5 min-w-[140px]">CUSTOMER / PROJECT</th>
                           <th className="px-3 py-2.5 w-28">FINISH / TYPE</th>
                           <th className="px-3 py-2.5 w-24 text-center">WIDTH (MM)</th>
                           <th className="px-3 py-2.5 w-24 text-center">HEIGHT (MM)</th>
@@ -1330,6 +1400,20 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   onChange={(e) => handleItemChange(realIndex, "posNo", e.target.value)}
                                   className="h-8 text-xs font-black font-mono bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-2 text-center"
                                 />
+                              </td>
+
+                              {/* CUSTOMER / PROJECT */}
+                              <td className="px-2 py-1.5 align-middle">
+                                <div className="flex flex-col text-left">
+                                  <span className="text-[11px] font-bold text-slate-800 truncate max-w-[140px]" title={row.customerName}>
+                                    {row.customerName || "Customer"}
+                                  </span>
+                                  {row.projectName && (
+                                    <span className="text-[10px] text-slate-500 font-mono truncate max-w-[140px]" title={row.projectName}>
+                                      {row.projectName}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
 
                               {/* FINISH / TYPE */}

@@ -59,8 +59,27 @@ export function loadDatabaseFromDisk(force = false): void {
         });
 
         // Normalize batches: 1 PDF is strictly 100% Colour or 100% Clear (never Mixed)
-        const colourRegex = /colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
+        const colourRegex = /emicool|colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
         let dataChanged = false;
+
+        // Auto-heal invalid barcodes (e.g. "WIDTHHEIGHT" or non-digit header artifacts)
+        const repairedBarcodeMap = new Map<string, string>();
+        glassItemsDatabase.forEach((item, idx) => {
+          const b = String(item.barcode || "").trim();
+          if (!b || /width|height|order|customer|project|batch|glass/i.test(b) || /^[A-Z]+$/i.test(b) || !/\d/.test(b)) {
+            const cleanSfo = String(item.sfoNo || item.piNumber || "1344").replace(/[^0-9]/g, "");
+            const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
+            const numPart = item.serialNumber ? String(item.serialNumber).replace(/\D/g, "") : "";
+            const seqPad = (numPart || String(idx + 1)).padStart(4, "0").slice(-4);
+            const fixedBarcode = `10126270${sfoPad}${seqPad}`;
+            item.barcode = fixedBarcode;
+            item.qrId = `QR-${fixedBarcode}`;
+            if (item.serialNumber) {
+              repairedBarcodeMap.set(item.serialNumber, fixedBarcode);
+            }
+            dataChanged = true;
+          }
+        });
         piDatabase.forEach((pi) => {
           const batchItems = glassItemsDatabase.filter(
             (item) => item.piId === pi.id || (item.piNumber && item.piNumber === pi.piNumber)
@@ -259,7 +278,7 @@ export function loadDatabaseFromDisk(force = false): void {
         });
 
         // Synchronize paired DGU / DLGU partner panes that were assembled and finished together
-        const finishedItems = glassItemsDatabase.filter((i) => i.currentStage === "Finished" || i.status === "Completed");
+        const finishedItems = glassItemsDatabase.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected");
         finishedItems.forEach((fin) => {
           if (fin.glassCategory === "DLGU" || fin.glassCategory === "DGU") {
             const finPairId = (fin as any).lamPairId;
@@ -287,7 +306,7 @@ export function loadDatabaseFromDisk(force = false): void {
             (i) => i.piId === pi.id || i.piNumber === pi.piNumber || i.piId === cleanId || i.piNumber === cleanPiNo
           );
           if (piItems.length > 0) {
-            const comp = piItems.filter((i) => i.currentStage === "Finished" || i.status === "Completed").length;
+            const comp = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
             if (pi.completedItemsCount !== comp) {
               pi.completedItemsCount = comp;
               dataChanged = true;
@@ -307,6 +326,28 @@ export function loadDatabaseFromDisk(force = false): void {
         rejectDatabase.splice(0, rejectDatabase.length, ...(Array.isArray(parsed.rejectDatabase) ? parsed.rejectDatabase : []));
         reworkDatabase.splice(0, reworkDatabase.length, ...(Array.isArray(parsed.reworkDatabase) ? parsed.reworkDatabase : []));
         notificationsDatabase.splice(0, notificationsDatabase.length, ...(Array.isArray(parsed.notificationsDatabase) ? parsed.notificationsDatabase : []));
+
+        if (repairedBarcodeMap.size > 0) {
+          productionHistoryDatabase.forEach((h) => {
+            if (h.serialNumber && repairedBarcodeMap.has(h.serialNumber)) {
+              h.barcode = repairedBarcodeMap.get(h.serialNumber)!;
+              if (h.remarks && /WIDTHHEIGHT/i.test(h.remarks)) {
+                h.remarks = h.remarks.replace(/WIDTHHEIGHT/gi, h.barcode);
+              }
+            }
+          });
+          rejectDatabase.forEach((r) => {
+            if (r.serialNumber && repairedBarcodeMap.has(r.serialNumber)) {
+              r.barcode = repairedBarcodeMap.get(r.serialNumber)!;
+            }
+          });
+          reworkDatabase.forEach((rw) => {
+            if (rw.serialNumber && repairedBarcodeMap.has(rw.serialNumber)) {
+              rw.barcode = repairedBarcodeMap.get(rw.serialNumber)!;
+            }
+          });
+          dataChanged = true;
+        }
 
         // Auto-sync: Ensure all rejected glass items automatically exist in reworkDatabase with remake tickets to Cutting
         let autoSyncReworkAdded = false;
@@ -394,6 +435,7 @@ export function loadDatabaseFromDisk(force = false): void {
 }
 
 export function saveDatabaseToDisk(immediate = false): void {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) return;
   const executeSave = () => {
     try {
       if (!fs.existsSync(DATA_DIR)) {
@@ -489,7 +531,7 @@ export const handleGetPIs: RequestHandler = (req, res) => {
         (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
     );
     if (piItems.length > 0) {
-      const completedCount = piItems.filter((i) => i.currentStage === "Finished" || i.status === "Completed").length;
+      const completedCount = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
       pi.completedItemsCount = completedCount;
       const newStatus = completedCount >= piItems.length ? "Completed" : (completedCount > 0 || piItems.some((i) => i.currentStage !== "Cutting" || i.completedStages?.length) ? "In Production" : (pi.status || "Pending"));
       if (pi.status !== newStatus) {

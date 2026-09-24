@@ -24,6 +24,7 @@ import {
   Activity,
   ChevronLeft,
   CircleDot,
+  PackageCheck,
 } from "lucide-react";
 import {
   Tooltip,
@@ -101,6 +102,16 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           activeColor: "text-indigo-300",
         },
         {
+          id: "dispatched-history",
+          label: "Dispatched History",
+          icon: PackageCheck,
+          iconColor: "text-teal-400",
+          badge: stats?.dispatchedItems ?? 0,
+          badgeBg: "bg-teal-950/80 text-teal-300 border border-teal-800/70",
+          activeBg: "bg-gradient-to-r from-teal-900/50 via-teal-900/30 to-transparent text-white border border-teal-500/40 font-bold",
+          activeColor: "text-teal-300",
+        },
+        {
           id: "pis",
           label: "Stickers & Batches",
           icon: FileText,
@@ -127,7 +138,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           children: [
             {
               id: "pairing",
-              label: "Glass Pairing & Buffer",
+              label: "Glass Pairing",
               icon: Link2,
               iconColor: "text-sky-400",
               badge: stats?.pendingPairing ?? 0,
