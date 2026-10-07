@@ -449,35 +449,24 @@ export default function LandingPage() {
             </a>
           </nav>
 
-          {/* Action CTAs */}
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => setQuoteModalOpen(true)}
-              variant="outline"
-              className="hidden sm:inline-flex border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold h-10 px-4 rounded-xl shadow-xs"
-            >
-              Get Quote
-            </Button>
-            {isAuthenticated ? (
+            {/* Action CTAs */}
+            <div className="flex items-center gap-3">
               <Button
-                onClick={() => navigate("/app")}
-                className="bg-gradient-to-r from-[#1a3a6b] to-[#254d8c] hover:from-[#132b4f] hover:to-[#1a3a6b] text-white font-extrabold text-xs h-10 px-5 rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-2"
+                onClick={() => setQuoteModalOpen(true)}
+                variant="outline"
+                className="hidden sm:inline-flex border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold h-10 px-4 rounded-xl shadow-xs"
               >
-                <Cpu className="h-4 w-4 text-amber-300" />
-                Go to ERP OS ({user?.role})
-                <ArrowRight className="h-3.5 w-3.5" />
+                Get Quote
               </Button>
-            ) : (
               <Button
                 onClick={() => navigate("/login")}
                 className="bg-gradient-to-r from-[#1a3a6b] to-[#254d8c] hover:from-[#132b4f] hover:to-[#1a3a6b] text-white font-extrabold text-xs h-10 px-5 rounded-xl shadow-md transition-all hover:scale-[1.02] flex items-center gap-2"
               >
                 <LogIn className="h-4 w-4 text-amber-300" />
-                Portal Login
+                ERP Portal Login
                 <ArrowRight className="h-3.5 w-3.5" />
               </Button>
-            )}
-          </div>
+            </div>
         </div>
       </header>
 
@@ -518,25 +507,14 @@ export default function LandingPage() {
 
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center gap-4 pt-2">
-                {isAuthenticated ? (
-                  <Button
-                    onClick={() => navigate("/app")}
-                    className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
-                  >
-                    <Cpu className="h-4 w-4 text-amber-300" />
-                    Enter ERP Portal ({user?.name || user?.role})
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => navigate("/login")}
-                    className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
-                  >
-                    <LogIn className="h-4 w-4 text-amber-300" />
-                    Login to ERP Portal
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                )}
+                <Button
+                  onClick={() => navigate("/login")}
+                  className="bg-gradient-to-r from-[#1a3a6b] via-[#204a87] to-[#1a3a6b] hover:from-[#142c52] hover:to-[#1a3a6b] text-white font-extrabold text-sm h-12 px-7 rounded-xl shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all flex items-center gap-2.5"
+                >
+                  <LogIn className="h-4 w-4 text-amber-300" />
+                  Login to ERP Portal
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
                 <Button
                   onClick={() => setQuoteModalOpen(true)}
                   variant="outline"
@@ -650,20 +628,12 @@ export default function LandingPage() {
 
                   {/* Launch / Login CTA */}
                   <Button
-                    onClick={() => navigate(isAuthenticated ? "/app" : "/login")}
+                    onClick={() => navigate("/login")}
                     className="w-full bg-[#1a3a6b] hover:bg-[#132b4f] text-white font-extrabold text-xs h-10 rounded-xl shadow-md flex items-center justify-center gap-2 transition-transform hover:scale-[1.01]"
                   >
-                    {isAuthenticated ? (
-                      <>
-                        <Workflow className="h-4 w-4 text-amber-300" />
-                        Open Live Manufacturing Dashboard
-                      </>
-                    ) : (
-                      <>
-                        <LogIn className="h-4 w-4 text-amber-300" />
-                        Login to Access Manufacturing Dashboard
-                      </>
-                    )}
+                    <LogIn className="h-4 w-4 text-amber-300" />
+                    Login to Access Manufacturing Dashboard
+                    <ArrowRight className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </div>
@@ -959,10 +929,11 @@ export default function LandingPage() {
               </p>
             </div>
             <Button
-              onClick={() => navigate("/app")}
+              onClick={() => navigate("/login")}
               className="mt-6 bg-[#e31e24] hover:bg-[#c2191e] text-white font-extrabold text-xs h-10 rounded-xl flex items-center justify-center gap-2"
             >
-              Access Factory ERP <ArrowRight className="h-3.5 w-3.5" />
+              <LogIn className="h-4 w-4" />
+              Login to Factory ERP <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
@@ -1147,8 +1118,9 @@ export default function LandingPage() {
             <h5 className="font-bold text-white mb-3 uppercase tracking-wider text-xs">Systems & Portals</h5>
             <ul className="space-y-2 text-slate-400">
               <li>
-                <Link to="/app" className="text-amber-300 hover:underline font-semibold">
-                  ▶ Production ERP & Tracking OS
+                <Link to="/login" className="text-amber-300 hover:underline font-semibold flex items-center gap-1.5">
+                  <LogIn className="w-3.5 h-3.5 text-amber-300" />
+                  Production ERP &amp; Tracking OS (Login)
                 </Link>
               </li>
 

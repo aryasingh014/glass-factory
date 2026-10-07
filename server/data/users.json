@@ -1,0 +1,14 @@
+[
+  {
+    "id": "usr-admin-01",
+    "username": "admin",
+    "email": "gauravraj77820@gmail.com",
+    "name": "Gaurav Kumar (Administrator)",
+    "role": "Admin",
+    "passwordHash": "5faf0309f17bbc77dceb953ae0332a7d1a175f57d1c37c372cdb10acd8ddb8267987bf15fcecb04af73022c7f7fdee2f45428c1958fa9a93b6c6a78dcd51fd0c",
+    "salt": "af0823e281905764cc7e936e7a0ee9e7",
+    "isActive": true,
+    "createdAt": "2026-10-02T10:24:53.039Z",
+    "lastLoginAt": "2026-10-07T12:57:16.316Z"
+  }
+]

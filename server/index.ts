@@ -34,7 +34,24 @@ import {
 } from "./routes/production";
 
 import { handleGetPerformanceAnalytics } from "./routes/analytics";
-import { handleLogin, handleGetCurrentUser, handleLogout } from "./routes/auth";
+import {
+  handleLogin,
+  handleGetCurrentUser,
+  handleLogout,
+  handleHeartbeat,
+  handleGetSessions,
+  handleRevokeSession,
+  handleGetUsers,
+  handleCreateUser,
+  handleUpdateUser,
+  handleDeleteUser,
+  handleGetPermissions,
+  handleUpdatePermissions,
+  handleForgotPassword,
+  handleVerifyResetOtp,
+  handleTestSmtp,
+  handleGetSmtpStatus,
+} from "./routes/auth";
 
 export function requireRole(allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -198,10 +215,23 @@ export function createServer() {
     res.json({ message: "ping pong", version: "v1" });
   });
 
-  // Auth endpoints
+  // Auth & Session endpoints
   apiV1.post("/auth/login", handleLogin);
+  apiV1.post("/auth/forgot-password", handleForgotPassword);
+  apiV1.post("/auth/verify-reset-otp", handleVerifyResetOtp);
   apiV1.get("/auth/me", handleGetCurrentUser);
   apiV1.post("/auth/logout", handleLogout);
+  apiV1.post("/auth/heartbeat", handleHeartbeat);
+  apiV1.get("/auth/permissions", handleGetPermissions);
+  apiV1.put("/auth/permissions", requireRole(["Admin"]), handleUpdatePermissions);
+  apiV1.get("/auth/sessions", requireRole(["Admin"]), handleGetSessions);
+  apiV1.delete("/auth/sessions/:sessionId", requireRole(["Admin"]), handleRevokeSession);
+  apiV1.get("/auth/users", requireRole(["Admin", "Supervisor"]), handleGetUsers);
+  apiV1.post("/auth/users", requireRole(["Admin"]), handleCreateUser);
+  apiV1.put("/auth/users/:id", requireRole(["Admin"]), handleUpdateUser);
+  apiV1.delete("/auth/users/:id", requireRole(["Admin"]), handleDeleteUser);
+  apiV1.post("/auth/smtp/test", requireRole(["Admin"]), handleTestSmtp);
+  apiV1.get("/auth/smtp/status", requireRole(["Admin"]), handleGetSmtpStatus);
 
   // PI endpoints
   apiV1.get("/pi", handleGetPIs);

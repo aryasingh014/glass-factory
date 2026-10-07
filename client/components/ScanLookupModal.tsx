@@ -73,9 +73,11 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white text-slate-900 border-slate-200 shadow-xl">
         <DialogHeader>
-          <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
-            <ScanLine className="w-6 h-6 text-emerald-600" />
-            Barcode & QR Code Product Lookup Scanner
+          <DialogTitle className="text-xl font-extrabold flex items-center gap-2.5 text-slate-900">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <ScanLine className="w-4 h-4 text-white" />
+            </div>
+            <span>Barcode & QR Code Product Lookup Scanner</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -96,7 +98,7 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
             <Button
               disabled={loading}
               onClick={() => handleSearch()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2 shadow-sm"
             >
               {loading ? "Searching..." : "Lookup"}
             </Button>

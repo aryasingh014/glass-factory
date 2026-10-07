@@ -1,6 +1,31 @@
 import { RequestHandler } from "express";
-import { findUserByUsernameOrEmail, validatePassword, getUserProfile, findUserById } from "../lib/users";
+import {
+  findUserByUsernameOrEmail,
+  validatePassword,
+  getUserProfile,
+  findUserById,
+  createSession,
+  updateSessionHeartbeat,
+  getActiveSessionsList,
+  revokeSession,
+  getAllUserRecords,
+  createUser,
+  updateUser,
+  deleteUser,
+  updateUserLastLogin,
+  ROLE_PERMISSIONS,
+  createPasswordResetOtp,
+  verifyAndResetPassword,
+} from "../lib/users";
 import { generateUserToken, verifyToken } from "../lib/auth";
+import {
+  sendOtpEmail,
+  sendNewUserWelcomeEmail,
+  sendPasswordResetSuccessEmail,
+  sendTestEmail,
+  verifySmtpConnection,
+} from "../lib/email";
+import { logger } from "../lib/logger";
 import { sanitizeString } from "./production";
 
 /**
@@ -11,64 +36,50 @@ export const handleLogin: RequestHandler = (req, res) => {
   const userIdentifier = sanitizeString(identifier || username || "", 100);
   const rawPassword = typeof password === "string" ? password : "";
 
-  // 1. If explicit username & password provided, perform real authentication
-  if (userIdentifier && rawPassword) {
-    const user = findUserByUsernameOrEmail(userIdentifier);
-    if (!user) {
-      res.status(401).json({ error: "Invalid username or password. Please check your credentials." });
-      return;
-    }
+  const ip = (req.headers["x-forwarded-for"] as string) || req.ip || "127.0.0.1";
+  const userAgent = req.headers["user-agent"] || "Browser Client";
 
-    const isValid = validatePassword(user, rawPassword);
-    if (!isValid) {
-      res.status(401).json({ error: "Invalid username or password. Please check your credentials." });
-      return;
-    }
-
-    const profile = getUserProfile(user);
-    const token = generateUserToken(profile);
-    res.json({
-      token,
-      user: profile,
-      role: profile.role,
-      username: profile.username,
-      name: profile.name,
-      message: `Welcome back, ${profile.name}!`,
-    });
+  if (!userIdentifier || !rawPassword) {
+    res.status(400).json({ error: "Username or email and password are required." });
     return;
   }
 
-  // 2. Fallback quick role selector support if user selected demo role without typing password
-  if (role) {
-    const cleanRole = sanitizeString(role, 20);
-    const user = findUserByUsernameOrEmail(cleanRole);
-    if (user) {
-      // In production real auth, check if password was provided
-      if (rawPassword) {
-        if (!validatePassword(user, rawPassword)) {
-          res.status(401).json({ error: "Invalid password for selected role." });
-          return;
-        }
-      }
-      const profile = getUserProfile(user);
-      const token = generateUserToken(profile);
-      res.json({
-        token,
-        user: profile,
-        role: profile.role,
-        username: profile.username,
-        name: profile.name,
-        message: `Logged in as ${profile.name}`,
-      });
-      return;
-    }
+  const user = findUserByUsernameOrEmail(userIdentifier);
+  if (!user) {
+    res.status(401).json({ error: "Invalid username or password. Please check your credentials." });
+    return;
   }
 
-  res.status(400).json({ error: "Username/email and password are required." });
+  if (user.isActive === false) {
+    res.status(403).json({ error: "Account is disabled. Please contact your system administrator." });
+    return;
+  }
+
+  const isValid = validatePassword(user, rawPassword);
+  if (!isValid) {
+    res.status(401).json({ error: "Invalid username or password. Please check your credentials." });
+    return;
+  }
+
+  const profile = getUserProfile(user);
+  const session = createSession(profile, ip, userAgent);
+  updateUserLastLogin(user.id);
+  const token = generateUserToken(profile, session.sessionId);
+
+  res.json({
+    token,
+    sessionId: session.sessionId,
+    user: profile,
+    role: profile.role,
+    permissions: ROLE_PERMISSIONS[profile.role],
+    username: profile.username,
+    name: profile.name,
+    message: `Welcome back, ${profile.name}!`,
+  });
 };
 
 /**
- * Get currently authenticated user profile
+ * Get currently authenticated user profile & permissions
  */
 export const handleGetCurrentUser: RequestHandler = (req, res) => {
   const authHeader = req.headers.authorization;
@@ -84,26 +95,383 @@ export const handleGetCurrentUser: RequestHandler = (req, res) => {
     return;
   }
 
+  if (payload.sessionId) {
+    updateSessionHeartbeat(payload.sessionId);
+  }
+
   const user = findUserById(payload.userId) || findUserByUsernameOrEmail(payload.username);
   if (!user) {
+    const profile = {
+      id: payload.userId,
+      username: payload.username,
+      email: payload.email || `${payload.role.toLowerCase()}@sejalglass.com`,
+      name: payload.name || `${payload.role} User`,
+      role: payload.role,
+    };
     res.json({
-      user: {
-        id: payload.userId,
-        username: payload.username,
-        email: payload.email || `${payload.role.toLowerCase()}@sejalglass.com`,
-        name: payload.name || `${payload.role} User`,
-        role: payload.role,
-      },
+      user: profile,
+      permissions: ROLE_PERMISSIONS[payload.role] || ROLE_PERMISSIONS.Operator,
     });
     return;
   }
 
-  res.json({ user: getUserProfile(user) });
+  if (user.isActive === false) {
+    res.status(403).json({ error: "Account is disabled." });
+    return;
+  }
+
+  const profile = getUserProfile(user);
+  res.json({
+    user: profile,
+    permissions: ROLE_PERMISSIONS[profile.role] || ROLE_PERMISSIONS.Operator,
+  });
 };
 
 /**
- * Logout handler
+ * Session Heartbeat - Keeps active user online in real time
  */
-export const handleLogout: RequestHandler = (_req, res) => {
+export const handleHeartbeat: RequestHandler = (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Missing token" });
+    return;
+  }
+
+  const token = authHeader.substring(7);
+  const payload = verifyToken(token);
+  if (!payload) {
+    res.status(401).json({ error: "Invalid token" });
+    return;
+  }
+
+  if (payload.sessionId) {
+    updateSessionHeartbeat(payload.sessionId);
+  }
+
+  res.json({ success: true, timestamp: new Date().toISOString() });
+};
+
+/**
+ * Logout handler - revokes session
+ */
+export const handleLogout: RequestHandler = (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    const payload = verifyToken(token);
+    if (payload?.sessionId) {
+      revokeSession(payload.sessionId);
+    }
+  }
   res.json({ message: "Logged out successfully" });
 };
+
+/**
+ * Get all active sessions (Real-time monitoring)
+ */
+export const handleGetSessions: RequestHandler = (_req, res) => {
+  const sessions = getActiveSessionsList();
+  res.json({ sessions });
+};
+
+/**
+ * Revoke specific session (Admin force disconnect)
+ */
+export const handleRevokeSession: RequestHandler = (req, res) => {
+  const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
+  if (!sessionId) {
+    res.status(400).json({ error: "Session ID is required." });
+    return;
+  }
+  const deleted = revokeSession(sessionId);
+  res.json({ success: deleted, message: deleted ? "Session revoked" : "Session not found" });
+};
+
+/**
+ * List all registered users
+ */
+export const handleGetUsers: RequestHandler = (_req, res) => {
+  const users = getAllUserRecords();
+  res.json({ users });
+};
+
+/**
+ * Create a new user (Admin only)
+ */
+export const handleCreateUser: RequestHandler = async (req, res) => {
+  const { username, email, name, role, password, sendEmail } = req.body || {};
+  if (!username || !email || !name || !role || !password) {
+    res.status(400).json({ error: "Username, email, name, role, and password are required." });
+    return;
+  }
+
+  try {
+    const newUser = createUser({
+      username: sanitizeString(username, 50),
+      email: sanitizeString(email, 100),
+      name: sanitizeString(name, 100),
+      role: role as any,
+      password: String(password),
+    });
+
+    // Send welcome email with login credentials via SMTP asynchronously
+    let emailStatus: { sent: boolean; message?: string } = { sent: false };
+    if (sendEmail !== false) {
+      try {
+        const hostHeader = req.get("host") || "localhost:8080";
+        const protocol = req.protocol || "http";
+        const appUrl = `${protocol}://${hostHeader}`;
+        
+        const emailResult = await sendNewUserWelcomeEmail({
+          to: newUser.email,
+          name: newUser.name,
+          username: newUser.username,
+          role: newUser.role,
+          password: String(password),
+          loginUrl: appUrl,
+        });
+
+        if (emailResult.success) {
+          emailStatus = { sent: true, message: `Welcome email with credentials dispatched to ${newUser.email}` };
+        } else {
+          emailStatus = { sent: false, message: `User created, but email dispatch failed: ${emailResult.error}` };
+        }
+      } catch (mailErr: any) {
+        logger.warn("Non-fatal email dispatch error during user creation", { error: mailErr?.message });
+        emailStatus = { sent: false, message: mailErr?.message };
+      }
+    }
+
+    res.status(201).json({
+      user: newUser,
+      message: `User '${newUser.name}' created successfully.`,
+      emailStatus,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to create user." });
+  }
+};
+
+/**
+ * Initiate Forgot Password Request (Sends 6-digit OTP via SMTP)
+ */
+export const handleForgotPassword: RequestHandler = async (req, res) => {
+  const { identifier } = req.body || {};
+  const cleanId = sanitizeString(identifier || "", 100);
+
+  if (!cleanId) {
+    res.status(400).json({ error: "Please enter your username or registered email address." });
+    return;
+  }
+
+  try {
+    const { user, otp, expiresAt } = createPasswordResetOtp(cleanId);
+
+    // Mask user email for privacy (e.g. g***20@gmail.com)
+    const emailParts = user.email.split("@");
+    const maskedUser =
+      emailParts[0].length <= 3
+        ? `${emailParts[0][0]}***`
+        : `${emailParts[0][0]}***${emailParts[0].slice(-2)}`;
+    const maskedEmail = `${maskedUser}@${emailParts[1]}`;
+
+    // Dispatch OTP via SMTP email
+    const emailRes = await sendOtpEmail({
+      to: user.email,
+      name: user.name,
+      otp,
+      role: user.role,
+      expiryMinutes: 15,
+    });
+
+    if (!emailRes.success) {
+      res.status(500).json({
+        error: `Failed to deliver OTP to ${maskedEmail} via Gmail SMTP (${emailRes.error || "Bad Credentials"}). Please verify your Gmail App Password.`,
+        emailDelivered: false,
+        emailError: emailRes.error,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: `A 6-digit password reset OTP has been sent to ${maskedEmail}.`,
+      maskedEmail,
+      expiresAt: new Date(expiresAt).toISOString(),
+      emailDelivered: true,
+    });
+  } catch (err: any) {
+    logger.error("Forgot password request failed", { identifier: cleanId, error: err?.message });
+    res.status(400).json({ error: err?.message || "Failed to process password reset request." });
+  }
+};
+
+/**
+ * Verify OTP and Set New Password
+ */
+export const handleVerifyResetOtp: RequestHandler = async (req, res) => {
+  const { identifier, otp, newPassword } = req.body || {};
+  const cleanId = sanitizeString(identifier || "", 100);
+  const cleanOtp = sanitizeString(otp || "", 10);
+  const rawPass = typeof newPassword === "string" ? newPassword : "";
+
+  if (!cleanId || !cleanOtp || !rawPass) {
+    res.status(400).json({ error: "Username/Email, OTP code, and new password are required." });
+    return;
+  }
+
+  try {
+    const result = verifyAndResetPassword(cleanId, cleanOtp, rawPass);
+
+    // Send confirmation alert email in background
+    sendPasswordResetSuccessEmail({
+      to: result.user.email,
+      name: result.user.name,
+    }).catch((mailErr) => {
+      logger.warn("Password reset confirmation email warning", { error: mailErr?.message });
+    });
+
+    res.json({
+      success: true,
+      message: "Your password has been reset successfully! You can now log in with your new password.",
+    });
+  } catch (err: any) {
+    logger.warn("Verify OTP failed", { identifier: cleanId, error: err?.message });
+    res.status(400).json({ error: err?.message || "Invalid or expired OTP code." });
+  }
+};
+
+/**
+ * Test SMTP Email Dispatch (Admin only)
+ */
+export const handleTestSmtp: RequestHandler = async (req, res) => {
+  const { toEmail } = req.body || {};
+  const targetEmail = sanitizeString(toEmail || "", 100) || "gauravraj778020@gmail.com";
+
+  try {
+    const result = await sendTestEmail(targetEmail);
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `SMTP test email dispatched successfully to ${targetEmail}.`,
+        messageId: result.messageId,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: `SMTP test failed: ${result.error}`,
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "SMTP test execution error" });
+  }
+};
+
+/**
+ * Check SMTP Server Connectivity (Admin diagnostic)
+ */
+export const handleGetSmtpStatus: RequestHandler = async (_req, res) => {
+  const result = await verifySmtpConnection();
+  res.json({
+    ...result,
+    smtpUser: process.env.SMTP_USER || "novaaias014@gmail.com",
+    smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
+    smtpPort: process.env.SMTP_PORT || "465",
+  });
+};
+
+
+/**
+ * Update an existing user (Admin only)
+ */
+export const handleUpdateUser: RequestHandler = (req, res) => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const { username, email, name, role, password, isActive } = req.body || {};
+
+  if (!id) {
+    res.status(400).json({ error: "User ID is required." });
+    return;
+  }
+
+  try {
+    const updated = updateUser(id, {
+      username: username ? sanitizeString(username, 50) : undefined,
+      email: email ? sanitizeString(email, 100) : undefined,
+      name: name ? sanitizeString(name, 100) : undefined,
+      role: role as any,
+      password: password ? String(password) : undefined,
+      isActive: typeof isActive === "boolean" ? isActive : undefined,
+    });
+    res.json({ user: updated, message: `User '${updated.name}' updated successfully.` });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to update user." });
+  }
+};
+
+/**
+ * Delete an existing user (Admin only)
+ */
+export const handleDeleteUser: RequestHandler = (req, res) => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  if (!id) {
+    res.status(400).json({ error: "User ID is required." });
+    return;
+  }
+
+  try {
+    const success = deleteUser(id);
+    if (!success) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+    res.json({ success: true, message: "User deleted successfully." });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to delete user." });
+  }
+};
+
+/**
+ * Get system role permissions matrix
+ */
+export const handleGetPermissions: RequestHandler = (_req, res) => {
+  res.json({ permissions: ROLE_PERMISSIONS });
+};
+
+/**
+ * Update role permissions matrix dynamically (Admin only)
+ */
+export const handleUpdatePermissions: RequestHandler = (req, res) => {
+  const { role, key, value, permissions } = req.body || {};
+
+  if (!role || (role !== "Supervisor" && role !== "Operator")) {
+    res.status(400).json({ error: "Only Supervisor and Operator permissions can be customized. Admin permissions are locked." });
+    return;
+  }
+
+  if (permissions && typeof permissions === "object") {
+    ROLE_PERMISSIONS[role] = {
+      ...ROLE_PERMISSIONS[role],
+      ...permissions,
+      role,
+    };
+  } else if (key && typeof value === "boolean") {
+    if (key.startsWith("module:")) {
+      const moduleName = key.replace("module:", "");
+      const current = ROLE_PERMISSIONS[role].allowedModules || [];
+      if (value && !current.includes(moduleName)) {
+        ROLE_PERMISSIONS[role].allowedModules = [...current, moduleName];
+      } else if (!value) {
+        ROLE_PERMISSIONS[role].allowedModules = current.filter((m) => m !== moduleName);
+      }
+    } else {
+      (ROLE_PERMISSIONS[role] as any)[key] = value;
+    }
+  }
+
+  res.json({
+    success: true,
+    message: `Updated RBAC permissions for ${role}`,
+    permissions: ROLE_PERMISSIONS,
+  });
+};
+

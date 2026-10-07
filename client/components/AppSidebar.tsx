@@ -1,30 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard,
-  FileText,
-  Boxes,
-  Layers,
-  Link2,
-  CheckCircle2,
-  ChevronRight,
-  ChevronDown,
   BarChart3,
-  Clock,
-  ClipboardList,
-  Sparkles,
-  Zap,
-  Scissors,
-  Truck,
-  ShieldCheck,
-  Flame,
-  Factory,
-  ArrowRight,
-  Gauge,
-  Activity,
-  ChevronLeft,
-  CircleDot,
+  FileEdit,
+  Layers,
   PackageCheck,
+  Gauge,
+  Home,
+  CheckCircle,
+  History,
+  Boxes,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   Tooltip,
@@ -34,20 +21,25 @@ import {
 } from "@/components/ui/tooltip";
 import { DashboardStats } from "@shared/api";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext";
+
+interface SubNavItem {
+  id: string;
+  label: string;
+  icon: any;
+  badge?: number;
+  isRoute?: boolean;
+  href?: string;
+}
 
 interface NavItem {
   id: string;
   label: string;
   icon: any;
-  iconColor?: string;
   badge?: number;
-  badgeBg?: string;
-  activeBg?: string;
-  activeColor?: string;
   isRoute?: boolean;
   href?: string;
-  tag?: string;
-  children?: NavItem[];
+  children?: SubNavItem[];
 }
 
 interface AppSidebarProps {
@@ -64,63 +56,39 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   stats,
 }) => {
   const navigate = useNavigate();
+  const { role, user, canAccessTab, isOnline } = useAuth();
 
   const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>({
     cutting: true,
   });
 
-  // Automatically keep dropdown open if child tab (like pairing) is active
-  useEffect(() => {
+  const toggleDropdown = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setOpenDropdowns((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  React.useEffect(() => {
     if (activeTab === "cutting" || activeTab === "pairing") {
       setOpenDropdowns((prev) => ({ ...prev, cutting: true }));
     }
   }, [activeTab]);
 
-  const toggleDropdown = (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setOpenDropdowns((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  interface NavGroup {
+    title: string;
+    items: NavItem[];
+  }
 
-  const navGroups: { title: string; subtitle?: string; items: NavItem[] }[] = [
+  const rawNavGroups: NavGroup[] = [
     {
-      title: "CORE & DASHBOARD",
+      title: "",
       items: [
-        {
-          id: "overview",
-          label: "Executive Dashboard",
-          icon: LayoutDashboard,
-          iconColor: "text-blue-400",
-          activeBg: "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white border border-blue-500/40 font-bold",
-          activeColor: "text-blue-300",
-        },
-        {
-          id: "production-overview",
-          label: "Production Overview",
-          icon: Factory,
-          iconColor: "text-indigo-400",
-          activeBg: "bg-gradient-to-r from-indigo-900/50 via-indigo-900/30 to-transparent text-white border border-indigo-500/40 font-bold",
-          activeColor: "text-indigo-300",
-        },
-        {
-          id: "dispatched-history",
-          label: "Dispatched History",
-          icon: PackageCheck,
-          iconColor: "text-teal-400",
-          badge: stats?.dispatchedItems ?? 0,
-          badgeBg: "bg-teal-950/80 text-teal-300 border border-teal-800/70",
-          activeBg: "bg-gradient-to-r from-teal-900/50 via-teal-900/30 to-transparent text-white border border-teal-500/40 font-bold",
-          activeColor: "text-teal-300",
-        },
-        {
-          id: "pis",
-          label: "Stickers & Batches",
-          icon: FileText,
-          iconColor: "text-sky-400",
-          badge: stats?.totalPI,
-          badgeBg: "bg-sky-950/80 text-sky-300 border border-sky-800/70",
-          activeBg: "bg-gradient-to-r from-sky-900/50 via-sky-900/30 to-transparent text-white border border-sky-500/40 font-bold",
-          activeColor: "text-sky-300",
-        },
+        { id: "overview", label: "Dashboard", icon: Home },
+        { id: "production-overview", label: "Production Overview", icon: BarChart3 },
+        { id: "dispatched-history", label: "Dispatched History", icon: History },
+        { id: "pis", label: "Sticker & Batch", icon: Boxes },
       ],
     },
     {
@@ -129,302 +97,315 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         {
           id: "cutting",
           label: "Cutting Workstation",
-          icon: Scissors,
-          iconColor: "text-indigo-400",
+          icon: FileEdit,
           badge: stats?.pendingCutting ?? 0,
-          badgeBg: "bg-indigo-950/80 text-indigo-300 border border-indigo-800/70",
-          activeBg: "bg-gradient-to-r from-indigo-900/50 via-indigo-900/30 to-transparent text-white border border-indigo-500/40 font-bold",
-          activeColor: "text-indigo-300",
           children: [
-            {
-              id: "pairing",
-              label: "Glass Pairing",
-              icon: Link2,
-              iconColor: "text-sky-400",
-              badge: stats?.pendingPairing ?? 0,
-              badgeBg: "bg-sky-950/80 text-sky-300 border border-sky-800/70",
-              activeBg: "bg-gradient-to-r from-sky-900/50 via-sky-900/30 to-transparent text-white border border-sky-500/40 font-bold",
-              activeColor: "text-sky-300",
-            },
+            { id: "pairing", label: "Glass Pairing", icon: Layers, badge: stats?.pendingPairing ?? 0 },
           ],
         },
-        {
-          id: "dgu",
-          label: "DLGU / IGU Assembly",
-          icon: Boxes,
-          iconColor: "text-teal-400",
-          badge: stats?.pendingDGU ?? 0,
-          badgeBg: "bg-teal-950/80 text-teal-300 border border-teal-800/70",
-          activeBg: "bg-gradient-to-r from-teal-900/50 via-teal-900/30 to-transparent text-white border border-teal-500/40 font-bold",
-          activeColor: "text-teal-300",
-        },
-        {
-          id: "lamination",
-          label: "Lamination Line",
-          icon: Layers,
-          iconColor: "text-amber-400",
-          badge: stats?.pendingLamination ?? 0,
-          badgeBg: "bg-amber-950/80 text-amber-300 border border-amber-800/70",
-          activeBg: "bg-gradient-to-r from-amber-900/50 via-amber-900/30 to-transparent text-white border border-amber-500/40 font-bold",
-          activeColor: "text-amber-300",
-        },
-        {
-          id: "finished",
-          label: "Dispatch & Shipping",
-          icon: Truck,
-          iconColor: "text-emerald-400",
-          badge: stats?.finishedItems ?? 0,
-          badgeBg: "bg-emerald-950/80 text-emerald-300 border border-emerald-800/70",
-          activeBg: "bg-gradient-to-r from-emerald-900/50 via-emerald-900/30 to-transparent text-white border border-emerald-500/40 font-bold",
-          activeColor: "text-emerald-300",
-        },
+        { id: "dgu", label: "DGU/IGU Assembly", icon: PackageCheck, badge: stats?.pendingDGU ?? 0 },
+        { id: "lamination", label: "Lamination Line", icon: Layers, badge: stats?.pendingLamination ?? 0 },
+        { id: "finished", label: "Finished Warehouse", icon: CheckCircle, badge: stats?.finishedItems ?? 0 },
       ],
     },
     {
       title: "INTELLIGENCE & AUDIT",
       items: [
-        {
-          id: "reports",
-          label: "Live Audit & Reports",
-          icon: ClipboardList,
-          iconColor: "text-slate-400",
-          activeBg: "bg-gradient-to-r from-slate-800/80 via-slate-800/50 to-transparent text-white border border-slate-600/60 font-bold",
-          activeColor: "text-slate-200",
-        },
-        {
-          id: "analytics",
-          label: "Performance Analytics",
-          icon: BarChart3,
-          iconColor: "text-blue-400",
-          activeBg: "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white border border-blue-500/40 font-bold",
-          activeColor: "text-blue-300",
-        },
+        { id: "reports", label: "Reports & Analytics", icon: BarChart3 },
+        { id: "analytics", label: "Performance Analytics", icon: Gauge },
+        { id: "settings", label: "System Settings", icon: FileEdit },
       ],
     },
   ];
 
-  const handleItemClick = (item: NavItem | string) => {
+  // Role-based filtered navigation groups
+  const navGroups: NavGroup[] = rawNavGroups
+    .map((group) => {
+      const filteredItems: NavItem[] = group.items
+        .filter((item) => {
+          if (item.children && item.children.length > 0) {
+            const allowedChildren = item.children.filter((sub) => canAccessTab(sub.id));
+            return canAccessTab(item.id) || allowedChildren.length > 0;
+          }
+          return canAccessTab(item.id);
+        })
+        .map((item) => {
+          if (item.children) {
+            return {
+              ...item,
+              children: item.children.filter((sub) => canAccessTab(sub.id)),
+            };
+          }
+          return item;
+        });
+      return {
+        ...group,
+        items: filteredItems,
+      };
+    })
+    .filter((group) => group.items.length > 0);
+
+  const handleItemClick = (item: NavItem | SubNavItem | string) => {
     if (typeof item === "string") {
-      if (setActiveTab) {
-        setActiveTab(item);
-      } else {
-        navigate(`/?tab=${item}`);
-      }
+      if (setActiveTab) setActiveTab(item);
+      else navigate(`/?tab=${item}`);
       return;
     }
-
-    if (item.children && item.children.length > 0) {
-      setOpenDropdowns((prev) => ({ ...prev, [item.id]: true }));
-    }
-    if (item.isRoute && item.href) {
-      navigate(item.href);
-    } else if (setActiveTab) {
-      setActiveTab(item.id);
-    } else {
-      navigate(`/?tab=${item.id}`);
-    }
-  };
-
-  const renderCollapsedItem = (item: NavItem) => {
-    const Icon = item.icon;
-    const isActive = activeTab === item.id;
-    const hasBadge = item.badge !== undefined && item.badge !== null;
-
-    return (
-      <TooltipProvider key={item.id} delayDuration={50}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => handleItemClick(item)}
-              className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center relative transition-all duration-200 group focus:outline-none focus:ring-2 focus:ring-blue-500/40 shrink-0 cursor-pointer",
-                isActive
-                  ? "bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25 border border-blue-400/40"
-                  : "text-slate-400 hover:bg-slate-800/80 hover:text-white border border-transparent"
-              )}
-              aria-label={item.label}
-            >
-              <Icon
-                className={cn(
-                  "w-4.5 h-4.5 transition-transform group-hover:scale-110 shrink-0",
-                  isActive ? "text-white" : item.iconColor || "text-slate-400"
-                )}
-              />
-
-              {/* Badge Indicator for Collapsed Mode */}
-              {hasBadge && (
-                <span
-                  className={cn(
-                    "absolute -top-1 -right-1 min-w-[17px] h-[17px] rounded-full text-[9px] font-black flex items-center justify-center px-1 border-2 border-[#0a1120] shadow-xs group-hover:scale-110 transition-transform",
-                    isActive
-                      ? "bg-amber-400 text-slate-950 font-bold"
-                      : "bg-blue-600 text-white font-bold"
-                  )}
-                >
-                  {item.badge > 99 ? "99+" : item.badge}
-                </span>
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent
-            side="right"
-            sideOffset={8}
-            className="text-xs font-bold bg-[#0f172a] text-white px-3 py-1.5 z-50 shadow-2xl rounded-lg border border-slate-700/80"
-          >
-            <div className="flex items-center gap-2">
-              <span>{item.label}</span>
-              {hasBadge && (
-                <span className="text-blue-300 font-extrabold bg-blue-950/90 border border-blue-800/60 px-1.5 py-0.5 rounded text-[10px]">
-                  {item.badge}
-                </span>
-              )}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  };
-
-  const renderExpandedItem = (item: NavItem, isChild = false) => {
-    const Icon = item.icon;
-    const isActive = activeTab === item.id;
-    const hasBadge = item.badge !== undefined && item.badge !== null;
-    const hasChildren = item.children && item.children.length > 0;
-    const isDropdownOpen = !!openDropdowns[item.id];
-
-    return (
-      <div key={item.id} className="w-full">
-        <div
-          onClick={() => handleItemClick(item)}
-          className={cn(
-            "w-full flex items-center justify-between px-3 rounded-xl relative transition-all duration-200 group text-left cursor-pointer select-none",
-            isChild ? "py-2 text-[11.5px]" : "py-2.5 text-xs",
-            isActive
-              ? item.activeBg || "bg-gradient-to-r from-blue-900/50 via-blue-900/30 to-transparent text-white font-bold border border-blue-500/40 shadow-sm shadow-blue-500/10"
-              : isChild
-              ? "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 font-medium hover:translate-x-0.5"
-              : "text-slate-300 hover:bg-slate-800/60 hover:text-white font-medium hover:translate-x-0.5"
-          )}
-        >
-          {/* Active Accent Left Glowing Indicator */}
-          {isActive && (
-            <span
-              className={cn(
-                "absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full shadow-[0_0_8px_rgba(96,165,250,0.8)]",
-                isChild ? "bg-cyan-400" : "bg-blue-400"
-              )}
-            />
-          )}
-
-          <span className="flex items-center gap-2.5 min-w-0 flex-1 mr-1">
-            <span
-              className={cn(
-                "p-1.5 rounded-lg transition-all duration-200 shrink-0 border",
-                isActive
-                  ? "bg-blue-500/20 border-blue-400/40 shadow-inner"
-                  : "bg-slate-800/60 border-slate-700/40 group-hover:bg-slate-700/70 group-hover:border-slate-600/60"
-              )}
-            >
-              <Icon
-                className={cn(
-                  "shrink-0 group-hover:scale-110 transition-transform duration-200",
-                  isChild ? "w-3.5 h-3.5" : "w-4 h-4",
-                  isActive
-                    ? item.activeColor || "text-blue-300"
-                    : item.iconColor || "text-slate-400 group-hover:text-blue-300"
-                )}
-              />
-            </span>
-
-            <span
-              className={cn(
-                "truncate tracking-tight",
-                isActive ? "font-bold text-white" : "font-medium text-slate-300 group-hover:text-white",
-                isChild ? "text-[11.5px]" : "text-[12.5px]"
-              )}
-              title={item.label}
-            >
-              {item.label}
-            </span>
-          </span>
-
-          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-            {hasBadge && (
-              <span
-                className={cn(
-                  "min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black flex items-center justify-center shrink-0 whitespace-nowrap group-hover:scale-105 transition-transform duration-200 shadow-2xs",
-                  item.badgeBg || "bg-slate-800 text-slate-300 border border-slate-700/70"
-                )}
-              >
-                {item.badge}
-              </span>
-            )}
-
-            {/* Dropdown Chevron Toggle Button */}
-            {hasChildren && (
-              <button
-                type="button"
-                onClick={(e) => toggleDropdown(item.id, e)}
-                className="w-5 h-5 rounded-md flex items-center justify-center hover:bg-slate-700/80 text-slate-400 hover:text-white transition-colors focus:outline-none"
-                title={isDropdownOpen ? "Collapse sub-modules" : "Expand sub-modules"}
-              >
-                <ChevronDown
-                  className={cn(
-                    "w-3.5 h-3.5 transition-transform duration-200",
-                    isDropdownOpen ? "rotate-180 text-blue-400" : ""
-                  )}
-                />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Dropdown Sub-modules connected branch list */}
-        {hasChildren && isDropdownOpen && (
-          <div className="ml-5 pl-2.5 border-l border-slate-800 my-1 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
-            {item.children!.map((child) => renderExpandedItem(child, true))}
-          </div>
-        )}
-      </div>
-    );
+    if (item.isRoute && item.href) navigate(item.href);
+    else if (setActiveTab) setActiveTab(item.id);
+    else navigate(`/?tab=${item.id}`);
   };
 
   return (
     <aside
       className={cn(
-        "shrink-0 bg-[#0a1120] border-r border-slate-800/80 overflow-y-auto flex flex-col justify-between transition-all duration-300 ease-in-out select-none shadow-2xl z-20",
-        sidebarOpen ? "w-[270px] p-3.5 space-y-4" : "w-16 py-4 px-2 items-center space-y-4"
+        "shrink-0 overflow-hidden flex flex-col justify-between transition-all duration-300 ease-in-out select-none shadow-2xl z-20 relative bg-gradient-to-b from-[#0a1e3f] to-[#061836]",
+        sidebarOpen ? "w-[260px]" : "w-16 items-center"
       )}
     >
-      <div className={cn("w-full", sidebarOpen ? "space-y-4" : "space-y-4 flex flex-col items-center")}>
-        {navGroups.map((group, idx) => (
-          <div key={group.title} className="w-full">
-            {sidebarOpen ? (
-              <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400/80 mb-1.5 px-2.5 flex items-center justify-between">
-                <span>{group.title}</span>
-                <span className="w-1 h-1 rounded-full bg-slate-700" />
+      {/* ─── Sidebar Brand Header (STABLE) ─── */}
+      <div className="shrink-0 pb-1 relative z-10">
+        {sidebarOpen ? (
+          <div className="flex items-center gap-3 px-4 pt-3.5 pb-2">
+            <img
+              src="/sejal-glass-logo.png"
+              alt="Sejal Glass"
+              className="h-9 w-auto object-contain"
+            />
+            <div className="min-w-0">
+              <div className="text-[16px] font-black text-white tracking-wide leading-none">
+                SEJAL GLASS
               </div>
-            ) : (
-              idx > 0 && <div className="w-8 h-[1px] bg-slate-800 my-2 mx-auto" />
-            )}
-
-            <nav className={cn("space-y-1", !sidebarOpen && "flex flex-col items-center space-y-2")}>
-              {group.items.map((item) => {
-                if (!sidebarOpen) {
-                  return (
-                    <React.Fragment key={item.id}>
-                      {renderCollapsedItem(item)}
-                      {item.children?.map((child) => renderCollapsedItem(child))}
-                    </React.Fragment>
-                  );
-                }
-
-                return renderExpandedItem(item);
-              })}
-            </nav>
+              <div className="text-[6.5px] font-bold text-white uppercase tracking-[0.14em] leading-tight mt-1 opacity-90">
+                Glass | Architectural | Solutions
+              </div>
+            </div>
           </div>
-        ))}
+        ) : (
+          <div className="pt-3.5 pb-2 flex justify-center">
+            <img src="/sejal-glass-logo.png" alt="Logo" className="h-7 w-auto" />
+          </div>
+        )}
       </div>
+
+      {/* ─── Navigation Groups (COMPACT) ─── */}
+      <div className="flex-1 overflow-y-auto w-full pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden relative z-10">
+        <div className="flex flex-col space-y-1 w-full">
+          {navGroups.map((group, groupIdx) => (
+            <div key={groupIdx} className="w-full">
+              {/* Divider / Title */}
+              {group.title && sidebarOpen && (
+                <div className="mt-2 mb-1 px-4">
+                  <div className="h-[1px] w-full bg-white/10 mb-1.5" />
+                  <div className="text-[8.5px] font-bold text-blue-200/60 uppercase tracking-widest leading-none">
+                    {group.title}
+                  </div>
+                </div>
+              )}
+              {group.title && !sidebarOpen && (
+                <div className="w-6 h-[1px] bg-white/10 my-1.5 mx-auto" />
+              )}
+
+              {/* Items */}
+              <nav className={cn("w-full", !sidebarOpen && "flex flex-col items-center space-y-1")}>
+                {group.items.map((item) => {
+                  const hasChildren = item.children && item.children.length > 0;
+                  const isParentActive = activeTab === item.id;
+                  const isDropdownOpen = !!openDropdowns[item.id];
+
+                  if (!sidebarOpen) {
+                    return (
+                      <TooltipProvider key={item.id} delayDuration={50}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => handleItemClick(item)}
+                              className={cn(
+                                "w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 relative",
+                                isParentActive || (hasChildren && item.children!.some((c) => c.id === activeTab))
+                                  ? "bg-[#1680f5] text-white shadow-[0_0_12px_rgba(22,128,245,0.5)]"
+                                  : "text-white/80 hover:bg-white/10"
+                              )}
+                            >
+                              <item.icon className="w-4 h-4" />
+                              {item.badge !== undefined && item.badge > 0 && (
+                                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-400/25 border border-emerald-400/40 text-emerald-300 text-[10px] font-bold flex items-center justify-center shadow-xs">
+                                  {item.badge > 99 ? "99+" : item.badge}
+                                </span>
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            {hasChildren ? `${item.label} (Sub-stage: Glass Pairing)` : item.label}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  }
+
+                  if (hasChildren) {
+                    return (
+                      <div key={item.id} className="w-full">
+                        {/* Parent Item (Cutting Workstation) */}
+                        <div
+                          onClick={() => {
+                            handleItemClick(item);
+                            setOpenDropdowns((prev) => ({ ...prev, [item.id]: true }));
+                          }}
+                          className={cn(
+                            "w-full flex items-center justify-between px-4 py-1.5 relative transition-all duration-200 cursor-pointer select-none group",
+                            isParentActive
+                              ? "bg-[#1680f5]/15 text-[#1680f5] font-black border-r-2 border-[#1680f5]"
+                              : "text-slate-300 hover:bg-white/5 font-medium"
+                          )}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={cn(
+                                "flex items-center justify-center shrink-0 rounded-full transition-all duration-200",
+                                isParentActive ? "w-[24px] h-[24px] bg-[#1680f5]" : "w-[24px] h-[24px] bg-[#1c2a42]"
+                              )}
+                            >
+                              <item.icon
+                                className={cn(
+                                  isParentActive ? "w-3.5 h-3.5 text-white" : "w-3.5 h-3.5 text-slate-300"
+                                )}
+                              />
+                            </div>
+                            <span className="truncate tracking-wide text-[12.5px]">
+                              {item.label}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            {item.badge !== undefined && item.badge > 0 && (
+                              <span className="min-w-[22px] h-[20px] px-1.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-bold flex items-center justify-center shrink-0 shadow-xs">
+                                {item.badge}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => toggleDropdown(item.id, e)}
+                              className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                              title={isDropdownOpen ? "Collapse sub-stages" : "Expand sub-stages"}
+                            >
+                              {isDropdownOpen ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-blue-300" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Dropdown Sub-Module (Glass Pairing) */}
+                        {isDropdownOpen && (
+                          <div className="flex flex-col space-y-0.5 py-1 pl-6 pr-2 relative animate-in fade-in duration-200">
+                            <div className="absolute left-[31px] top-1.5 bottom-1.5 w-[1px] bg-white/10 pointer-events-none" />
+                            {item.children!.map((sub) => {
+                              const isSubActive = activeTab === sub.id;
+                              return (
+                                <div
+                                  key={sub.id}
+                                  onClick={() => handleItemClick(sub)}
+                                  className={cn(
+                                    "flex items-center justify-between pl-6 pr-3 py-1.5 rounded-lg text-xs transition-all duration-150 cursor-pointer select-none relative group",
+                                    isSubActive
+                                      ? "bg-[#1680f5] text-white font-bold shadow-xs"
+                                      : "text-slate-300 hover:text-white hover:bg-white/10 font-medium"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <sub.icon
+                                      className={cn(
+                                        "w-3.5 h-3.5 shrink-0",
+                                        isSubActive ? "text-white" : "text-blue-300/80 group-hover:text-blue-300"
+                                      )}
+                                    />
+                                    <span className="truncate text-[12px]">{sub.label}</span>
+                                  </div>
+                                  {sub.badge !== undefined && sub.badge > 0 && (
+                                    <span
+                                      className={cn(
+                                        "min-w-[20px] h-[18px] px-1 rounded-full text-[10.5px] font-bold flex items-center justify-center shrink-0 ml-1.5 shadow-xs",
+                                        isSubActive
+                                          ? "bg-white text-blue-700 font-extrabold"
+                                          : "bg-emerald-400/20 border border-emerald-400/40 text-emerald-300"
+                                      )}
+                                    >
+                                      {sub.badge}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  const isActive = activeTab === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleItemClick(item)}
+                      className={cn(
+                        "w-full flex items-center justify-between px-4 py-1.5 relative transition-all duration-200 cursor-pointer select-none",
+                        isActive
+                          ? "bg-[#1680f5]/15 text-[#1680f5] font-black border-r-2 border-[#1680f5]"
+                          : "text-slate-300 hover:bg-white/5 font-medium"
+                      )}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={cn(
+                            "flex items-center justify-center shrink-0 rounded-full transition-all duration-200",
+                            isActive ? "w-[24px] h-[24px] bg-[#1680f5]" : "w-[24px] h-[24px] bg-[#1c2a42]"
+                          )}
+                        >
+                          <item.icon
+                            className={cn(
+                              isActive ? "w-3.5 h-3.5 text-white" : "w-3.5 h-3.5 text-slate-300"
+                            )}
+                          />
+                        </div>
+                        <span className="truncate tracking-wide text-[12.5px]">
+                          {item.label}
+                        </span>
+                      </div>
+
+                      {item.badge !== undefined && item.badge > 0 && (
+                        <span className="min-w-[22px] h-[20px] px-1.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-bold flex items-center justify-center shrink-0 ml-2 shadow-xs">
+                          {item.badge}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </nav>
+            </div>
+          ))}
+        </div>
+      </div>
+
+
+
+      {/* ─── Bottom Background Image (STABLE) ─── */}
+      {sidebarOpen && (
+        <div className="absolute bottom-0 inset-x-0 z-0 pointer-events-none">
+          <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#061836] to-transparent z-10" />
+          <img
+            src="/image copy 6.png"
+            alt="Quality Precision Excellence"
+            className="w-full h-auto object-cover opacity-90"
+            style={{
+              maskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 100%)",
+              WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 100%)",
+            }}
+          />
+        </div>
+      )}
     </aside>
   );
 };

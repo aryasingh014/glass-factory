@@ -23,6 +23,15 @@ import {
   Calendar,
   Boxes,
   Layers,
+  CheckSquare,
+  LayoutGrid,
+  Table as TableIcon,
+  Eye,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatPlatformDateTime, formatBatchNumber } from "@/lib/utils";
@@ -30,8 +39,10 @@ import * as pdfjsLib from "pdfjs-dist";
 import { formatSejalBarcode } from "@/lib/barcode";
 import { useAuth } from "@/context/AuthContext";
 
-// Set pdf.js worker URL to local public asset for fast offline/local compatibility
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+// Configure pdf.js worker URL served cleanly from /pdf.worker.min.js (public folder)
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+}
 
 interface StickerUploaderModalProps {
   open: boolean;
@@ -95,11 +106,25 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
   const [parsingProgress, setParsingProgress] = useState<number>(0);
   const [modalSearchTerm, setModalSearchTerm] = useState("");
 
+  // Quick Check states
+  const [viewMode, setViewMode] = useState<"table" | "quickCheck">("table");
+  const [quickCheckLayout, setQuickCheckLayout] = useState<"table" | "cards">("table");
+  const [quickCheckGrouping, setQuickCheckGrouping] = useState<"pi" | "items">("pi");
+  const [expandedPiKeys, setExpandedPiKeys] = useState<Record<string, boolean>>({});
+  const [isQuickCheckModalOpen, setIsQuickCheckModalOpen] = useState(false);
+  const [quickCheckPage, setQuickCheckPage] = useState(1);
+  const [quickCheckPageSize, setQuickCheckPageSize] = useState<number>(20);
+
   // Duplicate PDF Detection State (1 PDF cannot be uploaded twice)
   const [isPdfDuplicate, setIsPdfDuplicate] = useState(false);
   const [duplicateBatchInfo, setDuplicateBatchInfo] = useState<any | null>(null);
   const [checkingPdfDuplicate, setCheckingPdfDuplicate] = useState(false);
   const [uploadDateTime, setUploadDateTime] = useState<string>("");
+  const [allowOverwrite, setAllowOverwrite] = useState(false);
+
+  // Full Table Pagination state
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState<number>(25);
 
   const resetForm = () => {
     setFile(null);
@@ -121,10 +146,20 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     setIsValidated(false);
     setParsingProgress(0);
     setModalSearchTerm("");
+    setViewMode("table");
+    setQuickCheckLayout("table");
+    setQuickCheckGrouping("pi");
+    setExpandedPiKeys({});
+    setIsQuickCheckModalOpen(false);
+    setQuickCheckPage(1);
+    setQuickCheckPageSize(20);
+    setTablePage(1);
+    setTablePageSize(25);
     setIsPdfDuplicate(false);
     setDuplicateBatchInfo(null);
     setCheckingPdfDuplicate(false);
     setUploadDateTime("");
+    setAllowOverwrite(false);
   };
 
   useEffect(() => {
@@ -219,9 +254,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     setIsPdfDuplicate(false);
     setDuplicateBatchInfo(null);
 
+    let loadingTask: any = null;
     try {
       const arrayBuffer = await uploadedFile.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
       const pdf = await loadingTask.promise;
 
       const totalPages = pdf.numPages;
@@ -245,7 +281,11 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       let fullCorpusText = "";
 
       for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-        setParsingProgress(Math.round((pageNum / totalPages) * 100));
+        // Yield to event loop and throttle progress updates so the browser UI does not freeze
+        if (pageNum % 5 === 0 || pageNum === totalPages || pageNum === 1) {
+          setParsingProgress(Math.round((pageNum / totalPages) * 100));
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
 
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
@@ -553,6 +593,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           optDate: optDateVal,
           delDate: delDateVal,
         });
+
+        // Free PDF page memory immediately to avoid high RAM usage and browser freeze
+        page.cleanup();
       }
 
       if (extractedItems.length === 0) {
@@ -699,6 +742,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       setIsValidated(true);
     } finally {
       setLoading(false);
+      try {
+        if (loadingTask) await loadingTask.destroy();
+      } catch (_) {}
     }
   };
 
@@ -706,6 +752,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     const uploadedFile = e.target.files?.[0];
     if (!uploadedFile) return;
     processUploadedPdf(uploadedFile);
+    e.target.value = "";
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -822,7 +869,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
   };
 
   const handleConfirmImport = async () => {
-    if (parsedRows.length === 0 || validationErrors.length > 0 || isPdfDuplicate) return;
+    if (parsedRows.length === 0 || validationErrors.length > 0 || (isPdfDuplicate && !allowOverwrite)) return;
 
     setLoading(true);
     const finalBatchColor = glassCategory === "Colour" ? "Coloured Glass" : "Clear Glass";
@@ -850,6 +897,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           colorOrClear: glassCategory,
           finish: glassCategory,
           glassColor: finalBatchColor,
+          overwrite: allowOverwrite,
           items: itemsToImport.map((i) => ({
             ...i,
             customerName: i.customerName || (customerName.startsWith("Multiple") ? undefined : customerName),
@@ -887,68 +935,978 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
     ? rawExtractedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0)
     : parsedRows.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
-  // Filter parsed rows for in-modal search
-  const filteredRows = parsedRows.filter((row) => {
+  // Filter parsed rows for in-modal search across all 15 factory table columns
+  // (SL NO, PI, POS NO, CUSTOMER / PROJECT, FINISH / TYPE, WIDTH, HEIGHT, QTY, SQM, GLASS CODE, GLASS TYPE / SPEC, OB, SFO, BATCH, BARCODE)
+  const filteredRows = parsedRows.filter((row, idx) => {
     if (!modalSearchTerm.trim()) return true;
-    const term = modalSearchTerm.toLowerCase();
-    return (
-      String(row.stickerNo).includes(term) ||
-      String(row.posNo).toLowerCase().includes(term) ||
-      String(row.barcode).toLowerCase().includes(term) ||
-      String(row.glassCode).toLowerCase().includes(term) ||
-      String(row.glassType).toLowerCase().includes(term) ||
-      String(row.colorOrClear).toLowerCase().includes(term) ||
-      String(row.glassColor).toLowerCase().includes(term) ||
-      String(row.customerName || "").toLowerCase().includes(term) ||
-      String(row.projectName || "").toLowerCase().includes(term)
-    );
+    const term = modalSearchTerm.toLowerCase().trim();
+
+    const checkField = (q: string): boolean => {
+      // 1. SL NO. (Sticker #, Row Index, Serial)
+      const slNo = String(row.stickerNo || "");
+      const rowIdx = String(idx + 1);
+      const serial = String((row as any).serialNumber || "").toLowerCase();
+      const cleanHashQ = q.replace(/^#/, "").trim();
+      if (slNo === q || slNo.includes(q) || rowIdx === q || serial.includes(q)) return true;
+      if (cleanHashQ && (slNo === cleanHashQ || rowIdx === cleanHashQ)) return true;
+
+      // 2. PI (Order / PI Number)
+      const piVal = String(row.orderNo || (row as any).piNumber || (row as any).piNo || "").toLowerCase();
+      const cleanPiQ = q.replace(/^pi[-:\s]*/i, "").trim();
+      if (piVal.includes(q) || (cleanPiQ && piVal.includes(cleanPiQ))) return true;
+
+      // 3. POS NO. (Position Number)
+      const posVal = String(row.posNo || (row as any).pos || "").toLowerCase();
+      const cleanPosQ = q.replace(/^pos[-:\s#]*/i, "").trim();
+      if (posVal.includes(q) || (cleanPosQ && posVal.includes(cleanPosQ))) return true;
+
+      // 4. CUSTOMER / PROJECT
+      const customer = String(row.customerName || customerName || "").toLowerCase();
+      const project = String(row.projectName || projectName || "").toLowerCase();
+      if (customer.includes(q) || project.includes(q)) return true;
+
+      // 5. FINISH / TYPE (Clear / Colour / DGU / Lamination / DLGU / Tint)
+      const finishVal = String(row.colorOrClear || "").toLowerCase();
+      const glassColorVal = String(row.glassColor || "").toLowerCase();
+      const categoryVal = String(row.glassCategory || "").toLowerCase();
+      if (
+        finishVal.includes(q) ||
+        glassColorVal.includes(q) ||
+        categoryVal.includes(q) ||
+        (q === "color" && (finishVal.includes("colour") || glassColorVal.includes("colour"))) ||
+        (q === "colour" && (finishVal.includes("colour") || glassColorVal.includes("colour"))) ||
+        (q === "clear" && (finishVal.includes("clear") || glassColorVal.includes("clear")))
+      ) return true;
+
+      // 6. WIDTH (MM)
+      const widthVal = String(row.width || "");
+      const cleanDimQ = q.replace(/\s*mm/gi, "").trim();
+      if (widthVal === q || widthVal.includes(q) || (cleanDimQ && widthVal === cleanDimQ)) return true;
+
+      // 7. HEIGHT (MM)
+      const heightVal = String(row.height || "");
+      if (heightVal === q || heightVal.includes(q) || (cleanDimQ && heightVal === cleanDimQ)) return true;
+
+      // Combined Dimension (e.g. "951x1601", "951 x 1601", "951*1601")
+      const dimStr1 = `${row.width}x${row.height}`;
+      const dimStr2 = `${row.width} x ${row.height}`;
+      const dimStr3 = `${row.width}*${row.height}`;
+      if (dimStr1.includes(q) || dimStr2.includes(q) || dimStr3.includes(q)) return true;
+
+      // 8. QTY (Quantity / Line Qty)
+      const qtyVal = String(row.qty || 1);
+      const lineQtyVal = String(row.lineQty || "");
+      const cleanQtyQ = q.replace(/\s*pcs|\s*pc/gi, "").trim();
+      if (
+        qtyVal === q ||
+        lineQtyVal === q ||
+        (cleanQtyQ && (qtyVal === cleanQtyQ || lineQtyVal === cleanQtyQ))
+      ) return true;
+
+      // 9. SQM (Square Meters)
+      const sqmNum = row.sqm || 0;
+      const sqmStr = sqmNum.toFixed(2);
+      const sqmRawStr = String(sqmNum);
+      const cleanSqmQ = q.replace(/\s*m²|\s*m2|\s*sqm/gi, "").trim();
+      if (
+        sqmStr.includes(q) ||
+        sqmRawStr.includes(q) ||
+        (cleanSqmQ && (sqmStr.includes(cleanSqmQ) || sqmRawStr.includes(cleanSqmQ)))
+      ) return true;
+
+      // 10. GLASS CODE
+      const glassCodeVal = String(row.glassCode || "").toLowerCase();
+      if (glassCodeVal.includes(q)) return true;
+
+      // 11. GLASS TYPE / SPEC (type, spec, makeup, description)
+      const glassTypeVal = String(row.glassType || "").toLowerCase();
+      const makeupVal = String(row.makeup || "").toLowerCase();
+      const descVal = String((row as any).description || (row as any).glassDescription || "").toLowerCase();
+      if (glassTypeVal.includes(q) || makeupVal.includes(q) || descVal.includes(q)) return true;
+
+      // 12. OB (OB Number)
+      const obVal = String(row.obNo || obNo || (row as any).ob || "").toLowerCase();
+      const cleanObQ = q.replace(/^ob[-:\s#]*/i, "").trim();
+      if (obVal.includes(q) || (cleanObQ && obVal.includes(cleanObQ))) return true;
+
+      // 13. SFO (SFO Number)
+      const sfoVal = String(row.sfoNo || sfoNo || (row as any).sfo || "").toLowerCase();
+      const cleanSfoQ = q.replace(/^sfo[-:\s#]*/i, "").trim();
+      if (sfoVal.includes(q) || (cleanSfoQ && sfoVal.includes(cleanSfoQ))) return true;
+
+      // 14. BATCH (Batch Number)
+      const batchVal = String(row.batchNo || batchNo || (row as any).batch || "").toLowerCase();
+      const cleanBatchQ = q.replace(/^batch[-:\s#]*/i, "").trim();
+      if (batchVal.includes(q) || (cleanBatchQ && batchVal.includes(cleanBatchQ))) return true;
+
+      // 15. BARCODE
+      const barcodeVal = String(row.barcode || "").toLowerCase();
+      if (barcodeVal.includes(q)) return true;
+
+      // Bonus: Rack / Lot Number
+      const rackVal = String(row.rackNo || "").toLowerCase();
+      if (rackVal.includes(q)) return true;
+
+      return false;
+    };
+
+    // First check whole search term
+    if (checkField(term)) return true;
+
+    // Check space-separated multi-token queries (all must match)
+    const tokens = term.split(/\s+/).filter(Boolean);
+    if (tokens.length > 1) {
+      return tokens.every((token) => checkField(token));
+    }
+
+    return false;
   });
+
+  // Full table pagination calculation
+  const totalTablePages = tablePageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredRows.length / tablePageSize));
+  const currentTablePage = Math.min(tablePage, totalTablePages);
+  const paginatedTableRows = React.useMemo(() => {
+    return tablePageSize === -1
+      ? filteredRows
+      : filteredRows.slice((currentTablePage - 1) * tablePageSize, currentTablePage * tablePageSize);
+  }, [filteredRows, currentTablePage, tablePageSize]);
+
+  // Consolidated PI groups for Quick Check (group by PI number, calculating total QTY & SQM in 1 place)
+  const consolidatedPiRows = React.useMemo(() => {
+    const piGroupMap = new Map<string, {
+      piNo: string;
+      customerName: string;
+      projectName: string;
+      colorOrClear: "Clear" | "Colour";
+      glassTypes: string[];
+      glassCodes: string[];
+      totalQty: number;
+      totalSqm: number;
+      batchNo: string;
+      stickerCount: number;
+      sourceStickers: number[];
+      indices: number[];
+      items: ParsedStickerItem[];
+    }>();
+
+    filteredRows.forEach((row) => {
+      const realIdx = parsedRows.findIndex((r) => r === row);
+      const cleanPi = (row.orderNo || "").trim() || (row.obNo || "").trim() || (row.sfoNo || "").trim() || `No-PI-${row.stickerNo}`;
+      const normKey = cleanPi.toLowerCase();
+
+      if (piGroupMap.has(normKey)) {
+        const existing = piGroupMap.get(normKey)!;
+        existing.totalQty += (row.qty || 1);
+        existing.totalSqm = parseFloat((existing.totalSqm + (row.sqm || 0)).toFixed(2));
+        existing.stickerCount += (row.qty || 1);
+        if (!existing.sourceStickers.includes(row.stickerNo)) {
+          existing.sourceStickers.push(row.stickerNo);
+        }
+        if (row.glassType && !existing.glassTypes.includes(row.glassType)) {
+          existing.glassTypes.push(row.glassType);
+        }
+        if (row.glassCode && !existing.glassCodes.includes(row.glassCode)) {
+          existing.glassCodes.push(row.glassCode);
+        }
+        if (!existing.customerName && row.customerName) {
+          existing.customerName = row.customerName;
+        }
+        if (!existing.projectName && row.projectName) {
+          existing.projectName = row.projectName;
+        }
+        if (!existing.batchNo && row.batchNo) {
+          existing.batchNo = row.batchNo;
+        }
+        existing.indices.push(realIdx);
+        existing.items.push(row);
+      } else {
+        piGroupMap.set(normKey, {
+          piNo: cleanPi,
+          customerName: row.customerName || "Customer",
+          projectName: row.projectName || "Project",
+          colorOrClear: row.colorOrClear,
+          glassTypes: row.glassType ? [row.glassType] : [],
+          glassCodes: row.glassCode ? [row.glassCode] : [],
+          totalQty: row.qty || 1,
+          totalSqm: parseFloat((row.sqm || 0).toFixed(2)),
+          batchNo: row.batchNo || batchNo || "1",
+          stickerCount: row.qty || 1,
+          sourceStickers: [row.stickerNo],
+          indices: [realIdx],
+          items: [row],
+        });
+      }
+    });
+
+    return Array.from(piGroupMap.values());
+  }, [filteredRows, parsedRows, batchNo]);
+
+  // Handlers for consolidated PI modifications
+  const handleConsolidatedPiChange = (indices: number[], newPi: string) => {
+    const updated = [...parsedRows];
+    indices.forEach((idx) => {
+      if (updated[idx]) {
+        updated[idx] = { ...updated[idx], orderNo: newPi };
+      }
+    });
+    setParsedRows(updated);
+  };
+
+  const handleConsolidatedBatchChange = (indices: number[], newBatch: string) => {
+    const updated = [...parsedRows];
+    indices.forEach((idx) => {
+      if (updated[idx]) {
+        updated[idx] = { ...updated[idx], batchNo: newBatch };
+      }
+    });
+    setParsedRows(updated);
+  };
+
+  const handleRemovePiGroup = (indices: number[]) => {
+    const indicesSet = new Set(indices);
+    const updated = parsedRows.filter((_, idx) => !indicesSet.has(idx));
+    setParsedRows(updated);
+    toast.info("Removed all items for this PI from batch");
+  };
+
+  const togglePiExpand = (piKey: string) => {
+    setExpandedPiKeys((prev) => ({
+      ...prev,
+      [piKey]: !prev[piKey],
+    }));
+  };
+
+  // Active rows for Quick Check depending on grouping mode
+  const activeQuickRows = quickCheckGrouping === "pi" ? consolidatedPiRows : filteredRows;
+  const totalQuickPages = quickCheckPageSize === -1 ? 1 : Math.max(1, Math.ceil(activeQuickRows.length / quickCheckPageSize));
+  const currentQuickCheckPage = Math.min(quickCheckPage, totalQuickPages);
+  const paginatedQuickPiRows = quickCheckPageSize === -1
+    ? consolidatedPiRows
+    : consolidatedPiRows.slice((currentQuickCheckPage - 1) * quickCheckPageSize, currentQuickCheckPage * quickCheckPageSize);
+  const paginatedQuickItemRows = quickCheckPageSize === -1
+    ? filteredRows
+    : filteredRows.slice((currentQuickCheckPage - 1) * quickCheckPageSize, currentQuickCheckPage * quickCheckPageSize);
+
+  // Helper to render the Quick Check verification view (used both inline and in the modal popup)
+  const renderQuickCheckContent = (isModalView = false) => {
+    return (
+      <div className="flex flex-col h-full space-y-3">
+        {/* Quick Check Sub-Header Controls */}
+        <div className="px-4 py-2.5 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 border border-purple-200 flex items-center justify-between flex-wrap gap-2 text-xs rounded-xl shadow-2xs">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="font-black text-purple-900 flex items-center gap-1.5">
+              <CheckSquare className="w-4 h-4 text-purple-600" />
+              Quick Check Mode
+            </span>
+
+            {/* Grouping switcher: By PI Number vs Individual Items */}
+            <div className="flex items-center bg-white rounded-lg border border-purple-200 p-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickCheckGrouping("pi");
+                  setQuickCheckPage(1);
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded flex items-center gap-1 transition-all ${
+                  quickCheckGrouping === "pi"
+                    ? "bg-purple-600 text-white shadow-2xs font-black"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Consolidate all stickers by PI number: 1 count per PI"
+              >
+                By PI Number ({consolidatedPiRows.length} PIs)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickCheckGrouping("items");
+                  setQuickCheckPage(1);
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded flex items-center gap-1 transition-all ${
+                  quickCheckGrouping === "items"
+                    ? "bg-purple-600 text-white shadow-2xs font-black"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Show all individual sizes/stickers breakdown"
+              >
+                All Items ({filteredRows.length})
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Table vs Cards layout switch */}
+            <div className="flex items-center bg-white rounded-lg border border-purple-200 p-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setQuickCheckLayout("table")}
+                className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1 transition-all ${
+                  quickCheckLayout === "table"
+                    ? "bg-purple-600 text-white shadow-2xs font-black"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Table View (Columns: SL NO, PI, CUSTOMER, FINISH, QTY, SQM, BATCH)"
+              >
+                <TableIcon className="w-3.5 h-3.5" /> Table
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickCheckLayout("cards")}
+                className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1 transition-all ${
+                  quickCheckLayout === "cards"
+                    ? "bg-purple-600 text-white shadow-2xs font-black"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Card View (2-Column Paired Layout)"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Cards
+              </button>
+            </div>
+
+            {!isModalView && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setViewMode("table")}
+                className="h-7 text-xs font-black border-purple-300 text-purple-800 hover:bg-purple-100 rounded-lg px-2.5 gap-1 shadow-2xs"
+                title="Switch back to current 16-column table"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Full Table (Current Page)
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Check Content Body */}
+        {quickCheckLayout === "table" ? (
+          <div className="max-h-[380px] overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl bg-white shadow-xs">
+            <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[760px]">
+              <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[11px] font-black sticky top-0 z-10">
+                <tr>
+                  <th className="px-3 py-2.5 w-28 text-center">SL NO.</th>
+                  <th className="px-3 py-2.5 w-28 text-center">PI</th>
+                  <th className="px-3 py-2.5 min-w-[180px]">CUSTOMER / PROJECT</th>
+                  <th className="px-3 py-2.5 min-w-[170px]">FINISH / TYPE</th>
+                  <th className="px-3 py-2.5 w-24 text-center">QTY</th>
+                  <th className="px-3 py-2.5 w-24 text-right">SQM</th>
+                  <th className="px-3 py-2.5 w-28 text-center">BATCH</th>
+                  <th className="px-2 py-2.5 w-20 text-center">ACTION</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
+                {quickCheckGrouping === "pi" ? (
+                  /* CONSOLIDATED BY PI NUMBER: 1 row per unique PI */
+                  paginatedQuickPiRows.map((group, groupIdx) => {
+                    const isExpanded = !!expandedPiKeys[group.piNo];
+                    const pageOffset = (currentQuickCheckPage - 1) * (quickCheckPageSize === -1 ? 0 : quickCheckPageSize);
+                    return (
+                      <React.Fragment key={group.piNo + "-" + groupIdx}>
+                        <tr className="hover:bg-purple-50/50 transition-colors">
+                          {/* SL NO. & CURRENT PAGE */}
+                          <td className="px-3 py-2 text-center align-middle">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="font-mono font-black text-slate-800 text-xs sm:text-sm">
+                                #{groupIdx + 1 + pageOffset}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-200 whitespace-nowrap">
+                                {group.items.length > 1 ? `${group.items.length} Sizes` : `Page ${group.sourceStickers[0]}`}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* PI */}
+                          <td className="px-2 py-1.5 align-middle">
+                            <Input
+                              value={group.piNo || ""}
+                              onChange={(e) => handleConsolidatedPiChange(group.indices, e.target.value)}
+                              className="h-8 text-xs sm:text-sm font-mono font-black text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[75px] px-1"
+                            />
+                          </td>
+
+                          {/* CUSTOMER / PROJECT */}
+                          <td className="px-3 py-2 align-middle">
+                            <div className="flex flex-col text-left">
+                              <span className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={group.customerName}>
+                                {group.customerName || "Customer"}
+                              </span>
+                              {group.projectName && (
+                                <span className="text-[11px] text-slate-500 font-mono truncate max-w-[200px]" title={group.projectName}>
+                                  {group.projectName}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* FINISH / TYPE */}
+                          <td className="px-3 py-2 align-middle">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black border uppercase tracking-wider ${
+                                  group.colorOrClear === "Colour"
+                                    ? "bg-purple-100 text-purple-800 border-purple-200"
+                                    : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                                }`}
+                              >
+                                {group.colorOrClear === "Colour" ? "Colour" : "Clear"}
+                              </span>
+                              <span className="text-[11px] font-medium text-slate-700 truncate max-w-[190px]" title={group.glassTypes.join(", ")}>
+                                {group.glassTypes.join(", ") || "Glass Spec"}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* QTY - Consolidated total for this PI */}
+                          <td className="px-2 py-1.5 align-middle text-center">
+                            <span className="inline-flex items-center justify-center font-mono font-black text-xs sm:text-sm bg-purple-50 text-purple-900 border border-purple-200 rounded-lg py-1 px-3 shadow-2xs">
+                              {group.totalQty}
+                            </span>
+                          </td>
+
+                          {/* SQM - Consolidated total for this PI */}
+                          <td className="px-3 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs sm:text-sm align-middle">
+                            {group.totalSqm.toFixed(2)} m²
+                          </td>
+
+                          {/* BATCH */}
+                          <td className="px-2 py-1.5 align-middle">
+                            <Input
+                              value={group.batchNo}
+                              onChange={(e) => handleConsolidatedBatchChange(group.indices, e.target.value)}
+                              className="h-8 text-xs sm:text-sm font-mono font-black text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
+                            />
+                          </td>
+
+                          {/* ACTION */}
+                          <td className="px-2 py-1.5 text-center align-middle">
+                            <div className="flex items-center justify-center gap-1">
+                              {group.items.length > 1 && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => togglePiExpand(group.piNo)}
+                                  className="h-7 px-1.5 text-[11px] font-bold text-purple-700 hover:bg-purple-100 rounded-md gap-0.5"
+                                  title="View individual glass sizes in this PI"
+                                >
+                                  {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                  <span>{group.items.length}</span>
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleRemovePiGroup(group.indices)}
+                                className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                                title="Remove all items for this PI"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Collapsible breakdown of sizes for this PI */}
+                        {isExpanded && (
+                          <tr className="bg-purple-50/40 border-y border-purple-200">
+                            <td colSpan={8} className="px-4 py-2.5">
+                              <div className="text-[11px] font-black text-purple-900 mb-1.5 flex items-center gap-2">
+                                <span>Item Breakdown for PI {group.piNo} ({group.totalQty} total pcs):</span>
+                              </div>
+                              <div className="space-y-1.5 pl-2 max-h-48 overflow-y-auto">
+                                {group.items.map((subItem, sIdx) => {
+                                  const subRealIdx = parsedRows.findIndex((r) => r === subItem);
+                                  return (
+                                    <div key={sIdx} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-purple-200 shadow-2xs flex-wrap gap-2">
+                                      <div className="flex items-center gap-2.5">
+                                        <span className="font-mono font-bold text-slate-500 text-[11px]">#{subItem.stickerNo}</span>
+                                        <span className="font-bold text-slate-800">POS #{subItem.posNo}</span>
+                                        <span className="font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px] font-bold">
+                                          {subItem.width} × {subItem.height} mm
+                                        </span>
+                                        <span className="text-slate-600 font-medium text-[11px] truncate max-w-[200px]" title={subItem.glassType}>
+                                          {subItem.glassType}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[10px] uppercase font-bold text-slate-400">Qty:</span>
+                                          <Input
+                                            type="number"
+                                            value={subItem.qty}
+                                            onChange={(e) => handleItemChange(subRealIdx, "qty", e.target.value)}
+                                            className="h-6 w-14 text-center font-mono font-black text-xs px-1"
+                                          />
+                                          <span className="text-[10px] text-slate-400">pcs</span>
+                                        </div>
+                                        <div className="font-mono font-black text-emerald-700 text-xs">
+                                          {subItem.sqm.toFixed(2)} m²
+                                        </div>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => handleRemoveItem(subRealIdx)}
+                                          className="h-6 w-6 p-0 text-slate-400 hover:text-red-600 rounded"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                ) : (
+                  /* INDIVIDUAL ITEMS BREAKDOWN */
+                  paginatedQuickItemRows.map((row) => {
+                    const realIndex = parsedRows.findIndex((r) => r === row);
+                    return (
+                      <tr key={realIndex} className="hover:bg-purple-50/50 transition-colors">
+                        {/* SL NO. & CURRENT PAGE */}
+                        <td className="px-3 py-2 text-center align-middle">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-mono font-black text-slate-800 text-xs sm:text-sm">
+                              #{row.stickerNo}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-200 whitespace-nowrap">
+                              Page {row.stickerNo}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* PI */}
+                        <td className="px-2 py-1.5 align-middle">
+                          <Input
+                            value={row.orderNo || ""}
+                            onChange={(e) => handleItemChange(realIndex, "orderNo", e.target.value)}
+                            className="h-8 text-xs sm:text-sm font-mono font-black text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[75px] px-1"
+                          />
+                        </td>
+
+                        {/* CUSTOMER / PROJECT */}
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex flex-col text-left">
+                            <span className="text-xs font-bold text-slate-900 truncate max-w-[200px]" title={row.customerName}>
+                              {row.customerName || "Customer"}
+                            </span>
+                            {row.projectName && (
+                              <span className="text-[11px] text-slate-500 font-mono truncate max-w-[200px]" title={row.projectName}>
+                                {row.projectName}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* FINISH / TYPE */}
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black border uppercase tracking-wider ${
+                                row.colorOrClear === "Colour"
+                                  ? "bg-purple-100 text-purple-800 border-purple-200"
+                                  : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                              }`}
+                            >
+                              {row.colorOrClear === "Colour" ? "Colour" : "Clear"}
+                            </span>
+                            <span className="text-[11px] font-medium text-slate-700 truncate max-w-[190px]" title={row.glassType}>
+                              {row.glassType || "Glass Spec"}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* QTY */}
+                        <td className="px-2 py-1.5 align-middle">
+                          <Input
+                            type="number"
+                            value={row.qty}
+                            onChange={(e) => handleItemChange(realIndex, "qty", e.target.value)}
+                            className="h-8 text-xs sm:text-sm font-black font-mono text-center bg-white border-slate-300 focus:border-purple-500 w-full min-w-[55px] px-1"
+                          />
+                        </td>
+
+                        {/* SQM */}
+                        <td className="px-3 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs sm:text-sm align-middle">
+                          {row.sqm.toFixed(2)} m²
+                        </td>
+
+                        {/* BATCH */}
+                        <td className="px-2 py-1.5 align-middle">
+                          <Input
+                            value={row.batchNo}
+                            onChange={(e) => handleItemChange(realIndex, "batchNo", e.target.value)}
+                            className="h-8 text-xs sm:text-sm font-mono font-black text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
+                          />
+                        </td>
+
+                        {/* ACTION */}
+                        <td className="px-2 py-1.5 text-center align-middle">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleRemoveItem(realIndex)}
+                            className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                            title="Remove Item"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          /* Cards Grid Layout (Structured 2-column paired layout) */
+          <div className="max-h-[380px] overflow-y-auto p-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {quickCheckGrouping === "pi" ? (
+              /* CONSOLIDATED BY PI CARDS */
+              paginatedQuickPiRows.map((group, groupIdx) => {
+                const isExpanded = !!expandedPiKeys[group.piNo];
+                const pageOffset = (currentQuickCheckPage - 1) * (quickCheckPageSize === -1 ? 0 : quickCheckPageSize);
+                return (
+                  <div
+                    key={group.piNo + "-" + groupIdx}
+                    className="bg-white border-2 border-slate-200 hover:border-purple-300 rounded-xl p-3.5 shadow-2xs hover:shadow-xs transition-all space-y-2.5 relative group"
+                  >
+                    {/* Row 1: SL NO. & PI */}
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">SL NO.</span>
+                        <span className="font-mono font-black text-slate-800 text-xs sm:text-sm">#{groupIdx + 1 + pageOffset}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-extrabold border border-purple-200">
+                          {group.items.length > 1 ? `${group.items.length} Sizes` : `Page ${group.sourceStickers[0]}`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-purple-600 tracking-wider">PI</span>
+                        <Input
+                          value={group.piNo || ""}
+                          onChange={(e) => handleConsolidatedPiChange(group.indices, e.target.value)}
+                          className="h-7 text-xs font-mono font-black text-center text-purple-700 bg-purple-50/60 border-purple-200 w-24 px-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 2: CUSTOMER / PROJECT & FINISH / TYPE */}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider">CUSTOMER / PROJECT</div>
+                        <div className="font-bold text-slate-900 truncate mt-0.5" title={group.customerName}>
+                          {group.customerName || "Customer"}
+                        </div>
+                        {group.projectName && (
+                          <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5" title={group.projectName}>
+                            {group.projectName}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider">FINISH / TYPE</div>
+                        <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black border uppercase tracking-wider ${
+                              group.colorOrClear === "Colour"
+                                ? "bg-purple-100 text-purple-800 border-purple-200"
+                                : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                            }`}
+                          >
+                            {group.colorOrClear === "Colour" ? "Colour" : "Clear"}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium text-slate-600 truncate mt-0.5" title={group.glassTypes.join(", ")}>
+                          {group.glassTypes.join(", ") || "Glass Spec"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 3: QTY & SQM (Consolidated) */}
+                    <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 items-center">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">QTY</span>
+                        <span className="font-mono font-black text-purple-900 bg-purple-100 px-2.5 py-0.5 rounded-md text-xs sm:text-sm">
+                          {group.totalQty} pcs
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] font-black uppercase text-slate-500 mr-1.5 tracking-wider">SQM</span>
+                        <span className="font-mono font-black text-emerald-700 text-xs sm:text-sm">{group.totalSqm.toFixed(2)} m²</span>
+                      </div>
+                    </div>
+
+                    {/* Row 4: BATCH */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">BATCH</span>
+                        <Input
+                          value={group.batchNo}
+                          onChange={(e) => handleConsolidatedBatchChange(group.indices, e.target.value)}
+                          className="h-7 text-xs font-mono font-black text-center text-purple-700 bg-white border-slate-300 w-20 px-1"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {group.items.length > 1 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => togglePiExpand(group.piNo)}
+                            className="h-7 px-1.5 text-[11px] font-bold text-purple-700 hover:bg-purple-100 rounded gap-0.5"
+                          >
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            <span>Sizes ({group.items.length})</span>
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleRemovePiGroup(group.indices)}
+                          className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                          title="Remove PI"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Expandable breakdown for cards */}
+                    {isExpanded && (
+                      <div className="pt-2 border-t border-purple-200 space-y-1.5 bg-purple-50/50 p-2 rounded-lg text-xs">
+                        <div className="text-[10px] font-black text-purple-900 uppercase">Glass Sizes Breakdown:</div>
+                        {group.items.map((sub, sIdx) => (
+                          <div key={sIdx} className="flex justify-between items-center text-[11px] bg-white p-1.5 rounded border border-purple-100">
+                            <span className="font-bold text-slate-800">POS #{sub.posNo} • {sub.width}×{sub.height}mm</span>
+                            <span className="font-mono font-black text-purple-700">{sub.qty} pcs • {sub.sqm.toFixed(2)} m²</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              /* INDIVIDUAL ITEMS CARDS */
+              paginatedQuickItemRows.map((row) => {
+                const realIndex = parsedRows.findIndex((r) => r === row);
+                return (
+                  <div
+                    key={realIndex}
+                    className="bg-white border-2 border-slate-200 hover:border-purple-300 rounded-xl p-3.5 shadow-2xs hover:shadow-xs transition-all space-y-2.5 relative group"
+                  >
+                    {/* Row 1: SL NO. & PI */}
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">SL NO.</span>
+                        <span className="font-mono font-black text-slate-800 text-xs sm:text-sm">#{row.stickerNo}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-extrabold border border-purple-200">
+                          Current Page: {row.stickerNo}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-purple-600 tracking-wider">PI</span>
+                        <Input
+                          value={row.orderNo || ""}
+                          onChange={(e) => handleItemChange(realIndex, "orderNo", e.target.value)}
+                          className="h-7 text-xs font-mono font-black text-center text-purple-700 bg-purple-50/60 border-purple-200 w-24 px-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 2: CUSTOMER / PROJECT & FINISH / TYPE */}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider">CUSTOMER / PROJECT</div>
+                        <div className="font-bold text-slate-900 truncate mt-0.5" title={row.customerName}>
+                          {row.customerName || "Customer"}
+                        </div>
+                        {row.projectName && (
+                          <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5" title={row.projectName}>
+                            {row.projectName}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider">FINISH / TYPE</div>
+                        <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black border uppercase tracking-wider ${
+                              row.colorOrClear === "Colour"
+                                ? "bg-purple-100 text-purple-800 border-purple-200"
+                                : "bg-cyan-100 text-cyan-800 border-cyan-200"
+                            }`}
+                          >
+                            {row.colorOrClear === "Colour" ? "Colour" : "Clear"}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium text-slate-600 truncate mt-0.5" title={row.glassType}>
+                          {row.glassType || "Glass Spec"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 3: QTY & SQM */}
+                    <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 items-center">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">QTY</span>
+                        <Input
+                          type="number"
+                          value={row.qty}
+                          onChange={(e) => handleItemChange(realIndex, "qty", e.target.value)}
+                          className="h-7 text-xs font-mono font-black text-center bg-white border-slate-300 w-16 px-1"
+                        />
+                        <span className="text-[11px] text-slate-400 font-bold">pcs</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] font-black uppercase text-slate-500 mr-1.5 tracking-wider">SQM</span>
+                        <span className="font-mono font-black text-emerald-700 text-xs sm:text-sm">{row.sqm.toFixed(2)} m²</span>
+                      </div>
+                    </div>
+
+                    {/* Row 4: BATCH */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">BATCH</span>
+                        <Input
+                          value={row.batchNo}
+                          onChange={(e) => handleItemChange(realIndex, "batchNo", e.target.value)}
+                          className="h-7 text-xs font-mono font-black text-center text-purple-700 bg-white border-slate-300 w-20 px-1"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleRemoveItem(realIndex)}
+                        className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                        title="Remove Item"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Quick Check Pagination & Current Page Control Bar */}
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-extrabold text-slate-800">
+              Current Page: <span className="text-purple-700 font-black">{currentQuickCheckPage}</span> of {totalQuickPages}
+            </span>
+            <span className="text-slate-400 font-medium">
+              ({activeQuickRows.length} {quickCheckGrouping === "pi" ? "PIs" : "sticker items"})
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={currentQuickCheckPage <= 1}
+                onClick={() => setQuickCheckPage((p) => Math.max(1, p - 1))}
+                className="h-7 text-xs px-2 gap-1 rounded-lg"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+              </Button>
+
+              <span className="px-2 text-xs font-black text-slate-700">
+                Page {currentQuickCheckPage} / {totalQuickPages}
+              </span>
+
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={currentQuickCheckPage >= totalQuickPages}
+                onClick={() => setQuickCheckPage((p) => Math.min(totalQuickPages, p + 1))}
+                className="h-7 text-xs px-2 gap-1 rounded-lg"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+
+            <select
+              value={quickCheckPageSize}
+              onChange={(e) => {
+                setQuickCheckPageSize(Number(e.target.value));
+                setQuickCheckPage(1);
+              }}
+              className="h-7 text-xs bg-white border border-slate-300 rounded-lg px-2 text-slate-700 font-bold focus:outline-purple-500"
+            >
+              <option value={10}>10 / page</option>
+              <option value={20}>20 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={-1}>Show All</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-6xl h-[92vh] max-h-[92vh] flex flex-col p-4 sm:p-5 bg-white text-slate-900 border-slate-200 shadow-2xl rounded-2xl overflow-hidden top-[50%] -translate-y-1/2 left-[50%] -translate-x-1/2">
+      <DialogContent className="w-[96vw] max-w-7xl h-[94vh] max-h-[94vh] flex flex-col p-6 sm:p-7 bg-white text-slate-900 border-slate-200 shadow-2xl rounded-2xl sm:rounded-3xl overflow-hidden [&>button]:w-9 [&>button]:h-9 [&>button]:top-6 [&>button]:right-6 [&>button_svg]:w-5 [&>button_svg]:h-5">
         {/* Header — Fixed at top */}
-        <DialogHeader className="shrink-0 pb-2 border-b border-slate-100">
-          <DialogTitle className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-purple-700">
-            <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
-            Upload Sticker PDF & Batch Check
+        <DialogHeader className="shrink-0 pb-3 border-b border-slate-100">
+          <DialogTitle className="text-xl sm:text-2xl md:text-3xl font-extrabold flex items-center gap-3.5 text-slate-900">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shrink-0">
+              <FileText className="w-6 h-6 text-white" />
+            </div>
+            <span>Upload Sticker PDF & Batch Check</span>
           </DialogTitle>
-          <DialogDescription className="text-xs text-slate-500 font-medium">
-            Upload factory barcode sticker PDF files. Choose whether the glass stickers are <strong>Clear</strong> or <strong>Coloured</strong>, verify all dimensions and barcodes, and import directly into production.
+          <DialogDescription className="text-sm sm:text-base text-slate-500 font-medium mt-1">
+            Upload factory barcode sticker PDF files. Choose whether the glass stickers are <strong className="text-slate-700">Clear</strong> or <strong className="text-slate-700">Coloured</strong>, verify all dimensions and barcodes, and import directly into production.
           </DialogDescription>
         </DialogHeader>
 
         {/* Scrollable Modal Body Container */}
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-1 my-1">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 sm:space-y-5 pr-1.5 my-2">
           {/* Top Options Grid: Finish (Clear vs Coloured) & Process Category (DGU vs Lamination vs DLGU) side-by-side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
             {/* Glass Sticker Type Question Card: CLEAR vs COLOUR */}
-            <div className="p-2.5 sm:p-3 bg-gradient-to-r from-purple-50/90 via-indigo-50/50 to-blue-50/80 rounded-xl border-2 border-purple-200 shadow-2xs space-y-2 flex flex-col justify-between">
-              <div className="flex items-center justify-between flex-wrap gap-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-purple-50/90 via-indigo-50/50 to-blue-50/80 rounded-2xl border-2 border-purple-200 shadow-xs space-y-3.5 flex flex-col justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
                     ?
                   </div>
                   <div>
-                    <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
                       <span>Glass Sticker Finish</span>
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-purple-200 text-purple-900 uppercase tracking-wide">Required</span>
+                      <span className="text-[10px] sm:text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-200 text-purple-900 uppercase tracking-wide">Required</span>
                     </h4>
-                    <p className="text-[10.5px] text-slate-500 font-medium">
+                    <p className="text-xs sm:text-sm text-slate-500 font-medium">
                       Select whether this batch is Clear or Coloured
                     </p>
                   </div>
                 </div>
 
                 {autoDetectedMessage && (
-                  <div className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-white/90 border border-purple-200 text-purple-800 shadow-2xs">
+                  <div className="text-xs font-bold px-2.5 py-1 rounded-lg bg-white/90 border border-purple-200 text-purple-800 shadow-2xs">
                     🤖 {autoDetectedMessage}
                   </div>
                 )}
               </div>
 
               {/* Clear vs Colour Interactive Selection Cards */}
-              <div className="grid grid-cols-2 gap-2 pt-0.5">
+              <div className="grid grid-cols-2 gap-3 pt-1">
                 {/* CLEAR GLASS CARD */}
                 <button
                   type="button"
@@ -956,31 +1914,31 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                     setGlassCategory("Clear");
                     if (parsedRows.length > 0) applyFinishToAllRows("Clear");
                   }}
-                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-2 relative cursor-pointer ${
+                  className={`p-3.5 sm:p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3 relative cursor-pointer ${
                     glassCategory === "Clear"
-                      ? "border-cyan-500 bg-white ring-2 ring-cyan-200 shadow-sm"
-                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                      ? "border-cyan-500 bg-white ring-2 ring-cyan-200 shadow-md"
+                      : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     glassCategory === "Clear" ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-500"
                   }`}>
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <Sparkles className="w-5 h-5" />
                   </div>
-                  <div className="flex-1 min-w-0 pr-4">
-                    <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-xs text-slate-900 truncate">Clear Glass</span>
+                  <div className="flex-1 min-w-0 pr-6">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-extrabold text-sm sm:text-base text-slate-900 truncate">Clear Glass</span>
                       {glassCategory === "Clear" && (
-                        <span className="text-[8px] font-extrabold px-1 py-0.2 rounded bg-cyan-100 text-cyan-800">Selected</span>
+                        <span className="text-[10px] sm:text-xs font-extrabold px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800">Selected</span>
                       )}
                     </div>
-                    <p className="text-[9.5px] text-slate-500 leading-tight truncate">
+                    <p className="text-xs text-slate-500 font-medium leading-tight truncate mt-0.5">
                       Float / Ultra Clear / Low-Iron
                     </p>
                   </div>
                   {glassCategory === "Clear" && (
-                    <div className="absolute right-2 top-2 w-3.5 h-3.5 rounded-full bg-cyan-600 text-white flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" />
+                    <div className="absolute right-3 top-3 w-5 h-5 rounded-full bg-cyan-600 text-white flex items-center justify-center shadow-xs">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
                     </div>
                   )}
                 </button>
@@ -992,31 +1950,31 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                     setGlassCategory("Colour");
                     if (parsedRows.length > 0) applyFinishToAllRows("Colour");
                   }}
-                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-2 relative cursor-pointer ${
+                  className={`p-3.5 sm:p-4 rounded-xl border-2 text-left transition-all flex items-start gap-3 relative cursor-pointer ${
                     glassCategory === "Colour"
-                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-sm"
-                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-md"
+                      : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     glassCategory === "Colour" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
                   }`}>
-                    <Palette className="w-3.5 h-3.5" />
+                    <Palette className="w-5 h-5" />
                   </div>
-                  <div className="flex-1 min-w-0 pr-4">
-                    <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-xs text-slate-900 truncate">Coloured Glass</span>
+                  <div className="flex-1 min-w-0 pr-6">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-extrabold text-sm sm:text-base text-slate-900 truncate">Coloured Glass</span>
                       {glassCategory === "Colour" && (
-                        <span className="text-[8px] font-extrabold px-1 py-0.2 rounded bg-purple-100 text-purple-800">Selected</span>
+                        <span className="text-[10px] sm:text-xs font-extrabold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Selected</span>
                       )}
                     </div>
-                    <p className="text-[9.5px] text-slate-500 leading-tight truncate">
+                    <p className="text-xs text-slate-500 font-medium leading-tight truncate mt-0.5">
                       Grey, Bronze, Stopray, Tinted
                     </p>
                   </div>
                   {glassCategory === "Colour" && (
-                    <div className="absolute right-2 top-2 w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" />
+                    <div className="absolute right-3 top-3 w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
                     </div>
                   )}
                 </button>
@@ -1024,18 +1982,18 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
             </div>
 
             {/* Glass Process Category Question Card: DGU vs LAMINATION vs DLGU */}
-            <div className="p-2.5 sm:p-3 bg-gradient-to-r from-teal-50/80 via-indigo-50/50 to-amber-50/80 rounded-xl border-2 border-indigo-200 shadow-2xs space-y-2 flex flex-col justify-between">
-              <div className="flex items-center justify-between flex-wrap gap-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                    <Layers className="w-3.5 h-3.5" />
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-teal-50/80 via-indigo-50/50 to-amber-50/80 rounded-2xl border-2 border-indigo-200 shadow-xs space-y-3.5 flex flex-col justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    <Layers className="w-4 h-4" />
                   </div>
                   <div>
-                    <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
                       <span>Process Category</span>
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-indigo-200 text-indigo-900 uppercase tracking-wide">Required</span>
+                      <span className="text-[10px] sm:text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-indigo-200 text-indigo-900 uppercase tracking-wide">Required</span>
                     </h4>
-                    <p className="text-[10.5px] text-slate-500 font-medium">
+                    <p className="text-xs text-slate-500 font-medium">
                       Select DGU, Lamination, or DLGU unit route
                     </p>
                   </div>
@@ -1043,7 +2001,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
               </div>
 
               {/* DGU vs LAMINATION vs DLGU Interactive Selection Cards */}
-              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 pt-0.5">
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-3 pt-1">
                 {/* DGU / IGU CARD */}
                 <button
                   type="button"
@@ -1053,28 +2011,28 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                     setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DGU" })));
                     toast.info("Process category set to DGU / IGU (Double Glazing)");
                   }}
-                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                  className={`p-3 sm:p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative cursor-pointer ${
                     productCategory === "DGU"
-                      ? "border-teal-600 bg-white ring-2 ring-teal-200 shadow-sm"
-                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                      ? "border-teal-600 bg-white ring-2 ring-teal-200 shadow-md"
+                      : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center shrink-0 ${
                     productCategory === "DGU" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500"
                   }`}>
-                    <Boxes className="w-3.5 h-3.5" />
+                    <Boxes className="w-4.5 h-4.5" />
                   </div>
-                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                  <div className="flex-1 min-w-0 pr-4">
                     <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">DGU / IGU</span>
+                      <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">DGU / IGU</span>
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                    <p className="text-[11px] text-slate-500 font-medium leading-tight truncate mt-0.5">
                       Double Glazing
                     </p>
                   </div>
                   {productCategory === "DGU" && (
-                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-teal-600 text-white flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" />
+                    <div className="absolute right-2 top-2 w-4.5 h-4.5 rounded-full bg-teal-600 text-white flex items-center justify-center shadow-xs">
+                      <Check className="w-3 h-3 stroke-[3]" />
                     </div>
                   )}
                 </button>
@@ -1088,28 +2046,28 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                     setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "Lamination" })));
                     toast.info("Process category set to Laminated Glass");
                   }}
-                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                  className={`p-3 sm:p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative cursor-pointer ${
                     productCategory === "Lamination"
-                      ? "border-amber-600 bg-white ring-2 ring-amber-200 shadow-sm"
-                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                      ? "border-amber-600 bg-white ring-2 ring-amber-200 shadow-md"
+                      : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center shrink-0 ${
                     productCategory === "Lamination" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
                   }`}>
-                    <Layers className="w-3.5 h-3.5" />
+                    <Layers className="w-4.5 h-4.5" />
                   </div>
-                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                  <div className="flex-1 min-w-0 pr-4">
                     <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">Laminated</span>
+                      <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">Laminated</span>
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                    <p className="text-[11px] text-slate-500 font-medium leading-tight truncate mt-0.5">
                       PVB / Autoclave
                     </p>
                   </div>
                   {productCategory === "Lamination" && (
-                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-amber-600 text-white flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" />
+                    <div className="absolute right-2 top-2 w-4.5 h-4.5 rounded-full bg-amber-600 text-white flex items-center justify-center shadow-xs">
+                      <Check className="w-3 h-3 stroke-[3]" />
                     </div>
                   )}
                 </button>
@@ -1123,28 +2081,28 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                     setRawExtractedItems((prev) => prev.map((r) => ({ ...r, glassCategory: "DLGU" })));
                     toast.info("Process category set to DLGU (Double Laminated Glazed Unit)");
                   }}
-                  className={`p-2 rounded-xl border-2 text-left transition-all flex items-start gap-1.5 sm:gap-2 relative cursor-pointer ${
+                  className={`p-3 sm:p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 relative cursor-pointer ${
                     productCategory === "DLGU"
-                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-sm"
-                      : "border-slate-200 bg-white/70 hover:bg-white hover:border-slate-300"
+                      ? "border-purple-600 bg-white ring-2 ring-purple-200 shadow-md"
+                      : "border-slate-200 bg-white/80 hover:bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center shrink-0 ${
                     productCategory === "DLGU" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"
                   }`}>
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <Sparkles className="w-4.5 h-4.5" />
                   </div>
-                  <div className="flex-1 min-w-0 pr-3 sm:pr-4">
+                  <div className="flex-1 min-w-0 pr-4">
                     <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-[11px] sm:text-xs text-slate-900 truncate">DLGU</span>
+                      <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">DLGU</span>
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-tight truncate">
+                    <p className="text-[11px] text-slate-500 font-medium leading-tight truncate mt-0.5">
                       2-Stage Double Lam
                     </p>
                   </div>
                   {productCategory === "DLGU" && (
-                    <div className="absolute right-1.5 top-1.5 w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5" />
+                    <div className="absolute right-2 top-2 w-4.5 h-4.5 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                      <Check className="w-3 h-3 stroke-[3]" />
                     </div>
                   )}
                 </button>
@@ -1153,32 +2111,32 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           </div>
 
           {/* Sticker Batch Header Information (Editable) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-purple-50/60 p-2.5 sm:p-3 rounded-xl border border-purple-200/80">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4 bg-purple-50/70 p-4 sm:p-5 rounded-2xl border-2 border-purple-200/80 shadow-xs">
             <div>
-              <Label className="text-purple-900 text-[10px] font-extrabold uppercase tracking-wider">Customer Name</Label>
+              <Label className="text-purple-950 text-xs sm:text-sm font-black uppercase tracking-wider">Customer Name</Label>
               <Input
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 placeholder="e.g. BRIGHT PLUS FITOUT"
-                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7.5 text-xs font-bold"
+                className="bg-white border-purple-200 text-slate-900 mt-1.5 h-11 sm:h-12 text-sm sm:text-base font-bold rounded-xl px-3.5 shadow-2xs focus:ring-2 focus:ring-purple-400"
               />
             </div>
             <div>
-              <Label className="text-purple-900 text-[10px] font-extrabold uppercase tracking-wider">Project Name</Label>
+              <Label className="text-purple-950 text-xs sm:text-sm font-black uppercase tracking-wider">Project Name</Label>
               <Input
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 placeholder="e.g. PROJECT; VAL_BY_KAS"
-                className="bg-white border-purple-200 text-slate-900 mt-0.5 h-7.5 text-xs font-bold"
+                className="bg-white border-purple-200 text-slate-900 mt-1.5 h-11 sm:h-12 text-sm sm:text-base font-bold rounded-xl px-3.5 shadow-2xs focus:ring-2 focus:ring-purple-400"
               />
             </div>
             <div>
-              <Label className="text-purple-900 text-[10px] font-extrabold uppercase tracking-wider">Factory Batch #</Label>
+              <Label className="text-purple-950 text-xs sm:text-sm font-black uppercase tracking-wider">Factory Batch #</Label>
               <Input
                 value={batchNo}
                 onChange={(e) => setBatchNo(e.target.value)}
                 placeholder="e.g. 5442"
-                className="bg-white border-purple-200 text-purple-700 font-mono font-bold mt-0.5 h-7.5 text-xs"
+                className="bg-white border-purple-200 text-purple-700 font-mono font-black mt-1.5 h-11 sm:h-12 text-sm sm:text-base rounded-xl px-3.5 shadow-2xs focus:ring-2 focus:ring-purple-400"
               />
             </div>
           </div>
@@ -1189,8 +2147,8 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
-              file ? "p-2.5 sm:p-3 bg-emerald-50/40 border-emerald-500" : "p-3.5 sm:p-4 bg-slate-50/80 hover:bg-purple-50/40 border-slate-300 hover:border-purple-500 shadow-2xs"
+            className={`border-2 border-dashed rounded-2xl text-center cursor-pointer transition-all ${
+              file ? "p-4 sm:p-5 bg-emerald-50/50 border-emerald-500 shadow-xs" : "p-5 sm:p-7 bg-slate-50/90 hover:bg-purple-50/60 border-slate-300 hover:border-purple-500 shadow-xs"
             }`}
           >
             <input
@@ -1200,24 +2158,23 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
               onChange={handleFileUpload}
               className="hidden"
             />
-            <div className="flex items-center justify-between flex-wrap gap-2 pointer-events-none px-2">
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs ${file ? "bg-emerald-100 text-emerald-600" : "bg-purple-100 text-purple-600"}`}>
-                  {file ? <FileCheck className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+            <div className="flex items-center justify-between flex-wrap gap-4 pointer-events-none px-2 sm:px-3">
+              <div className="flex items-center gap-3.5 sm:gap-4">
+                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${file ? "bg-emerald-100 text-emerald-600" : "bg-purple-100 text-purple-600"}`}>
+                  {file ? <FileCheck className="w-6 h-6 sm:w-7 sm:h-7" /> : <Upload className="w-6 h-6 sm:w-7 sm:h-7" />}
                 </div>
                 <div className="text-left">
-                  <p className="text-xs font-black text-slate-800">
+                  <p className="text-sm sm:text-base md:text-lg font-black text-slate-800">
                     {file ? file.name : "Drop Factory Sticker PDF File (.pdf) here or click to browse"}
                   </p>
-                  <p className="text-[10px] text-slate-500 font-medium">
+                  <p className="text-xs sm:text-sm text-slate-500 font-medium mt-0.5">
                     {file ? `File loaded (${(file.size / 1024).toFixed(1)} KB)` : "Supports multi-page barcode sticker PDF files with auto dimension and barcode extraction"}
                   </p>
                 </div>
               </div>
               <Button
                 type="button"
-                size="sm"
-                className={`h-7.5 text-xs font-bold pointer-events-auto shadow-2xs rounded-lg px-3 ${file ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-purple-600 hover:bg-purple-700 text-white"}`}
+                className={`h-11 sm:h-12 text-sm sm:text-base font-extrabold pointer-events-auto shadow-md rounded-xl px-5 sm:px-6 ${file ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-purple-600 hover:bg-purple-700 text-white"}`}
               >
                 {file ? "Change PDF" : "Select PDF"}
               </Button>
@@ -1226,12 +2183,12 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
           {/* Parsing Spinner Progress Bar */}
           {loading && (
-            <div className="p-4 bg-purple-50 border border-purple-200 rounded-2xl space-y-2 text-center">
-              <div className="flex items-center justify-center gap-2 text-xs font-extrabold text-purple-900">
-                <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
+            <div className="p-5 bg-purple-50 border-2 border-purple-200 rounded-2xl space-y-3 text-center">
+              <div className="flex items-center justify-center gap-2.5 text-sm sm:text-base font-extrabold text-purple-900">
+                <span className="w-3 h-3 rounded-full bg-purple-600 animate-pulse"></span>
                 <span>Parsing PDF Sticker Pages... {parsingProgress}%</span>
               </div>
-              <div className="w-full bg-purple-200 h-2 rounded-full overflow-hidden">
+              <div className="w-full bg-purple-200 h-3 rounded-full overflow-hidden">
                 <div className="bg-purple-600 h-full transition-all duration-200 rounded-full" style={{ width: `${parsingProgress}%` }}></div>
               </div>
             </div>
@@ -1239,13 +2196,13 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
           {/* Validation Feedback & Interactive Batch Check & Correct Table */}
           {isValidated && !loading && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {validationErrors.length > 0 && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl">
-                  <div className="flex items-center gap-2 text-red-700 font-extrabold mb-2 text-xs">
-                    <AlertCircle className="w-4 h-4" /> Parsing Errors Found ({validationErrors.length})
+                <div className="p-4 sm:p-5 bg-red-50 border-2 border-red-200 rounded-2xl">
+                  <div className="flex items-center gap-2.5 text-red-700 font-extrabold mb-2 text-sm sm:text-base">
+                    <AlertCircle className="w-5 h-5" /> Parsing Errors Found ({validationErrors.length})
                   </div>
-                  <ul className="text-xs text-red-600 list-disc pl-5 space-y-1 max-h-32 overflow-y-auto font-mono">
+                  <ul className="text-xs sm:text-sm text-red-600 list-disc pl-5 space-y-1 max-h-36 overflow-y-auto font-mono">
                     {validationErrors.map((err, idx) => (
                       <li key={idx}>{err}</li>
                     ))}
@@ -1255,61 +2212,67 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
               {/* Duplicate PDF Protection Alert Banner */}
               {isPdfDuplicate && (
-                <div className="p-4 bg-red-50 border-2 border-red-400 rounded-2xl space-y-2 shadow-xs">
-                  <div className="flex items-center justify-between flex-wrap gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-red-100 text-red-700 flex items-center justify-center font-bold shrink-0">
-                        <AlertTriangle className="w-6 h-6" />
+                <div className={`p-4 sm:p-5 border-2 rounded-2xl space-y-2 shadow-xs transition-colors ${allowOverwrite ? "bg-amber-50 border-amber-400" : "bg-red-50 border-red-400"}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-3.5">
+                    <div className="flex items-center gap-3.5">
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold shrink-0 ${allowOverwrite ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                        <AlertTriangle className="w-7 h-7" />
                       </div>
                       <div>
-                        <div className="font-extrabold text-red-900 text-sm flex items-center gap-2">
-                          <span>PDF Already Uploaded: "{file?.name || duplicateBatchInfo?.fileName}"</span>
-                          <span className="px-2 py-0.5 bg-red-200 text-red-800 text-[10px] rounded-full font-black uppercase">
-                            Duplicate Blocked
+                        <div className="font-black text-slate-900 text-base sm:text-lg flex items-center gap-2">
+                          <span>PDF Previously Uploaded: "{file?.name || duplicateBatchInfo?.fileName}"</span>
+                          <span className={`px-2.5 py-0.5 text-xs rounded-full font-black uppercase ${allowOverwrite ? "bg-amber-200 text-amber-800" : "bg-red-200 text-red-800"}`}>
+                            {allowOverwrite ? "Overwrite Enabled" : "Duplicate Blocked"}
                           </span>
                         </div>
-                        <div className="text-xs text-red-700 font-medium mt-0.5">
-                          This PDF sticker batch ({duplicateBatchInfo?.piNumber || `${sfoNo}-B${batchNo}`}) was already uploaded into production on <strong>{duplicateBatchInfo?.createdAt ? new Date(duplicateBatchInfo.createdAt).toLocaleDateString() : "a previous session"}</strong> ({duplicateBatchInfo?.itemsCount || totalBatchQty} stickers). <strong>1 PDF cannot be uploaded 2 times.</strong>
+                        <div className="text-xs sm:text-sm text-slate-600 font-medium mt-1">
+                          This PDF sticker batch ({duplicateBatchInfo?.piNumber || `${sfoNo}-B${batchNo}`}) was already uploaded into production.
+                          {allowOverwrite ? " Overwriting will replace the previous batch and import the updated records." : " If you wish to re-import or update this batch, click 'Allow Overwrite'."}
                         </div>
                       </div>
                     </div>
-                    <span className="text-xs font-bold text-red-700 bg-red-100 px-3 py-1.5 rounded-lg border border-red-200">
-                      Already in Production Database
-                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setAllowOverwrite((prev) => !prev)}
+                      className={`text-xs font-black h-9 px-3.5 rounded-xl shadow-xs ${allowOverwrite ? "bg-amber-600 hover:bg-amber-700 text-white" : "bg-slate-800 hover:bg-slate-900 text-white"}`}
+                    >
+                      {allowOverwrite ? "Cancel Overwrite" : "Allow Overwrite / Re-import"}
+                    </Button>
                   </div>
                 </div>
               )}
 
-              {/* Ready for Production Batch Header (Shown when not duplicate) */}
-              {validationErrors.length === 0 && !isPdfDuplicate && (
-                <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-3">
-                    <ShieldCheck className="w-7 h-7 text-emerald-600 shrink-0" />
+              {/* Ready for Production Batch Header (Shown when not duplicate OR overwrite enabled) */}
+              {validationErrors.length === 0 && (!isPdfDuplicate || allowOverwrite) && (
+                <div className="p-4 sm:p-5 bg-emerald-50/80 border-2 border-emerald-200 rounded-2xl flex items-center justify-between flex-wrap gap-4 shadow-2xs">
+                  <div className="flex items-center gap-3.5">
+                    <ShieldCheck className="w-9 h-9 text-emerald-600 shrink-0" />
                     <div>
-                      <div className="font-extrabold text-emerald-900 text-sm flex items-center gap-2">
+                      <div className="font-extrabold text-emerald-900 text-base sm:text-lg flex items-center gap-2.5">
                         <span>Sticker Batch Extracted & Verified — Ready for Import</span>
-                        <span className="px-2 py-0.5 bg-emerald-200 text-emerald-800 text-[10px] rounded-full font-extrabold">
+                        <span className="px-2.5 py-0.5 bg-emerald-200 text-emerald-800 text-xs rounded-full font-extrabold">
                           {glassCategory === "Colour" ? "Coloured Glass" : "Clear Glass"}
                         </span>
                       </div>
-                      <div className="text-xs text-emerald-700 font-medium mt-0.5">
+                      <div className="text-xs sm:text-sm text-emerald-700 font-medium mt-1">
                         {totalBatchQty} total sticker pieces extracted & verified. Matching stickers are combined with consolidated QTY.
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 border-l border-emerald-200/80 pl-4 flex-wrap">
+                  <div className="flex items-center gap-5 border-l border-emerald-200/80 pl-5 flex-wrap">
                     <div>
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Total Pieces</div>
-                      <div className="text-sm font-extrabold text-slate-800 font-mono">{totalBatchQty} pcs</div>
+                      <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Pieces</div>
+                      <div className="text-base sm:text-lg font-extrabold text-slate-800 font-mono">{totalBatchQty} pcs</div>
                     </div>
                     <div>
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Total Batch Area</div>
-                      <div className="text-lg font-extrabold text-emerald-700 font-mono">{totalBatchSqm.toFixed(2)} m²</div>
+                      <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Batch Area</div>
+                      <div className="text-xl sm:text-2xl font-extrabold text-emerald-700 font-mono">{totalBatchSqm.toFixed(2)} m²</div>
                     </div>
-                    <div className="border-l border-emerald-200/80 pl-4">
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Uploaded At</div>
-                      <div className="text-xs font-black text-emerald-950 font-mono flex items-center gap-1.5 bg-emerald-100/90 px-2.5 py-1 rounded-lg border border-emerald-300 shadow-2xs">
-                        <Clock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                    <div className="border-l border-emerald-200/80 pl-5">
+                      <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Uploaded At</div>
+                      <div className="text-xs sm:text-sm font-black text-emerald-950 font-mono flex items-center gap-2 bg-emerald-100/90 px-3 py-1.5 rounded-xl border border-emerald-300 shadow-2xs mt-0.5">
+                        <Clock className="w-4 h-4 text-emerald-700 shrink-0" />
                         {formatPlatformDateTime(uploadDateTime || new Date())}
                       </div>
                     </div>
@@ -1321,66 +2284,120 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
               {parsedRows.length > 0 && (
                 <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
                   {/* Table Control Header Bar */}
-                  <div className="px-4 py-3 bg-slate-100 text-xs font-extrabold text-slate-700 border-b border-slate-200 flex justify-between items-center flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <Barcode className="w-4 h-4 text-purple-600" />
-                      <span>Batch Check & Correct ({totalBatchQty} Total Pieces)</span>
+                  <div className="px-4 sm:px-5 py-3.5 bg-slate-100 text-sm font-extrabold text-slate-700 border-b border-slate-200 flex justify-between items-center flex-wrap gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <Barcode className="w-5 h-5 text-purple-600" />
+                      <span className="text-sm sm:text-base font-extrabold">Batch Check & Correct ({totalBatchQty} Total Pieces)</span>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
                       {/* Search inside parsed stickers */}
-                      <div className="relative w-56">
-                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <div className="relative w-56 sm:w-72">
+                        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <Input
-                          placeholder="Search POS, Finish, Code..."
+                          placeholder="Search SL, PI, POS, Customer, Dim, Code, SFO..."
+                          title="Search by SL NO, PI, POS NO, CUSTOMER / PROJECT, FINISH / TYPE, WIDTH, HEIGHT, QTY, SQM, GLASS CODE, GLASS TYPE / SPEC, OB, SFO, BATCH, or BARCODE"
                           value={modalSearchTerm}
-                          onChange={(e) => setModalSearchTerm(e.target.value)}
-                          className="pl-8 text-xs bg-white border-slate-200 h-7 rounded-lg"
+                          onChange={(e) => {
+                            setModalSearchTerm(e.target.value);
+                            setQuickCheckPage(1);
+                          }}
+                          className="pl-9 pr-8 text-xs sm:text-sm bg-white border-slate-200 h-9 rounded-xl focus:border-purple-500"
                         />
+                        {modalSearchTerm && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setModalSearchTerm("");
+                              setQuickCheckPage(1);
+                            }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                            title="Clear search"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
+
+                      {/* Quick Check Button near search bar */}
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          setViewMode((prev) => (prev === "quickCheck" ? "table" : "quickCheck"));
+                        }}
+                        className={`h-9 text-xs sm:text-sm font-black gap-1.5 rounded-xl px-3.5 shadow-xs transition-all ${
+                          viewMode === "quickCheck"
+                            ? "bg-purple-700 text-white hover:bg-purple-800 ring-2 ring-purple-300"
+                            : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
+                        }`}
+                        title="Quick Check View: SL NO, PI, CUSTOMER/PROJECT, FINISH/TYPE, QTY, SQM, BATCH"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        {viewMode === "quickCheck" ? "Full Table (Current Page)" : "Quick Check"}
+                      </Button>
+
+                      {/* Quick Check Modal Popup Button */}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setIsQuickCheckModalOpen(true)}
+                        className="h-9 text-xs sm:text-sm border-purple-200 text-purple-700 hover:bg-purple-50 font-bold gap-1 rounded-xl px-3"
+                        title="Open Quick Check in modal pop-up window"
+                      >
+                        <Eye className="w-4 h-4" /> Modal
+                      </Button>
 
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
                         onClick={handleAddBlankItem}
-                        className="h-7 text-xs border-purple-200 text-purple-700 hover:bg-purple-50 font-bold gap-1 rounded-lg"
+                        className="h-9 text-xs sm:text-sm border-purple-200 text-purple-700 hover:bg-purple-50 font-bold gap-1.5 rounded-xl px-3.5"
                       >
-                        <Plus className="w-3.5 h-3.5" /> Add Row
+                        <Plus className="w-4 h-4" /> Add Row
                       </Button>
                     </div>
                   </div>
 
-                  {/* Scrollable Editable Table with full column visibility matching factory standards */}
-                  <div className="max-h-96 overflow-x-auto overflow-y-auto">
-                    <table className="w-full text-left text-xs border-collapse min-w-[1280px]">
-                      <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[10px] font-black sticky top-0 z-10">
+                  {/* Body Content: Either Quick Check View OR Full 16-Column Table (Current Page) */}
+                  {viewMode === "quickCheck" ? (
+                    <div className="p-3.5 bg-slate-50/50">
+                      {renderQuickCheckContent(false)}
+                    </div>
+                  ) : (
+                    <>
+                      {/* Scrollable Editable Table with full column visibility matching factory standards */}
+                      <div className="max-h-96 overflow-x-auto overflow-y-auto">
+                    <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[1280px]">
+                      <thead className="bg-slate-100 text-slate-700 uppercase border-b-2 border-slate-200 text-[11px] font-black sticky top-0 z-10">
                         <tr>
-                          <th className="px-3 py-2.5 w-14 text-center">SL NO.</th>
-                          <th className="px-3 py-2.5 w-24 text-center">PI</th>
-                          <th className="px-3 py-2.5 w-24 text-center">POS NO.</th>
-                          <th className="px-3 py-2.5 min-w-[140px]">CUSTOMER / PROJECT</th>
-                          <th className="px-3 py-2.5 w-28">FINISH / TYPE</th>
-                          <th className="px-3 py-2.5 w-24 text-center">WIDTH (MM)</th>
-                          <th className="px-3 py-2.5 w-24 text-center">HEIGHT (MM)</th>
-                          <th className="px-3 py-2.5 w-16 text-center">QTY</th>
-                          <th className="px-3 py-2.5 w-20 text-right">SQM</th>
-                          <th className="px-3 py-2.5 min-w-[140px]">GLASS CODE</th>
-                          <th className="px-3 py-2.5 min-w-[200px]">GLASS TYPE / SPEC</th>
-                          <th className="px-3 py-2.5 w-20 text-center">OB</th>
-                          <th className="px-3 py-2.5 w-24 text-center">SFO</th>
-                          <th className="px-3 py-2.5 w-20 text-center">BATCH</th>
-                          <th className="px-3 py-2.5 min-w-[170px]">BARCODE</th>
-                          <th className="px-2 py-2.5 w-12 text-center">ACTION</th>
+                          <th className="px-3 py-3 w-14 text-center">SL NO.</th>
+                          <th className="px-3 py-3 w-24 text-center">PI</th>
+                          <th className="px-3 py-3 w-24 text-center">POS NO.</th>
+                          <th className="px-3 py-3 min-w-[140px]">CUSTOMER / PROJECT</th>
+                          <th className="px-3 py-3 w-28">FINISH / TYPE</th>
+                          <th className="px-3 py-3 w-24 text-center">WIDTH (MM)</th>
+                          <th className="px-3 py-3 w-24 text-center">HEIGHT (MM)</th>
+                          <th className="px-3 py-3 w-16 text-center">QTY</th>
+                          <th className="px-3 py-3 w-20 text-right">SQM</th>
+                          <th className="px-3 py-3 min-w-[140px]">GLASS CODE</th>
+                          <th className="px-3 py-3 min-w-[200px]">GLASS TYPE / SPEC</th>
+                          <th className="px-3 py-3 w-20 text-center">OB</th>
+                          <th className="px-3 py-3 w-24 text-center">SFO</th>
+                          <th className="px-3 py-3 w-20 text-center">BATCH</th>
+                          <th className="px-3 py-3 min-w-[170px]">BARCODE</th>
+                          <th className="px-2 py-3 w-12 text-center">ACTION</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-800 font-sans">
-                        {filteredRows.map((row) => {
+                        {paginatedTableRows.map((row) => {
                           const realIndex = parsedRows.findIndex((r) => r === row);
                           return (
-                            <tr key={realIndex} className="hover:bg-purple-50/50 transition-colors">
+                            <tr key={row.barcode || `sticker-${row.stickerNo}-${realIndex}`} className="hover:bg-purple-50/50 transition-colors">
                               {/* SL NO. */}
-                              <td className="px-3 py-2 font-mono font-bold text-slate-500 text-center text-xs">
+                              <td className="px-3 py-2 font-mono font-bold text-slate-500 text-center text-xs sm:text-sm">
                                 {row.stickerNo}
                               </td>
 
@@ -1389,7 +2406,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.orderNo || ""}
                                   onChange={(e) => handleItemChange(realIndex, "orderNo", e.target.value)}
-                                  className="h-8 text-xs font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[75px] px-1"
+                                  className="h-9 text-xs sm:text-sm font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[75px] px-1"
                                 />
                               </td>
 
@@ -1398,18 +2415,18 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.posNo}
                                   onChange={(e) => handleItemChange(realIndex, "posNo", e.target.value)}
-                                  className="h-8 text-xs font-black font-mono bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-2 text-center"
+                                  className="h-9 text-xs sm:text-sm font-black font-mono bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-2 text-center"
                                 />
                               </td>
 
                               {/* CUSTOMER / PROJECT */}
                               <td className="px-2 py-1.5 align-middle">
                                 <div className="flex flex-col text-left">
-                                  <span className="text-[11px] font-bold text-slate-800 truncate max-w-[140px]" title={row.customerName}>
+                                  <span className="text-xs font-bold text-slate-800 truncate max-w-[140px]" title={row.customerName}>
                                     {row.customerName || "Customer"}
                                   </span>
                                   {row.projectName && (
-                                    <span className="text-[10px] text-slate-500 font-mono truncate max-w-[140px]" title={row.projectName}>
+                                    <span className="text-[11px] text-slate-500 font-mono truncate max-w-[140px]" title={row.projectName}>
                                       {row.projectName}
                                     </span>
                                   )}
@@ -1435,7 +2452,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   type="number"
                                   value={row.width}
                                   onChange={(e) => handleItemChange(realIndex, "width", e.target.value)}
-                                  className="h-8 text-xs font-black font-mono text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-2 text-center"
+                                  className="h-9 text-xs sm:text-sm font-black font-mono text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-2 text-center"
                                 />
                               </td>
 
@@ -1445,7 +2462,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   type="number"
                                   value={row.height}
                                   onChange={(e) => handleItemChange(realIndex, "height", e.target.value)}
-                                  className="h-8 text-xs font-black font-mono text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-2 text-center"
+                                  className="h-9 text-xs sm:text-sm font-black font-mono text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-2 text-center"
                                 />
                               </td>
 
@@ -1455,12 +2472,12 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   type="number"
                                   value={row.qty}
                                   onChange={(e) => handleItemChange(realIndex, "qty", e.target.value)}
-                                  className="h-8 text-xs font-bold font-mono text-center bg-white border-slate-300 focus:border-purple-500 w-full min-w-[50px] px-1"
+                                  className="h-9 text-xs sm:text-sm font-bold font-mono text-center bg-white border-slate-300 focus:border-purple-500 w-full min-w-[50px] px-1"
                                 />
                               </td>
 
                               {/* SQM */}
-                              <td className="px-3 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs">
+                              <td className="px-3 py-2 text-right font-mono font-black text-emerald-700 whitespace-nowrap text-xs sm:text-sm">
                                 {row.sqm.toFixed(2)} m²
                               </td>
 
@@ -1469,7 +2486,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.glassCode}
                                   onChange={(e) => handleItemChange(realIndex, "glassCode", e.target.value)}
-                                  className="h-8 text-xs font-bold text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[130px] px-2"
+                                  className="h-9 text-xs sm:text-sm font-bold text-slate-900 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[130px] px-2"
                                 />
                               </td>
 
@@ -1478,7 +2495,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.glassType}
                                   onChange={(e) => handleItemChange(realIndex, "glassType", e.target.value)}
-                                  className="h-8 text-xs font-medium text-slate-800 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[190px] px-2"
+                                  className="h-9 text-xs sm:text-sm font-medium text-slate-800 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[190px] px-2"
                                 />
                               </td>
 
@@ -1487,7 +2504,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.obNo}
                                   onChange={(e) => handleItemChange(realIndex, "obNo", e.target.value)}
-                                  className="h-8 text-xs font-mono font-bold text-center bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
+                                  className="h-9 text-xs sm:text-sm font-mono font-bold text-center bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
                                 />
                               </td>
 
@@ -1496,7 +2513,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.sfoNo}
                                   onChange={(e) => handleItemChange(realIndex, "sfoNo", e.target.value)}
-                                  className="h-8 text-xs font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-1"
+                                  className="h-9 text-xs sm:text-sm font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[80px] px-1"
                                 />
                               </td>
 
@@ -1505,7 +2522,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.batchNo}
                                   onChange={(e) => handleItemChange(realIndex, "batchNo", e.target.value)}
-                                  className="h-8 text-xs font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
+                                  className="h-9 text-xs sm:text-sm font-mono font-bold text-center text-purple-700 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[65px] px-1"
                                 />
                               </td>
 
@@ -1514,7 +2531,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                 <Input
                                   value={row.barcode}
                                   onChange={(e) => handleItemChange(realIndex, "barcode", e.target.value)}
-                                  className="h-8 text-xs font-mono font-bold tracking-wider w-full min-w-[150px] px-2 bg-white border-slate-300 text-purple-800 focus:border-purple-500"
+                                  className="h-9 text-xs sm:text-sm font-mono font-bold tracking-wider w-full min-w-[150px] px-2 bg-white border-slate-300 text-purple-800 focus:border-purple-500"
                                 />
                               </td>
 
@@ -1525,10 +2542,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   size="sm"
                                   variant="ghost"
                                   onClick={() => handleRemoveItem(realIndex)}
-                                  className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md hover:bg-red-50"
+                                  className="h-8 w-8 p-0 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
                                   title="Remove Item"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-4 h-4" />
                                 </Button>
                               </td>
                             </tr>
@@ -1537,39 +2554,156 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                       </tbody>
                     </table>
                   </div>
-                  <div className="p-2.5 bg-slate-50 text-xs text-slate-500 font-semibold border-t border-slate-200 flex justify-between items-center">
-                    <span>All sticker fields editable • Click any cell to modify</span>
-                    <span className="font-mono text-purple-700 font-bold">Total Batch SQM: {totalBatchSqm.toFixed(2)} m²</span>
+                  <div className="p-3 bg-slate-50 text-xs sm:text-sm text-slate-600 font-semibold border-t border-slate-200 flex flex-wrap justify-between items-center gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span>
+                        Showing {filteredRows.length > 0 ? (currentTablePage - 1) * (tablePageSize === -1 ? filteredRows.length : tablePageSize) + 1 : 0} -{" "}
+                        {tablePageSize === -1 ? filteredRows.length : Math.min(currentTablePage * tablePageSize, filteredRows.length)} of {filteredRows.length} rows
+                      </span>
+                      <span className="font-mono text-purple-700 font-bold ml-2">Total SQM: {totalBatchSqm.toFixed(2)} m²</span>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={currentTablePage <= 1}
+                          onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+                          className="h-8 text-xs px-2.5 gap-1 rounded-lg"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                        </Button>
+
+                        <span className="px-2 text-xs font-black text-slate-700">
+                          Page {currentTablePage} / {totalTablePages}
+                        </span>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={currentTablePage >= totalTablePages}
+                          onClick={() => setTablePage((p) => Math.min(totalTablePages, p + 1))}
+                          className="h-8 text-xs px-2.5 gap-1 rounded-lg"
+                        >
+                          Next <ChevronRight className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+
+                      <select
+                        value={tablePageSize}
+                        onChange={(e) => {
+                          setTablePageSize(Number(e.target.value));
+                          setTablePage(1);
+                        }}
+                        className="h-8 text-xs bg-white border border-slate-300 rounded-lg px-2 text-slate-700 font-bold focus:outline-purple-500 cursor-pointer"
+                      >
+                        <option value={15}>15 / page</option>
+                        <option value={25}>25 / page</option>
+                        <option value={50}>50 / page</option>
+                        <option value={100}>100 / page</option>
+                        <option value={-1}>Show All</option>
+                      </select>
+                    </div>
                   </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
           )}
         </div>
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="text-slate-600 hover:text-slate-900 rounded-xl font-bold text-xs">
+        <div className="flex justify-end items-center gap-3.5 pt-4 border-t border-slate-200">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} className="text-slate-600 hover:text-slate-900 rounded-xl font-bold text-sm sm:text-base h-11 sm:h-12 px-6">
             Cancel
           </Button>
           <Button
-            disabled={!isValidated || validationErrors.length > 0 || loading || parsedRows.length === 0 || isPdfDuplicate || checkingPdfDuplicate}
+            disabled={!isValidated || validationErrors.length > 0 || loading || parsedRows.length === 0 || (isPdfDuplicate && !allowOverwrite) || checkingPdfDuplicate}
             onClick={handleConfirmImport}
-            className={`font-extrabold flex items-center gap-2 rounded-xl text-xs px-4 shadow-xs ${
-              isPdfDuplicate
+            className={`font-black flex items-center gap-2.5 rounded-xl text-sm sm:text-base h-11 sm:h-12 px-6 sm:px-7 shadow-md transition-all ${
+              isPdfDuplicate && !allowOverwrite
                 ? "bg-red-500 hover:bg-red-500 text-white cursor-not-allowed"
+                : allowOverwrite
+                ? "bg-amber-600 hover:bg-amber-700 text-white"
                 : "bg-purple-600 hover:bg-purple-700 text-white"
             }`}
           >
-            {loading
-              ? "Importing Sticker Batch..."
-              : checkingPdfDuplicate
-              ? "Verifying PDF..."
-              : isPdfDuplicate
-              ? "Cannot Upload: PDF Already Uploaded"
-              : `Confirm & Import ${totalBatchQty} Stickers (${glassCategory === "Colour" ? "Coloured Glass" : "Clear Glass"})`}
-            <ArrowRight className="w-4 h-4" />
+            <span>
+              {loading
+                ? "Importing Sticker Batch..."
+                : checkingPdfDuplicate
+                ? "Verifying PDF..."
+                : isPdfDuplicate && !allowOverwrite
+                ? "Cannot Upload: PDF Already Uploaded (Enable Overwrite above)"
+                : allowOverwrite
+                ? `Confirm & Overwrite ${totalBatchQty} Stickers`
+                : `Confirm & Import ${totalBatchQty} Stickers (${glassCategory === "Colour" ? "Coloured Glass" : "Clear Glass"})`}
+            </span>
+            <ArrowRight className="w-5 h-5 stroke-[2.5]" />
           </Button>
         </div>
+
+        {/* Dedicated Quick Check Modal Popup Window */}
+        {isQuickCheckModalOpen && (
+          <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in-0 duration-200">
+            <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-5xl h-[85vh] max-h-[85vh] flex flex-col overflow-hidden">
+              {/* Modal Header */}
+              <div className="px-5 py-4 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center font-bold shadow-xs">
+                    <CheckSquare className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                      <span>Sticker Batch Quick Check</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 font-extrabold border border-purple-200">
+                        {totalBatchQty} Pieces
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Check & verify: SL NO, PI, Customer/Project, Finish/Type, QTY, SQM & Batch
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setIsQuickCheckModalOpen(false)}
+                    className="h-8 w-8 p-0 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200"
+                    title="Close Quick Check"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-4 sm:p-5 flex-1 min-h-0 overflow-y-auto">
+                {renderQuickCheckContent(true)}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+                <span className="text-xs font-bold text-slate-500">
+                  Total Batch Area: <strong className="text-emerald-700 font-mono text-sm">{totalBatchSqm.toFixed(2)} m²</strong>
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => setIsQuickCheckModalOpen(false)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-black rounded-xl text-xs sm:text-sm h-9 px-5 shadow-xs"
+                >
+                  Close & Return to Table (Current Page)
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

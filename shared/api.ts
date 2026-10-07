@@ -51,7 +51,9 @@ export interface GlassItem {
   dispatchNoteNo?: string;
   vehicleNo?: string;
   driverName?: string;
-  dispatchRemarks?: string;
+  delDate?: string;     // e.g. 07/08/2026 (Sticker delivery date)
+  optDate?: string;     // e.g. 08/08/2026 (Sticker optimization date)
+  makeup?: string;      // e.g. 8MM SYP YBE 0140N / 16MM BLACK SPACER / 13.52MM CLEAR LAMINATED
   createdAt?: string;
   updatedAt: string;
 }
@@ -152,6 +154,7 @@ export interface ReworkRecord {
 
 export interface DashboardStats {
   totalPI: number;
+  stickerUploadCount?: number;
   pendingPI: number;
   completedPI: number;
   pendingCutting: number;
@@ -181,6 +184,8 @@ export interface StageAnalytics {
   throughputRate: number; // units per day
   avgCycleTimeMinutes: number;
   capacityUtilization: number; // percentage 0-100
+  rejectedCount?: number;
+  qualityYield?: number; // percentage 0-100
 }
 
 export interface DefectAnalytics {
@@ -281,4 +286,44 @@ export interface SystemNotification {
   read: boolean;
   createdAt: string;
 }
+
+export interface UserRecord {
+  id: string;
+  username: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
+export interface UserSession {
+  sessionId: string;
+  userId: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  ip: string;
+  userAgent?: string;
+  loginTime: string;
+  lastHeartbeat: string;
+  status: "Active" | "Idle";
+}
+
+export interface RolePermissions {
+  role: UserRole;
+  description: string;
+  allowedModules: string[];
+  canUploadPI: boolean;
+  canDeletePI: boolean;
+  canDispatch: boolean;
+  canRejectRework: boolean;
+  canViewReports: boolean;
+  canViewAnalytics: boolean;
+  canManageUsers: boolean;
+  canManageSettings: boolean;
+  canClearData: boolean;
+}
+
 

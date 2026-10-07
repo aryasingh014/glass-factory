@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import ReactDOM from "react-dom";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -14,6 +15,7 @@ import {
   Layers,
   Flame,
   Building2,
+  Briefcase,
   ShieldCheck,
   ClipboardList,
   Trash2,
@@ -27,6 +29,7 @@ import {
   Bell,
   Sun,
   ArrowRight,
+  ArrowLeft,
   Plus,
   Eye,
   Printer,
@@ -35,6 +38,7 @@ import {
   Clock,
   Activity,
   TrendingUp,
+  X,
   Gauge,
   Zap,
   Workflow,
@@ -57,6 +61,10 @@ import {
   ExternalLink,
   LogOut,
   Users,
+  Globe,
+  MapPin,
+  Settings,
+  FileSpreadsheet
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,17 +72,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage, SystemNotification } from "@shared/api";
 import { TableHorizontalScrollWrapper } from "@/components/TableHorizontalScrollWrapper";
 import { ProductionStageView } from "@/components/ProductionStageView";
+import { SettingsView } from "@/components/SettingsView";
 import { ProductionOverviewView } from "@/components/ProductionOverviewView";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/context/AuthContext";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { exportStageWipToExcel, exportBatchProgressMatrixToExcel } from "@/lib/excelExport";
 
+import { StickerUploaderModal } from "@/components/StickerUploaderModal";
+import { UploadedPdfsModal } from "@/components/UploadedPdfsModal";
 // Lazy-load heavy modals and sub-views to keep initial page bundle ultra-fast over ngrok/tunnels
-const StickerUploaderModal = React.lazy(() =>
-  import("@/components/StickerUploaderModal").then((m) => ({ default: m.StickerUploaderModal }))
-);
 const ManualPIModal = React.lazy(() =>
   import("@/components/ManualPIModal").then((m) => ({ default: m.ManualPIModal }))
 );
@@ -100,9 +109,42 @@ const DispatchedHistoryView = React.lazy(() =>
   import("@/components/DispatchedHistoryView").then((m) => ({ default: m.DispatchedHistoryView }))
 );
 
+// Standalone Dubai Live Clock to avoid re-rendering entire Index component every 1 second
+const DubaiClock: React.FC = React.memo(() => {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Dubai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const dateStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Dubai",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(now);
+
+  return (
+    <div className="flex flex-col leading-none text-right select-none">
+      <span className="text-[11px] font-black text-slate-800">{dateStr}</span>
+      <span className="text-[11px] font-mono font-bold text-slate-500">{timeStr}</span>
+    </div>
+  );
+});
+
 export default function Index() {
   const [searchParams] = useSearchParams();
-  const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "dispatched-history", "reports", "analytics"] as const;
+  const validTabs = ["overview", "production-overview", "pis", "cutting", "pairing", "dgu", "lamination", "finished", "dispatched-history", "reports", "analytics", "settings"] as const;
   type TabType = typeof validTabs[number];
   // ponytail: Preserve user's active module across hard refreshes and page reloads
   const initialTab = validTabs.includes(searchParams.get("tab") as TabType)
@@ -128,7 +170,17 @@ export default function Index() {
       localStorage.setItem("sejal_active_module", activeTab);
     } catch {}
   }, [activeTab]);
-  const { user, role: userRole, logout, getAuthHeaders } = useAuth();
+  const { user, role: userRole, logout, getAuthHeaders, canAccessTab, canPerformAction, isOnline } = useAuth();
+
+  // Enforce role-based module access
+  useEffect(() => {
+    if (!canAccessTab(activeTab)) {
+      const fallbackTab: TabType = userRole === "Operator" ? "cutting" : "overview";
+      setActiveTab(fallbackTab);
+      toast.info(`Switched to ${fallbackTab} based on ${userRole} access role.`);
+    }
+  }, [userRole, activeTab, canAccessTab]);
+
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const navigate = useNavigate();
@@ -169,47 +221,12 @@ export default function Index() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [pis, setPis] = useState<PIMaster[]>([]);
   const [items, setItems] = useState<GlassItem[]>([]);
+  // Sticker & Batch export dropdown
+  const [isBatchExportOpen, setIsBatchExportOpen] = useState(false);
+  const batchExportBtnRef = useRef<HTMLButtonElement>(null);
+  const [batchExportPos, setBatchExportPos] = useState<{ top: number; right: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-
-  // Real-time Dubai Time Clock (Asia/Dubai Timezone)
-  const [now, setNow] = useState<Date>(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const getDubaiDateStr = (date: Date) => {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Dubai",
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(date);
-  };
-
-  const getDubaiTimeStr = (date: Date) => {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Dubai",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-    }).format(date);
-  };
-
-  const getDubaiShortSyncStr = (date: Date) => {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Dubai",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    }).format(date);
-  };
 
   // Search, Sort & Filter
   const [piSearchTerm, setPiSearchTerm] = useState("");
@@ -221,6 +238,8 @@ export default function Index() {
 
   // Modal states
   const [stickerUploadModalOpen, setStickerUploadModalOpen] = useState(false);
+  const [uploadedPdfsModalOpen, setUploadedPdfsModalOpen] = useState(false);
+  const [selectedPdfFilter, setSelectedPdfFilter] = useState<string>("ALL");
   const [manualPIModalOpen, setManualPIModalOpen] = useState(false);
   const [scanModalOpen, setScanModalOpen] = useState(false);
 
@@ -234,6 +253,8 @@ export default function Index() {
   const [rejectReworkItem, setRejectReworkItem] = useState<GlassItem | null>(null);
   const [rejectReworkMode, setRejectReworkMode] = useState<"reject" | "rework">("reject");
   const [rejectReworkModalOpen, setRejectReworkModalOpen] = useState(false);
+  const [summaryTimeFilter, setSummaryTimeFilter] = useState<"Today" | "Week" | "Month" | "All">("Today");
+  const [summaryFilterDropdownOpen, setSummaryFilterDropdownOpen] = useState(false);
 
   const isFetchingRef = useRef(false);
   const pendingFetchRef = useRef(false);
@@ -552,27 +573,48 @@ export default function Index() {
     }
   };
 
-  const clearBatchesCount = pis.filter((p) => p.colorOrClear !== "Colour").length;
-  const colourBatchesCount = pis.filter((p) => p.colorOrClear === "Colour").length;
+  const clearBatchesCount = useMemo(() => pis.filter((p) => p.colorOrClear !== "Colour").length, [pis]);
+  const colourBatchesCount = useMemo(() => pis.filter((p) => p.colorOrClear === "Colour").length, [pis]);
 
-  const getBatchMetrics = (pi: PIMaster) => {
-    const cleanId = (pi.id || "").replace(/^STK-/i, "");
-    const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "");
-    const batchItems = items.filter(
-      (i) =>
-        i.piId === pi.id ||
-        i.piNumber === pi.piNumber ||
-        i.piId === cleanId ||
-        i.piNumber === cleanPiNo ||
-        i.batchNo === cleanPiNo ||
-        i.batchNo === pi.piNumber ||
-        (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
-    );
+  // ponytail: Pre-index items by batch identifier for O(1) lookup
+  const batchItemsLookup = useMemo(() => {
+    const map = new Map<string, GlassItem[]>();
+    items.forEach((item) => {
+      const keys = [
+        item.piId,
+        item.piNumber,
+        item.batchNo,
+        item.sfoNo,
+        item.piId ? item.piId.replace(/^STK-/i, "") : null,
+        item.piNumber ? item.piNumber.replace(/^STK-/i, "") : null,
+      ].filter(Boolean) as string[];
+
+      keys.forEach((k) => {
+        const lower = k.toLowerCase().trim();
+        if (!map.has(lower)) map.set(lower, []);
+        map.get(lower)!.push(item);
+      });
+    });
+    return map;
+  }, [items]);
+
+  const getBatchMetrics = useCallback((pi: PIMaster) => {
+    const cleanId = (pi.id || "").replace(/^STK-/i, "").toLowerCase().trim();
+    const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "").toLowerCase().trim();
+    const piIdLower = (pi.id || "").toLowerCase().trim();
+    const piNoLower = (pi.piNumber || "").toLowerCase().trim();
+
+    const batchItems =
+      batchItemsLookup.get(piIdLower) ||
+      batchItemsLookup.get(piNoLower) ||
+      batchItemsLookup.get(cleanId) ||
+      batchItemsLookup.get(cleanPiNo) ||
+      [];
 
     if (batchItems.length > 0) {
       const totalPieces = batchItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
       const completedPieces = batchItems
-        .filter((i) => i.status === "Completed" || i.currentStage === "Finished")
+        .filter((i) => i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
         .reduce((acc, curr) => acc + (curr.qty || 1), 0);
       const totalSqm = batchItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
 
@@ -592,9 +634,10 @@ export default function Index() {
       let activeStageBadgeClass = "bg-purple-100 text-purple-800 border-purple-200";
 
       if (inFinished > 0 && inFinished === totalPieces) {
-        activeStageName = "Finished Warehouse";
+        const allDispatched = batchItems.every((i) => isDispatchedItem(i));
+        activeStageName = allDispatched ? "Dispatched" : "Finished Warehouse";
         activeStageTab = "finished";
-        activeStageBadgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
+        activeStageBadgeClass = allDispatched ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-emerald-100 text-emerald-800 border-emerald-200";
       } else if (inDgu > 0) {
         activeStageName = `DLGU / IGU (${inDgu} pcs)`;
         activeStageTab = "dgu";
@@ -648,70 +691,143 @@ export default function Index() {
       activeStageBadgeClass: "bg-purple-100 text-purple-800 border-purple-200",
       progressPct: 0,
     };
-  };
+  }, [batchItemsLookup]);
 
-  const sortedAndFilteredPIs = [...pis]
-    .filter((pi) => {
-      if (piFinishFilter === "CLEAR" && pi.colorOrClear === "Colour") return false;
-      if (piFinishFilter === "COLOUR" && pi.colorOrClear !== "Colour") return false;
+  const uploadedPdfsSummary = React.useMemo(() => {
+    const map = new Map<string, {
+      fileName: string;
+      batches: PIMaster[];
+      totalPieces: number;
+      completedPieces: number;
+      totalSqm: number;
+      customers: string[];
+      projects: string[];
+      uploadedAt: string;
+      finish: "Clear" | "Colour" | "Mixed";
+    }>();
 
-      const query = piSearchTerm.toLowerCase().trim();
-      return (
-        pi.piNumber.toLowerCase().includes(query) ||
-        pi.customerName.toLowerCase().includes(query) ||
-        pi.projectName.toLowerCase().includes(query) ||
-        (pi.fileName && pi.fileName.toLowerCase().includes(query)) ||
-        (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(query))
-      );
-    })
-    .sort((a, b) => {
-      let valA: any = a[sortField];
-      let valB: any = b[sortField];
-      if (typeof valA === "string") valA = valA.toLowerCase();
-      if (typeof valB === "string") valB = valB.toLowerCase();
-      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
-      return 0;
+    pis.forEach((pi) => {
+      const rawFileName = pi.fileName || (pi.jobOrderNumber ? `${pi.jobOrderNumber}.pdf` : `${pi.piNumber}.pdf`);
+      const key = rawFileName.trim().toLowerCase();
+
+      if (!map.has(key)) {
+        map.set(key, {
+          fileName: pi.fileName || rawFileName,
+          batches: [],
+          totalPieces: 0,
+          completedPieces: 0,
+          totalSqm: 0,
+          customers: [],
+          projects: [],
+          uploadedAt: pi.createdAt || pi.issueDate || "",
+          finish: pi.colorOrClear === "Colour" ? "Colour" : "Clear",
+        });
+      }
+
+      const entry = map.get(key)!;
+      entry.batches.push(pi);
+      const metrics = getBatchMetrics(pi);
+      entry.totalPieces += metrics.totalPieces;
+      entry.completedPieces += metrics.completedPieces;
+      entry.totalSqm += metrics.totalSqm;
+
+      const cust = (pi.customerName || "").trim();
+      if (cust && !entry.customers.includes(cust)) {
+        entry.customers.push(cust);
+      }
+      const proj = (pi.projectName || "").trim();
+      if (proj && !entry.projects.includes(proj)) {
+        entry.projects.push(proj);
+      }
+
+      if (entry.finish !== "Mixed") {
+        if ((pi.colorOrClear === "Colour" && entry.finish === "Clear") || (pi.colorOrClear !== "Colour" && entry.finish === "Colour")) {
+          entry.finish = "Mixed";
+        }
+      }
     });
+
+    return Array.from(map.values());
+  }, [pis, getBatchMetrics]);
+
+  const totalUploadedPdfs = uploadedPdfsSummary.length;
+  const clearPdfCount = uploadedPdfsSummary.filter((p) => p.finish === "Clear").length;
+  const colourPdfCount = uploadedPdfsSummary.filter((p) => p.finish === "Colour" || p.finish === "Mixed").length;
+
+  const sortedAndFilteredPIs = useMemo(() => {
+    return [...pis]
+      .filter((pi) => {
+        if (piFinishFilter === "CLEAR" && pi.colorOrClear === "Colour") return false;
+        if (piFinishFilter === "COLOUR" && pi.colorOrClear !== "Colour") return false;
+
+        if (selectedPdfFilter !== "ALL") {
+          const pFileName = (pi.fileName || (pi.jobOrderNumber ? `${pi.jobOrderNumber}.pdf` : `${pi.piNumber}.pdf`)).trim().toLowerCase();
+          if (pFileName !== selectedPdfFilter.trim().toLowerCase()) return false;
+        }
+
+        const query = piSearchTerm.toLowerCase().trim();
+        return (
+          pi.piNumber.toLowerCase().includes(query) ||
+          pi.customerName.toLowerCase().includes(query) ||
+          pi.projectName.toLowerCase().includes(query) ||
+          (pi.fileName && pi.fileName.toLowerCase().includes(query)) ||
+          (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(query))
+        );
+      })
+      .sort((a, b) => {
+        let valA: any = a[sortField];
+        let valB: any = b[sortField];
+        if (typeof valA === "string") valA = valA.toLowerCase();
+        if (typeof valB === "string") valB = valB.toLowerCase();
+        if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+        if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+        return 0;
+      });
+  }, [pis, piFinishFilter, selectedPdfFilter, piSearchTerm, sortField, sortOrder]);
 
   const totalPages = Math.ceil(sortedAndFilteredPIs.length / pageSize) || 1;
   const paginatedPIs = sortedAndFilteredPIs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  // Customer Grouped View States & Memoization
+  // Customer Grouped View States & Memoization (Separated by Customer & Project)
   const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({});
 
-  const toggleCustomerExpanded = (customerName: string) => {
+  const toggleCustomerExpanded = (key: string) => {
     setExpandedCustomers((prev) => ({
       ...prev,
-      [customerName]: !prev[customerName],
+      [key]: !prev[key],
     }));
   };
 
-  const isCustomerExpanded = (customerName: string) => {
-    return Boolean(expandedCustomers[customerName]);
+  const isCustomerExpanded = (key: string) => {
+    return Boolean(expandedCustomers[key]);
   };
 
   const setAllCustomersExpanded = (expand: boolean) => {
     const newState: Record<string, boolean> = {};
     groupedCustomerData.forEach((g) => {
-      newState[g.customerName] = expand;
+      newState[g.groupKey] = expand;
     });
     setExpandedCustomers(newState);
   };
 
   const groupedCustomerData = React.useMemo(() => {
-    const map = new Map<string, PIMaster[]>();
+    const map = new Map<string, { customerName: string; projectName: string; batches: PIMaster[] }>();
 
     sortedAndFilteredPIs.forEach((pi) => {
       const cust = (pi.customerName || "Unassigned Customer").trim();
-      if (!map.has(cust)) {
-        map.set(cust, []);
+      const proj = (pi.projectName || "").trim();
+      // Separate batches by Customer AND Project so distinct projects are never mixed together
+      const groupKey = proj ? `${cust}:::${proj}` : `${cust}:::(No Project)`;
+      if (!map.has(groupKey)) {
+        map.set(groupKey, { customerName: cust, projectName: proj, batches: [] });
       }
-      map.get(cust)!.push(pi);
+      map.get(groupKey)!.batches.push(pi);
     });
 
     const groups: Array<{
+      groupKey: string;
       customerName: string;
+      projectName: string;
       batches: PIMaster[];
       totalBatches: number;
       totalPieces: number;
@@ -726,12 +842,13 @@ export default function Index() {
       hasColour: boolean;
       hasClear: boolean;
       projects: string[];
+      pdfFiles: string[];
       status: "Completed" | "In Production" | "Pending";
       earliestDate: string;
       latestDate: string;
     }> = [];
 
-    map.forEach((batches, customerName) => {
+    map.forEach(({ customerName, projectName, batches }, groupKey) => {
       let totalPieces = 0;
       let completedPieces = 0;
       let totalSqm = 0;
@@ -743,8 +860,13 @@ export default function Index() {
       let hasColour = false;
       let hasClear = false;
       const projectsSet = new Set<string>();
+      const pdfFilesSet = new Set<string>();
+      if (projectName) projectsSet.add(projectName);
 
       batches.forEach((pi) => {
+        const rawFileName = pi.fileName || (pi.jobOrderNumber ? `${pi.jobOrderNumber}.pdf` : `${pi.piNumber}.pdf`);
+        if (rawFileName) pdfFilesSet.add(rawFileName);
+
         const metrics = getBatchMetrics(pi);
         totalPieces += metrics.totalPieces;
         completedPieces += metrics.completedPieces;
@@ -767,8 +889,11 @@ export default function Index() {
       const status: "Completed" | "In Production" | "Pending" = isCompleted ? "Completed" : isPending ? "Pending" : "In Production";
 
       groups.push({
+        groupKey,
         customerName,
+        projectName,
         batches,
+        pdfFiles: Array.from(pdfFilesSet),
         totalBatches: batches.length,
         totalPieces,
         completedPieces,
@@ -939,8 +1064,13 @@ export default function Index() {
         ? pipelineMetrics.dguColour
         : pipelineMetrics.dguPairs;
 
+    const uniqueStickerUploads = new Set(
+      pis.map((p) => (p.customerName || "Unassigned Customer").trim()).filter(Boolean)
+    ).size;
+
     return {
       totalPI: pis.length || (stats?.totalPI ?? 0),
+      stickerUploadCount: pis.length > 0 ? uniqueStickerUploads : (stats?.stickerUploadCount ?? 0),
       pendingPI: pis.filter((p) => p.status === "Pending" || p.status === "In Production").length || (stats?.pendingPI ?? 0),
       completedPI: pis.filter((p) => p.status === "Completed").length || (stats?.completedPI ?? 0),
       pendingCutting: pipelineMetrics.cuttingItems,
@@ -949,6 +1079,7 @@ export default function Index() {
       pendingLamination: pipelineMetrics.laminationItems,
       finishedItems: pipelineMetrics.finishedItems,
       dispatchedItems: stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems,
+      totalCompletedItems: pipelineMetrics.finishedItems + (stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems),
       rejectItems: pipelineMetrics.rejectedItems,
       reworkItems: pipelineMetrics.reworkItems,
     };
@@ -1089,67 +1220,56 @@ export default function Index() {
     });
   }, [pipelineBatches, pipelineStageFilter, pipelineBatchSearch]);
 
-  return (
-    <div className="h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans overflow-hidden">
-      {/* Top Header Bar */}
-      <header className="shrink-0 bg-white border-b border-slate-200 px-5 py-2.5 flex items-center justify-between z-30 shadow-xs relative">
-        {/* Left Side: Brand Logo & Title */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-            title="Toggle Sidebar"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
 
-          <div className="flex items-center gap-3 border-r border-slate-200 pr-4">
-            <img
-              src="/sejal-glass-logo.png"
-              alt="SEJAL GLASS"
-              className="h-9 w-auto object-contain shrink-0"
-            />
-            <div className="hidden sm:block">
-              <div className="text-[10px] text-slate-500 font-semibold font-arabic leading-tight">سیجال جلاس</div>
+  return (
+    <div className="h-screen bg-[#f8fafc] text-slate-900 flex font-sans overflow-hidden">
+      {/* Left Navigation Sidebar (Full Height) */}
+      <AppSidebar
+        sidebarOpen={sidebarOpen}
+        activeTab={activeTab}
+        setActiveTab={(tab) => setActiveTab(tab as any)}
+        stats={effectiveStats}
+      />
+
+      {/* Main Workspace Body */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Top Header Bar */}
+        <header className="shrink-0 bg-white border-b border-slate-200 px-5 py-2.5 flex items-center justify-between z-30 shadow-xs relative">
+          {/* Left Side: Menu Toggle & Title */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Toggle Sidebar"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <div className="hidden md:block pl-2 border-l border-slate-200 ml-1">
+              <h1 className="font-extrabold text-sm tracking-tight text-slate-900 leading-none uppercase">
+                SEJAL GLASS PRODUCTION OPERATIONS
+              </h1>
+              <p className="text-[11px] text-slate-500 font-medium leading-tight">
+                Architectural Glass Processing & Shop Floor Execution System
+              </p>
             </div>
           </div>
 
-          <div className="hidden md:block">
-            <h1 className="font-extrabold text-sm tracking-tight text-slate-900 leading-none uppercase">
-              SEJAL GLASS PRODUCTION OPERATIONS
-            </h1>
-            <p className="text-[11px] text-slate-500 font-medium leading-tight">
-              Architectural Glass Processing & Shop Floor Execution System
-            </p>
-          </div>
-        </div>
-
-        {/* Right Side: Sync Button, Weather, Notifications & User Profile */}
+        {/* Right Side: Weather, Notifications & User Profile */}
         <div className="flex items-center gap-4">
-          {/* Single Global Sync Now Button */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              fetchData();
-              toast.success("Synchronizing shop floor & batch data...");
-            }}
-            disabled={loading}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-xl border-blue-200 text-[#1a3a6b] bg-blue-50/70 hover:bg-blue-100 hover:text-blue-900 font-extrabold text-xs shadow-2xs transition-all shrink-0"
-            title={`Last synced: ${getDubaiTimeStr(lastUpdated)} (Click to sync complete system data)`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-[#1a3a6b] ${loading ? "animate-spin" : ""}`} />
-            <span>Sync Now</span>
-          </Button>
 
-          {/* Weather & Clock Chip: compact inline between Search and Bell */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs font-semibold text-amber-800 shadow-2xs select-none">
-            <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span>36°C</span>
-            <span className="text-amber-400 font-normal">•</span>
-            <span className="text-slate-600 font-medium">Dubai, UAE</span>
-            <span className="text-amber-400 font-normal">•</span>
-            <span className="font-mono text-slate-700">{getDubaiTimeStr(now)}</span>
+          {/* Weather & Clock Chip: two-line stacked matching reference */}
+          <div className="hidden lg:flex items-center gap-3">
+            {/* Weather */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs font-semibold text-amber-800 shadow-2xs select-none">
+              <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <div className="flex flex-col leading-none">
+                <span className="font-black text-slate-800 text-[12px]">36°C</span>
+                <span className="text-[9.5px] text-slate-500 font-medium">Dubai, UAE</span>
+              </div>
+            </div>
+            {/* Date & Time */}
+            <DubaiClock />
           </div>
 
           <div className="flex items-center gap-3 relative">
@@ -1160,12 +1280,12 @@ export default function Index() {
                   setNotificationsOpen((prev) => !prev);
                   setUserMenuOpen(false);
                 }}
-                className="relative p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"
+                className="relative p-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all cursor-pointer flex items-center justify-center border border-slate-200/80 bg-white shadow-2xs"
                 title="Notifications"
               >
-                <Bell className="w-4 h-4" />
+                <Bell className="w-5 h-5 text-slate-700" strokeWidth={2.2} />
                 {unreadNotifications > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-[#e31e24] text-white text-[9px] font-bold flex items-center justify-center">
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-[#e31e24] text-white text-[10px] font-black flex items-center justify-center shadow-xs border-2 border-white pointer-events-none">
                     {unreadNotifications}
                   </span>
                 )}
@@ -1392,6 +1512,19 @@ export default function Index() {
                     )}
 
                     <button
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        navigate("/");
+                      }}
+                      className="w-full text-left px-3 py-1.5 rounded-lg text-slate-700 hover:bg-slate-100 font-medium flex items-center justify-between transition-all"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-3.5 h-3.5 text-blue-600" /> Sejal Glass Website
+                      </div>
+                      <ExternalLink className="w-3 h-3 text-slate-400" />
+                    </button>
+
+                    <button
                       onClick={async () => {
                         setUserMenuOpen(false);
                         await logout();
@@ -1412,810 +1545,606 @@ export default function Index() {
 
       {/* Main Layout Container */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Navigation Sidebar (Supports Collapsed Icon-Only Mode and Expanded Mode) */}
-        <AppSidebar
-          sidebarOpen={sidebarOpen}
-          activeTab={activeTab}
-          setActiveTab={(tab) => setActiveTab(tab as any)}
-          stats={effectiveStats}
-        />
 
         {/* Main Workspace Body */}
-        <main className="flex-1 p-6 space-y-6 overflow-y-auto bg-[#f8fafc]">
+        <main className={`flex-1 overflow-y-auto bg-[#f8fafc] ${activeTab === "overview" ? "" : activeTab === "settings" ? "p-2 sm:p-3 space-y-2" : "p-4 sm:p-5 space-y-4"}`}>
           {/* TAB: OVERVIEW DASHBOARD */}
-          {activeTab === "overview" && (
-            <div className="space-y-6">
-              {/* Live Production Sync Active Banner */}
-              <div className="flex items-center justify-between bg-white border border-slate-200/90 p-3.5 px-5 rounded-2xl text-xs shadow-xs">
-                <div className="flex items-center gap-2.5 text-slate-600 font-medium">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                  </span>
-                  <span className="font-bold text-slate-900 tracking-tight">Real-Time Shop Floor Sync Active</span>
-                  <span className="text-slate-400 font-mono">• Last synced: {getDubaiTimeStr(lastUpdated)}</span>
+          {activeTab === "overview" && (() => {
+            const now = new Date();
+            const todayDubaiStr = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dubai", day: "2-digit", month: "2-digit", year: "numeric" }).format(now);
+            const todayIsoDubai = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+
+            const filteredSummaryItems = items.filter((item) => {
+              if (summaryTimeFilter === "All") return true;
+
+              const rawDate = item.optDate || item.delDate || item.updatedAt || (item as any).createdAt || "";
+              const formattedItemDate = item.updatedAt ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dubai", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.updatedAt)) : "";
+              const isoItemDate = item.updatedAt ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(item.updatedAt)) : "";
+
+              const isToday =
+                rawDate.includes(todayDubaiStr) ||
+                rawDate.includes(todayIsoDubai) ||
+                formattedItemDate === todayDubaiStr ||
+                isoItemDate === todayIsoDubai ||
+                Boolean(item.dispatchedAt && item.dispatchedAt.startsWith(todayIsoDubai));
+
+              if (summaryTimeFilter === "Today") {
+                return isToday || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+              }
+
+              if (summaryTimeFilter === "Week") {
+                const itemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : now.getTime();
+                const diffDays = Math.abs(now.getTime() - itemTime) / (1000 * 60 * 60 * 24);
+                return diffDays <= 7 || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+              }
+
+              if (summaryTimeFilter === "Month") {
+                const itemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : now.getTime();
+                const diffDays = Math.abs(now.getTime() - itemTime) / (1000 * 60 * 60 * 24);
+                return diffDays <= 30 || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+              }
+
+              return true;
+            });
+
+            const rejectedSummaryItems = filteredSummaryItems.filter((i) => i.status === "Rejected");
+            const completedSummaryItems = filteredSummaryItems.filter(
+              (i) => i.status !== "Rejected" && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
+            );
+            const inProgressSummaryItems = filteredSummaryItems.filter(
+              (i) =>
+                i.status !== "Rejected" &&
+                !completedSummaryItems.some((c) => c.id === i.id) &&
+                (i.status === "In Production" ||
+                  i.status === "Reworking" ||
+                  (i.completedStages && i.completedStages.length > 0) ||
+                  (i.currentStage && i.currentStage !== "Cutting"))
+            );
+            const pendingSummaryItems = filteredSummaryItems.filter(
+              (i) =>
+                i.status !== "Rejected" &&
+                !completedSummaryItems.some((c) => c.id === i.id) &&
+                !inProgressSummaryItems.some((p) => p.id === i.id)
+            );
+
+            const totalItems = filteredSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+            const completedItems = completedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+            const inProgressItems = inProgressSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+            const pendingItems = pendingSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+            const rejectedItems = rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+            const grandTotal = Math.max(1, totalItems);
+            const completedPct = totalItems > 0 ? Math.round((completedItems / grandTotal) * 100) : 0;
+            const inProgressPct = totalItems > 0 ? Math.round((inProgressItems / grandTotal) * 100) : 0;
+            const pendingPct = totalItems > 0 ? Math.round((pendingItems / grandTotal) * 100) : 0;
+            const rejectedPct = totalItems > 0 ? Math.round((rejectedItems / grandTotal) * 100) : 0;
+            // Real dynamic Production Efficiency:
+            // Measures actual progress across factory process routes:
+            // Items finished/dispatched = 100% completed
+            // Items in active stages = proportional to completed stages along their route
+            const stageCompletedWork = filteredSummaryItems.reduce((acc, item) => {
+              if (item.status === "Rejected") return acc;
+              if (item.status === "Completed" || item.currentStage === "Finished" || isDispatchedItem(item)) {
+                return acc + (item.qty || 1);
+              }
+              const totalStages = Math.max(1, item.processRoute?.length || 2);
+              const doneStages = item.completedStages?.length || (item.currentStage && item.currentStage !== "Cutting" ? 1 : 0);
+              const progressFraction = Math.min(0.95, doneStages / totalStages);
+              return acc + (item.qty || 1) * progressFraction;
+            }, 0);
+
+            const efficiencyRate = totalItems > 0
+              ? Math.min(100, Math.max(0, Math.round((stageCompletedWork / totalItems) * 100)))
+              : (completedItems > 0 ? 100 : 0);
+
+            // Real dynamic On-Time Delivery:
+            // Evaluates customer order deadlines vs current production fulfillment
+            let onTimeCount = 0;
+            let evaluatedCount = 0;
+
+            filteredSummaryItems.forEach((item) => {
+              const qty = item.qty || 1;
+              evaluatedCount += qty;
+
+              const targetDateStr = item.delDate || pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber)?.deliveryDate;
+              if (!targetDateStr) {
+                if (item.status !== "Rejected") {
+                  onTimeCount += qty;
+                }
+                return;
+              }
+
+              const isOverdue = (() => {
+                try {
+                  const parts = targetDateStr.split(/[\/\-\.]/);
+                  let dueDate = null;
+                  if (parts.length === 3) {
+                    if (parts[0].length === 4) {
+                      dueDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 23, 59, 59);
+                    } else {
+                      dueDate = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]), 23, 59, 59);
+                    }
+                  } else {
+                    dueDate = new Date(targetDateStr);
+                  }
+                  if (dueDate && !isNaN(dueDate.getTime())) {
+                    return now.getTime() > dueDate.getTime();
+                  }
+                } catch {}
+                return false;
+              })();
+
+              const isDone = item.status === "Completed" || item.currentStage === "Finished" || isDispatchedItem(item);
+              if (isDone || !isOverdue) {
+                onTimeCount += qty;
+              }
+            });
+
+            const onTimeRate = evaluatedCount > 0
+              ? Math.min(100, Math.max(0, Math.round((onTimeCount / evaluatedCount) * 100)))
+              : 100;
+
+            let donutGrad = "#e2e8f0";
+            if (totalItems > 0) {
+              if (completedPct === 100) {
+                donutGrad = "#10b981";
+              } else if (inProgressPct === 100) {
+                donutGrad = "#3b82f6";
+              } else if (pendingPct === 100) {
+                donutGrad = "#f59e0b";
+              } else if (rejectedPct === 100) {
+                donutGrad = "#ef4444";
+              } else {
+                donutGrad = `conic-gradient(#10b981 0 ${completedPct}%, #3b82f6 ${completedPct}% ${completedPct + inProgressPct}%, #f59e0b ${completedPct + inProgressPct}% ${completedPct + inProgressPct + pendingPct}%, #ef4444 ${completedPct + inProgressPct + pendingPct}% 100%)`;
+              }
+            }
+            return (
+            <div style={{padding: '13px 14px 15px'}}>
+              {/* HERO BANNER */}
+              <div className="ppb-welcome" style={{ backgroundImage: "url('/image copy.png')", marginBottom: '13px', borderRadius: '12px', overflow: 'hidden' }}>
+                <div>
+                  <h2>Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name || 'Administrator'} 👋</h2>
+                  <p>Keep pushing, great things are built here!</p>
                 </div>
-                <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-slate-500">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono">Dubai Plant (UAE)</span>
+                <div className="ppb-welcome-motto">Better Glass<br />Brighter Tomorrow</div>
+              </div>
+
+              {/* 4 METRIC CARDS */}
+              <div className="ppb-metrics-grid">
+                <div className="ppb-metric-card" onClick={() => setActiveTab("pis")} style={{cursor:'pointer'}}>
+                  <div className="ppb-metric-main">
+                    <span className="ppb-metric-icon ppb-metric-icon-blue"><Upload className="w-6 h-6" /></span>
+                    <div className="ppb-metric-copy">
+                      <h3>Total Batches Uploaded</h3>
+                      <strong>
+                        {effectiveStats.totalPI}{" "}
+                        <span style={{ fontSize: "14px", fontWeight: "bold", color: "#f43f5e" }}>
+                          ({totalUploadedPdfs} {totalUploadedPdfs === 1 ? "PDF" : "PDFs"})
+                        </span>
+                      </strong>
+                    </div>
+                    <div className="ppb-sparkline">{[20,25,24,34,30,48,51,72].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#3b82f6'}} />)}</div>
+                  </div>
+                  <div className="ppb-metric-note ppb-note-blue"><span style={{width:8,height:8,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />{totalUploadedPdfs} PDF Files Uploaded • {effectiveStats.pendingPI} Batches in Production</div>
+                </div>
+
+                <div className="ppb-metric-card" onClick={() => setActiveTab("finished")} style={{cursor:'pointer'}}>
+                  <div className="ppb-metric-main">
+                    <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-6 h-6" /></span>
+                    <div className="ppb-metric-copy">
+                      <h3>Finished Glass Items</h3>
+                      <strong>{effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems}</strong>
+                    </div>
+                    <div className="ppb-sparkline">{[12,21,27,35,41,50,64,78].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#10b981'}} />)}</div>
+                  </div>
+                  <div className="ppb-metric-note ppb-note-green"><CheckCircle2 className="w-3.5 h-3.5" />Quality Inspected{effectiveStats.dispatchedItems > 0 ? ` (${effectiveStats.dispatchedItems} Dispatched)` : ""}</div>
+                </div>
+
+                <div className="ppb-metric-card" onClick={() => { setReportsInitialTab("rejects"); try { localStorage.setItem("sejal_reports_active_tab","rejects"); } catch {} setActiveTab("reports"); }} style={{cursor:'pointer'}}>
+                  <div className="ppb-metric-main">
+                    <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-6 h-6" /></span>
+                    <div className="ppb-metric-copy">
+                      <h3>Rejected Items</h3>
+                      <strong>{effectiveStats.rejectItems}</strong>
+                    </div>
+                    <div className="ppb-sparkline">{[15,23,32,45,59,72,86,100].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#ef4444'}} />)}</div>
+                  </div>
+                  <div className="ppb-metric-note ppb-note-red"><span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block',flexShrink:0}} />{effectiveStats.rejectItems === 0 ? 'No rejection today' : 'Rejection logged'}</div>
+                </div>
+
+                <div className="ppb-metric-card" onClick={() => { setReportsInitialTab("reworks"); try { localStorage.setItem("sejal_reports_active_tab","reworks"); } catch {} setActiveTab("reports"); }} style={{cursor:'pointer'}}>
+                  <div className="ppb-metric-main">
+                    <span className="ppb-metric-icon ppb-metric-icon-yellow"><RotateCw className="w-6 h-6" /></span>
+                    <div className="ppb-metric-copy">
+                      <h3>Rework Items</h3>
+                      <strong>{effectiveStats.reworkItems}</strong>
+                    </div>
+                    <div className="ppb-sparkline">{[16,28,46,18,37,25,51,68].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#f59e0b'}} />)}</div>
+                  </div>
+                  <div className="ppb-metric-note ppb-note-yellow"><RotateCw className="w-3.5 h-3.5" />Re-routed to Workstations</div>
                 </div>
               </div>
 
-              {/* 4 KPI Stat Cards Grid (Clickable) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Card 1: Total Batches Uploaded */}
-                <div
-                  onClick={() => setActiveTab("pis")}
-                  className="bg-white border border-slate-200/90 hover:border-blue-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden group cursor-pointer"
-                  title="Click to open Sticker & Batch Status list"
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setActiveTab("pis");
-                    }
-                  }}
-                >
-                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-blue-700 transition-colors">
-                    Total Batches Uploaded
-                  </div>
-                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.totalPI}</div>
-                  <div className="text-[11px] text-blue-700 font-semibold mt-1.5 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                    <span>{effectiveStats.pendingPI} Pending Production</span>
-                  </div>
-                </div>
-
-                {/* Card 2: Finished Glass Items */}
-                <div
-                  onClick={() => setActiveTab("finished")}
-                  className="bg-white border border-slate-200/90 hover:border-emerald-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
-                  title="Click to open Finished Items Warehouse & Dispatch queue"
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setActiveTab("finished");
-                    }
-                  }}
-                >
-                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-emerald-700 transition-colors">
-                    Finished Glass Items
-                  </div>
-                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.finishedItems}</div>
-                  <div className="text-[11px] text-emerald-700 font-semibold mt-1.5 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    <span>100% Quality Inspected</span>
-                  </div>
-                </div>
-
-                {/* Card 3: Rejected Items */}
-                <div
-                  onClick={() => {
-                    setReportsInitialTab("rejects");
-                    try {
-                      localStorage.setItem("sejal_reports_active_tab", "rejects");
-                    } catch {}
-                    setActiveTab("reports");
-                  }}
-                  className="bg-white border border-slate-200/90 hover:border-rose-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
-                  title="Click to open Quality Rejects log"
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setReportsInitialTab("rejects");
-                      try {
-                        localStorage.setItem("sejal_reports_active_tab", "rejects");
-                      } catch {}
-                      setActiveTab("reports");
-                    }
-                  }}
-                >
-                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-rose-700 transition-colors">
-                    Rejected Items
-                  </div>
-                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.rejectItems}</div>
-                  <div className="text-[11px] text-rose-700 font-semibold mt-1.5 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                    <span>Log & Reason Traceable</span>
-                  </div>
-                </div>
-
-                {/* Card 4: Rework Items */}
-                <div
-                  onClick={() => {
-                    setReportsInitialTab("reworks");
-                    try {
-                      localStorage.setItem("sejal_reports_active_tab", "reworks");
-                    } catch {}
-                    setActiveTab("reports");
-                  }}
-                  className="bg-white border border-slate-200/90 hover:border-amber-400 rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group cursor-pointer"
-                  title="Click to open Rework log and tracking"
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setReportsInitialTab("reworks");
-                      try {
-                        localStorage.setItem("sejal_reports_active_tab", "reworks");
-                      } catch {}
-                      setActiveTab("reports");
-                    }
-                  }}
-                >
-                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-amber-700 transition-colors">
-                    Rework Items
-                  </div>
-                  <div className="text-3xl font-black text-slate-900 mt-2 tracking-tight font-mono">{effectiveStats.reworkItems}</div>
-                  <div className="text-[11px] text-amber-700 font-semibold mt-1.5 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                    <span>Re-routed to Workstations</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* LIVE STAGE PRODUCTION QUEUES Section */}
-              <div className="bg-white border border-slate-300 rounded-2xl p-4 space-y-3.5 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-extrabold text-slate-900 tracking-wider uppercase">
-                    LIVE STAGE PRODUCTION QUEUES
-                  </div>
-                  <button
-                    onClick={() => setActiveTab("production-overview")}
-                    className="p-1 text-slate-400 hover:text-[#1a3a6b] transition-colors flex items-center gap-1 text-xs font-bold"
-                  >
-                    <span>View All</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Cutting Queue */}
-                  <div
-                    onClick={() => setActiveTab("cutting")}
-                    className="bg-gradient-to-br from-indigo-50/60 to-indigo-100/40 border border-indigo-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-indigo-100/80 hover:border-indigo-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-indigo-900 uppercase tracking-wider">Cutting Queue</div>
-                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                        {stats?.pendingCutting ?? 0} <span className="text-xs font-semibold text-indigo-700">Items</span>
-                      </div>
+              {/* TWO-COLUMN LAYOUT */}
+              <div className="ppb-dashboard-columns">
+                {/* LEFT COLUMN */}
+                <div className="ppb-left-col">
+                  {/* Live Stage Production Queues */}
+                  <section className="ppb-panel">
+                    <div className="ppb-panel-heading">
+                      <div><Zap className="ppb-heading-icon" size={20} fill="currentColor" /><h3>Live Stage Production Queues</h3></div>
+                      <button onClick={() => setActiveTab("production-overview")}>View All <ChevronRight size={15} /></button>
                     </div>
-                    <div className="w-10 h-10 rounded-xl bg-indigo-200/60 text-indigo-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <Scissors className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  {/* DGU Assembly Line */}
-                  <div
-                    onClick={() => setActiveTab("dgu")}
-                    className="bg-gradient-to-br from-teal-50/60 to-teal-100/40 border border-teal-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-teal-100/80 hover:border-teal-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-teal-900 uppercase tracking-wider">DGU Queue</div>
-                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                        {stats?.pendingDGU ?? 0} <span className="text-xs font-semibold text-teal-700">Units</span>
-                      </div>
-                    </div>
-                    <div className="w-10 h-10 rounded-xl bg-teal-200/60 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-teal-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <Boxes className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  {/* Lamination Queue */}
-                  <div
-                    onClick={() => setActiveTab("lamination")}
-                    className="bg-gradient-to-br from-amber-50/60 to-amber-100/40 border border-amber-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-amber-100/80 hover:border-amber-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-amber-900 uppercase tracking-wider">Lamination Queue</div>
-                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                        {stats?.pendingLamination ?? 0} <span className="text-xs font-semibold text-amber-700">Items</span>
-                      </div>
-                    </div>
-                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-amber-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <Layers className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  {/* Finished Items Warehouse */}
-                  <div
-                    onClick={() => setActiveTab("finished")}
-                    className="bg-gradient-to-br from-emerald-50/60 to-emerald-100/40 border border-emerald-200/80 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer hover:bg-emerald-100/80 hover:border-emerald-300 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Finished Warehouse</div>
-                      <div className="text-2xl font-extrabold text-slate-900 mt-1">
-                        {stats?.finishedItems ?? 0} <span className="text-xs font-semibold text-emerald-700">Items</span>
-                      </div>
-                    </div>
-                    <div className="w-10 h-10 rounded-xl bg-emerald-200/60 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-200 shadow-2xs">
-                      <CheckCircle className="w-5 h-5" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Main Active PIs Table & Right Widgets Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Active Proforma Invoices (PIs) Main Panel */}
-                <div className="lg:col-span-2 space-y-4">
-                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs">
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-extrabold text-slate-900">Active Sticker & Batch Status</h2>
-                      <button
-                        onClick={() => setActiveTab("pis")}
-                        className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1"
-                      >
-                        View All Batches <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Table View */}
-                    {pis.length > 0 ? (
-                      <div className="no-scrollbar overflow-x-auto w-full">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead>
-                            <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/80">
-                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("piNumber")}>
-                                BATCH NO {renderSortIcon("piNumber")}
-                              </th>
-                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("customerName")}>
-                                CUSTOMER {renderSortIcon("customerName")}
-                              </th>
-                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("projectName")}>
-                                PROJECT {renderSortIcon("projectName")}
-                              </th>
-                              <th className="py-2.5 px-2 whitespace-nowrap">
-                                CURRENT STAGE
-                              </th>
-                              <th className="py-2.5 px-2 text-center whitespace-nowrap">
-                                FINISHED / TOTAL
-                              </th>
-                              <th className="py-2.5 px-2 text-right whitespace-nowrap">
-                                SQM
-                              </th>
-                              <th className="py-2.5 px-2.5 cursor-pointer whitespace-nowrap" onClick={() => handleSort("createdAt")}>
-                                UPLOADED AT {renderSortIcon("createdAt")}
-                              </th>
-                              <th className="py-2.5 px-2 text-center whitespace-nowrap">
-                                STATUS
-                              </th>
-                              <th className="py-2.5 px-2 text-right whitespace-nowrap">
-                                ACTIONS
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {paginatedPIs.map((pi) => {
-                              const metrics = getBatchMetrics(pi);
-                              return (
-                                <tr
-                                  key={pi.id}
-                                  onClick={() => openPIDetails(pi)}
-                                  className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
-                                  title="Click to view Batch details"
-                                >
-                                  <td className="py-3 px-2.5 font-mono font-bold text-blue-700 whitespace-nowrap group-hover:underline">{formatBatchNumber(pi.batchNo || pi.piNumber)}</td>
-                                  <td className="py-3 px-2.5 font-semibold text-slate-800 leading-snug">{pi.customerName}</td>
-                                  <td className="py-3 px-2.5 text-slate-600 leading-snug">
-                                    <div className="font-medium text-slate-900">{pi.projectName || "—"}</div>
-                                  </td>
-                                  <td className="py-3 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                    <button
-                                      type="button"
-                                      onClick={() => setActiveTab(metrics.activeStageTab)}
-                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs hover:opacity-80 transition-all cursor-pointer ${metrics.activeStageBadgeClass}`}
-                                      title={`Go to ${metrics.activeStageName}`}
-                                    >
-                                      <span>{metrics.activeStageName}</span>
-                                      <ChevronRight className="w-3 h-3 opacity-60" />
-                                    </button>
-                                  </td>
-                                  <td className="py-3 px-2 text-center font-bold text-slate-700 whitespace-nowrap">
-                                    <div className="flex flex-col items-center gap-1">
-                                      <span className="text-xs font-mono font-bold text-slate-800">
-                                        {metrics.completedPieces} / {metrics.totalPieces} pcs
-                                      </span>
-                                      <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                                        <div
-                                          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-                                          style={{ width: `${metrics.progressPct}%` }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-2 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
-                                    {metrics.totalSqm.toFixed(2)} m²
-                                  </td>
-                                  <td className="py-3 px-2.5 whitespace-nowrap font-mono text-[11px]">
-                                    <div className="flex items-center gap-1 font-bold text-slate-800">
-                                      <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
-                                      {formatPlatformDate(pi.createdAt || pi.issueDate)}
-                                    </div>
-                                    <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium">
-                                      <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                                      {formatPlatformTime(pi.createdAt)}
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-2 text-center whitespace-nowrap">
-                                    <StatusBadge status={metrics.status || pi.status || "Pending"} />
-                                  </td>
-                                  <td className="py-3 px-2 text-right whitespace-nowrap space-x-1" onClick={(e) => e.stopPropagation()}>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openPIDetails(pi);
-                                      }}
-                                      className="h-7 w-7 p-0 text-slate-500 hover:text-purple-600 rounded-md"
-                                      title="View Details"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                    </Button>
-                                    {userRole === "Admin" && (
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeletePI(pi.id);
-                                        }}
-                                        className="h-7 w-7 p-0 text-slate-400 hover:text-red-600 rounded-md"
-                                        title="Delete Batch"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </Button>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      /* Table Empty State Container */
-                      <div className="py-12 px-4 flex flex-col items-center justify-center text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                        <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-3 shadow-2xs">
-                          <FileText className="w-7 h-7" />
+                    <div className="ppb-queue-list">
+                      <div className="ppb-queue-group">
+                        <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => setActiveTab("cutting")}>
+                          <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={22} /></span>
+                          <div><strong>Cutting Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Items</span></div>
+                          <span className="ppb-queue-badge ppb-queue-badge-blue">{effectiveStats.pendingCutting ?? 0}</span>
                         </div>
-                        <h3 className="text-sm font-extrabold text-slate-900">No Active Sticker Batches</h3>
-                        <p className="text-xs text-slate-500 mt-1 max-w-xs">
-                          Uploaded sticker batches will appear here. Upload a Sticker PDF file to import batch details.
-                        </p>
-                        <div className="flex items-center gap-2 mt-4 flex-wrap justify-center">
-                          <Button
-                            onClick={() => setManualPIModalOpen(true)}
-                            size="sm"
-                            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs px-3.5 h-9 rounded-lg shadow-xs gap-1.5"
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Manual Entry
-                          </Button>
-                          <Button
-                            onClick={() => setStickerUploadModalOpen(true)}
-                            size="sm"
-                            variant="outline"
-                            className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs px-3.5 h-9 rounded-lg shadow-xs gap-1.5"
-                          >
-                            <Upload className="w-3.5 h-3.5" /> Upload Sticker PDF
-                          </Button>
+                        <ArrowRight className="ppb-queue-arrow" size={15} />
+                      </div>
+                      <div className="ppb-queue-group">
+                        <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => setActiveTab("dgu")}>
+                          <span className="ppb-queue-icon ppb-queue-icon-green"><Boxes size={22} /></span>
+                          <div><strong>DGU Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingDGU ?? 0}</b> Units</span></div>
+                          <span className="ppb-queue-badge ppb-queue-badge-green">{effectiveStats.pendingDGU ?? 0}</span>
+                        </div>
+                        <ArrowRight className="ppb-queue-arrow" size={15} />
+                      </div>
+                      <div className="ppb-queue-group">
+                        <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => setActiveTab("lamination")}>
+                          <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={22} /></span>
+                          <div><strong>Lamination Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Items</span></div>
+                          <span className="ppb-queue-badge ppb-queue-badge-purple">{effectiveStats.pendingLamination ?? 0}</span>
+                        </div>
+                        <ArrowRight className="ppb-queue-arrow" size={15} />
+                      </div>
+                      <div className="ppb-queue-group">
+                        <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => setActiveTab("finished")}>
+                          <span className="ppb-queue-icon ppb-queue-icon-emerald"><CheckCircle size={22} /></span>
+                          <div><strong>Finished Warehouse</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Items</span></div>
+                          <span className="ppb-queue-badge ppb-queue-badge-emerald">{effectiveStats.finishedItems ?? 0}</span>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  </section>
+
+                  {/* Active Sticker & Batch Status */}
+                  <section className="ppb-panel">
+                    <div className="ppb-panel-heading">
+                      <div><Grid className="ppb-heading-icon" size={20} /><h3>Active Sticker &amp; Batch Status</h3></div>
+                      <button onClick={() => setActiveTab("pis")}>View All Batches <ArrowRight size={15} /></button>
+                    </div>
+                    <div className="ppb-table-scroll">
+                      <table className="ppb-table">
+                        <thead>
+                          <tr>
+                            <th>Batch No</th><th>Customer</th><th>Project</th><th>Current Stage</th>
+                            <th>Finished / Total</th><th>SQM</th><th>Uploaded At</th><th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pis.length > 0 ? pis.slice(0, 2).map((pi) => {
+                            const m = getBatchMetrics(pi);
+                            return (
+                              <tr key={pi.id} onClick={() => openPIDetails(pi)} tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === "Enter") openPIDetails(pi); }}>
+                                <td><span className="ppb-live-dot" /><u style={{fontWeight:900}}>{formatBatchNumber(pi.batchNo || pi.piNumber)}</u><ChevronRight size={13} style={{display:'inline',verticalAlign:'middle',marginLeft:4}} /></td>
+                                <td>{pi.customerName}</td>
+                                <td>{pi.projectName || "—"}</td>
+                                <td><span className="ppb-stage-pill">{m.activeStageName}</span></td>
+                                <td><strong>{m.completedPieces} / {m.totalPieces} pcs</strong><span className="ppb-mini-progress" style={{width:`${Math.max(10,m.progressPct)}%`}} /></td>
+                                <td>{m.totalSqm.toFixed(2)} m²</td>
+                                <td>{formatPlatformDate(pi.createdAt || pi.issueDate)}<small style={{display:'block',color:'#8099b4'}}>{formatPlatformTime(pi.createdAt)}</small></td>
+                                <td><span className="ppb-status-pill">COMPLETED</span></td>
+                              </tr>
+                            );
+                          }) : (
+                            <tr><td colSpan={8} style={{textAlign:'center',padding:'20px',color:'#8099b4',fontWeight:600}}>No batch data yet. Upload a sticker PDF to get started.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+
+                  {/* Left Column Content End */}
                 </div>
 
-                {/* Right Column Summary Widgets */}
-                <div className="space-y-4">
-                  {/* Widget 2: PRODUCTION SUMMARY Donut Chart */}
-                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs space-y-3.5 relative overflow-hidden group">
-                    {/* Header with Live Sync Status & Area Indicator */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                          PRODUCTION SUMMARY
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100/90 text-emerald-800 border border-emerald-300 shadow-2xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          LIVE
-                        </span>
+                {/* RIGHT COLUMN */}
+                <div className="ppb-right-col">
+                  {/* Production Summary */}
+                  <section className="ppb-panel ppb-summary-panel">
+                    <div className="ppb-panel-heading relative">
+                      <div className="flex items-center gap-1.5">
+                        <Activity className="ppb-heading-icon" size={20} />
+                        <h3>Production Summary</h3>
+                        <span className="ppb-live-badge"><i />Live</span>
                       </div>
-                      <div className="text-[10px] font-mono font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg">
-                        {pipelineMetrics.totalSqm.toFixed(1)} m² Total
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setSummaryFilterDropdownOpen((v) => !v)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-md transition-colors border border-slate-200"
+                        >
+                          {summaryTimeFilter === "Today" ? (
+                            <>
+                              <span>{new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Dubai",day:"2-digit",month:"2-digit",year:"numeric"}).format(now).replace(/\//g,'.')}</span>
+                              <span className="text-blue-600 font-extrabold">Today</span>
+                            </>
+                          ) : summaryTimeFilter === "Week" ? (
+                            <span className="text-blue-600 font-extrabold">This Week</span>
+                          ) : summaryTimeFilter === "Month" ? (
+                            <span className="text-blue-600 font-extrabold">This Month</span>
+                          ) : (
+                            <span className="text-blue-600 font-extrabold">All Time</span>
+                          )}
+                          <ChevronDown size={12} className={`transition-transform ${summaryFilterDropdownOpen ? "rotate-180" : ""}`} />
+                        </button>
+                        {summaryFilterDropdownOpen && (
+                          <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-30 text-xs font-semibold">
+                            {[
+                              { label: "Today", value: "Today" as const },
+                              { label: "This Week", value: "Week" as const },
+                              { label: "This Month", value: "Month" as const },
+                              { label: "All Time", value: "All" as const },
+                            ].map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => {
+                                  setSummaryTimeFilter(opt.value);
+                                  setSummaryFilterDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-1.5 hover:bg-blue-50 hover:text-blue-700 transition-colors flex items-center justify-between ${summaryTimeFilter === opt.value ? "text-blue-600 bg-blue-50/50 font-bold" : "text-slate-700"}`}
+                              >
+                                <span>{opt.label}</span>
+                                {summaryTimeFilter === opt.value && <CheckCircle size={11} className="text-blue-600" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-4 pt-0.5">
-                      {(() => {
-                        const totalDashboardItems = pipelineMetrics.totalItems || items.length;
-                        const completedDashboardItems = (stats?.finishedItems ?? pipelineMetrics.finishedItems) || 0;
-                        const rejectedDashboardItems = (stats?.rejectItems ?? pipelineMetrics.rejectedItems) || 0;
-                        const pendingDashboardItems = (stats?.pendingPI ?? 0);
-                        const inProgressDashboardItems = Math.max(0, totalDashboardItems - completedDashboardItems - rejectedDashboardItems);
-                        const effectiveTotal = Math.max(1, completedDashboardItems + inProgressDashboardItems + pendingDashboardItems + rejectedDashboardItems);
-
-                        const completedPercent = totalDashboardItems > 0 ? Math.round((completedDashboardItems / totalDashboardItems) * 100) : 0;
-                        const inProgressPercent = totalDashboardItems > 0 ? Math.round((inProgressDashboardItems / totalDashboardItems) * 100) : 0;
-                        const pendingPercent = totalDashboardItems > 0 ? Math.round((pendingDashboardItems / totalDashboardItems) * 100) : 0;
-                        const rejectedPercent = totalDashboardItems > 0 ? Math.round((rejectedDashboardItems / totalDashboardItems) * 100) : 0;
-
-                        // Calculate SVG segment lengths out of 100
-                        const pCompleted = (completedDashboardItems / effectiveTotal) * 100;
-                        const pInProgress = (inProgressDashboardItems / effectiveTotal) * 100;
-                        const pPending = (pendingDashboardItems / effectiveTotal) * 100;
-                        const pRejected = (rejectedDashboardItems / effectiveTotal) * 100;
-
-                        const offsetCompleted = 0;
-                        const offsetInProgress = -pCompleted;
-                        const offsetPending = -(pCompleted + pInProgress);
-                        const offsetRejected = -(pCompleted + pInProgress + pPending);
-
-                        return (
-                          <>
-                            {/* Real-time Multi-Segment Radial Donut SVG */}
-                            <div
-                              className="relative w-28 h-28 shrink-0 flex items-center justify-center cursor-pointer select-none"
-                              onClick={() => setActiveSummarySlice("all")}
-                              title="Click to reset view to Overall Completion"
-                            >
-                              <svg className="w-full h-full transform -rotate-90 filter drop-shadow-xs" viewBox="0 0 42 42">
-                                {/* Base Track */}
-                                <circle
-                                  cx="21"
-                                  cy="21"
-                                  r="15.9155"
-                                  fill="transparent"
-                                  stroke="#f1f5f9"
-                                  strokeWidth="4.2"
-                                />
-
-                                {/* Segment 1: Completed (Emerald) */}
-                                {pCompleted > 0 && (
-                                  <circle
-                                    cx="21"
-                                    cy="21"
-                                    r="15.9155"
-                                    fill="transparent"
-                                    stroke="#10b981"
-                                    strokeWidth={activeSummarySlice === "completed" ? "5.4" : "4.2"}
-                                    strokeDasharray={`${pCompleted} ${100 - pCompleted}`}
-                                    strokeDashoffset={offsetCompleted}
-                                    className="transition-all duration-500 ease-out"
-                                  />
-                                )}
-
-                                {/* Segment 2: In Progress (Cyan / Teal) */}
-                                {pInProgress > 0 && (
-                                  <circle
-                                    cx="21"
-                                    cy="21"
-                                    r="15.9155"
-                                    fill="transparent"
-                                    stroke="#06b6d4"
-                                    strokeWidth={activeSummarySlice === "inProgress" ? "5.4" : "4.2"}
-                                    strokeDasharray={`${pInProgress} ${100 - pInProgress}`}
-                                    strokeDashoffset={offsetInProgress}
-                                    className="transition-all duration-500 ease-out"
-                                  />
-                                )}
-
-                                {/* Segment 3: Pending (Amber) */}
-                                {pPending > 0 && (
-                                  <circle
-                                    cx="21"
-                                    cy="21"
-                                    r="15.9155"
-                                    fill="transparent"
-                                    stroke="#f59e0b"
-                                    strokeWidth={activeSummarySlice === "pending" ? "5.4" : "4.2"}
-                                    strokeDasharray={`${pPending} ${100 - pPending}`}
-                                    strokeDashoffset={offsetPending}
-                                    className="transition-all duration-500 ease-out"
-                                  />
-                                )}
-
-                                {/* Segment 4: Rejected (Red) */}
-                                {pRejected > 0 && (
-                                  <circle
-                                    cx="21"
-                                    cy="21"
-                                    r="15.9155"
-                                    fill="transparent"
-                                    stroke="#ef4444"
-                                    strokeWidth={activeSummarySlice === "rejected" ? "5.4" : "4.2"}
-                                    strokeDasharray={`${pRejected} ${100 - pRejected}`}
-                                    strokeDashoffset={offsetRejected}
-                                    className="transition-all duration-500 ease-out"
-                                  />
-                                )}
-                              </svg>
-
-                              {/* Interactive Center Info Display */}
-                              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-1 select-none pointer-events-none">
-                                {activeSummarySlice === "inProgress" ? (
-                                  <div className="animate-in fade-in zoom-in-90 duration-150">
-                                    <span className="text-base font-black text-cyan-700 leading-tight block">
-                                      {inProgressDashboardItems}
-                                    </span>
-                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
-                                      In Progress
-                                    </span>
-                                    <span className="text-[7.5px] font-mono font-black text-cyan-600 block mt-0.5">
-                                      {inProgressPercent}% WIP
-                                    </span>
-                                  </div>
-                                ) : activeSummarySlice === "pending" ? (
-                                  <div className="animate-in fade-in zoom-in-90 duration-150">
-                                    <span className="text-base font-black text-amber-700 leading-tight block">
-                                      {pendingDashboardItems}
-                                    </span>
-                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
-                                      Pending
-                                    </span>
-                                    <span className="text-[7.5px] font-mono font-black text-amber-600 block mt-0.5">
-                                      {pendingPercent}%
-                                    </span>
-                                  </div>
-                                ) : activeSummarySlice === "rejected" ? (
-                                  <div className="animate-in fade-in zoom-in-90 duration-150">
-                                    <span className="text-base font-black text-rose-700 leading-tight block">
-                                      {rejectedDashboardItems}
-                                    </span>
-                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
-                                      Rejected
-                                    </span>
-                                    <span className="text-[7.5px] font-mono font-black text-rose-600 block mt-0.5">
-                                      {rejectedPercent}%
-                                    </span>
-                                  </div>
-                                ) : activeSummarySlice === "completed" ? (
-                                  <div className="animate-in fade-in zoom-in-90 duration-150">
-                                    <span className="text-base font-black text-emerald-700 leading-tight block">
-                                      {completedDashboardItems}
-                                    </span>
-                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase leading-none block mt-0.5">
-                                      Completed
-                                    </span>
-                                    <span className="text-[7.5px] font-mono font-black text-emerald-600 block mt-0.5">
-                                      {completedPercent}%
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <div className="animate-in fade-in zoom-in-90 duration-150">
-                                    <span className="text-base font-black text-slate-900 leading-tight block">
-                                      {completedPercent}%
-                                    </span>
-                                    <span className="text-[8px] font-extrabold text-slate-400 uppercase leading-none block mt-0.5">
-                                      Completed
-                                    </span>
-                                    <span className="text-[7.5px] font-mono font-black text-emerald-600 block mt-0.5">
-                                      {completedDashboardItems}/{totalDashboardItems}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Interactive Legend List */}
-                            <div className="space-y-1.5 text-xs flex-1">
-                              {/* Row 1: Completed */}
-                              <div
-                                onMouseEnter={() => setActiveSummarySlice("completed")}
-                                onMouseLeave={() => setActiveSummarySlice("all")}
-                                onClick={() => setActiveSummarySlice(activeSummarySlice === "completed" ? "all" : "completed")}
-                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
-                                  activeSummarySlice === "completed" ? "bg-emerald-50 ring-1 ring-emerald-300" : "hover:bg-slate-50"
-                                }`}
-                              >
-                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
-                                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-2xs" /> Completed
-                                </span>
-                                <div className="text-right font-mono">
-                                  <span className="font-extrabold text-slate-900">{completedDashboardItems}</span>
-                                  <span className="text-[10px] text-slate-400 ml-1">({completedPercent}%)</span>
-                                </div>
-                              </div>
-
-                              {/* Row 2: In Progress */}
-                              <div
-                                onMouseEnter={() => setActiveSummarySlice("inProgress")}
-                                onMouseLeave={() => setActiveSummarySlice("all")}
-                                onClick={() => setActiveSummarySlice(activeSummarySlice === "inProgress" ? "all" : "inProgress")}
-                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
-                                  activeSummarySlice === "inProgress" ? "bg-cyan-50 ring-1 ring-cyan-300" : "hover:bg-slate-50"
-                                }`}
-                              >
-                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
-                                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 shrink-0 shadow-2xs" /> In Progress
-                                </span>
-                                <div className="text-right font-mono">
-                                  <span className="font-extrabold text-slate-900">{inProgressDashboardItems}</span>
-                                  <span className="text-[10px] text-cyan-600 font-bold ml-1">({inProgressPercent}%)</span>
-                                </div>
-                              </div>
-
-                              {/* Row 3: Pending */}
-                              <div
-                                onMouseEnter={() => setActiveSummarySlice("pending")}
-                                onMouseLeave={() => setActiveSummarySlice("all")}
-                                onClick={() => setActiveSummarySlice(activeSummarySlice === "pending" ? "all" : "pending")}
-                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
-                                  activeSummarySlice === "pending" ? "bg-amber-50 ring-1 ring-amber-300" : "hover:bg-slate-50"
-                                }`}
-                              >
-                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
-                                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0 shadow-2xs" /> Pending
-                                </span>
-                                <div className="text-right font-mono">
-                                  <span className="font-extrabold text-slate-900">{pendingDashboardItems}</span>
-                                  <span className="text-[10px] text-slate-400 ml-1">({pendingPercent}%)</span>
-                                </div>
-                              </div>
-
-                              {/* Row 4: Rejected */}
-                              <div
-                                onMouseEnter={() => setActiveSummarySlice("rejected")}
-                                onMouseLeave={() => setActiveSummarySlice("all")}
-                                onClick={() => setActiveSummarySlice(activeSummarySlice === "rejected" ? "all" : "rejected")}
-                                className={`flex items-center justify-between p-1 px-1.5 rounded-lg transition-all cursor-pointer ${
-                                  activeSummarySlice === "rejected" ? "bg-red-50 ring-1 ring-red-300" : "hover:bg-slate-50"
-                                }`}
-                              >
-                                <span className="flex items-center gap-1.5 text-slate-700 font-semibold text-[11.5px]">
-                                  <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0 shadow-2xs" /> Rejected
-                                </span>
-                                <div className="text-right font-mono">
-                                  <span className="font-extrabold text-slate-900">{rejectedDashboardItems}</span>
-                                  <span className="text-[10px] text-slate-400 ml-1">({rejectedPercent}%)</span>
-                                </div>
-                              </div>
-                            </div>
-                          </>
-                        );
-                      })()}
+                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                      <div className="ppb-donut" style={{background: donutGrad}}>
+                        <div className="ppb-donut-inner">
+                          <strong>{completedPct}%</strong>
+                          <span>COMPLETED</span>
+                          <small>{completedItems} / {grandTotal}</small>
+                        </div>
+                      </div>
+                      <div className="ppb-summary-legend">
+                        <div
+                          onClick={() => setActiveTab("finished")}
+                          className="cursor-pointer hover:bg-emerald-50 px-1 py-0.5 rounded transition-colors"
+                          title="View Finished & Dispatched Items"
+                        >
+                          <i className="ppb-dot ppb-dot-green" />Completed <b>{completedItems} <small>({completedPct}%)</small></b>
+                        </div>
+                        <div
+                          onClick={() => setActiveTab("production-overview")}
+                          className="cursor-pointer hover:bg-blue-50 px-1 py-0.5 rounded transition-colors"
+                          title="View In-Progress Workstations"
+                        >
+                          <i className="ppb-dot ppb-dot-blue" />In Progress <b>{inProgressItems} <small>({inProgressPct}%)</small></b>
+                        </div>
+                        <div
+                          onClick={() => setActiveTab("pis")}
+                          className="cursor-pointer hover:bg-amber-50 px-1 py-0.5 rounded transition-colors"
+                          title="View Batches"
+                        >
+                          <i className="ppb-dot ppb-dot-yellow" />Pending <b>{pendingItems} <small>({pendingPct}%)</small></b>
+                        </div>
+                        <div
+                          onClick={() => { setReportsInitialTab("rejects"); try { localStorage.setItem("sejal_reports_active_tab","rejects"); } catch {} setActiveTab("reports"); }}
+                          className="cursor-pointer hover:bg-red-50 px-1 py-0.5 rounded transition-colors"
+                          title="View Rejections Report"
+                        >
+                          <i className="ppb-dot ppb-dot-red" />Rejected <b>{rejectedItems} <small>({rejectedPct}%)</small></b>
+                        </div>
+                      </div>
                     </div>
-
-                    {/* Workstation Queue Real-time Quick Chips */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-extrabold flex-wrap gap-1">
-                      <button
+                    <div className="ppb-summary-chips">
+                      <span
                         onClick={() => setActiveTab("cutting")}
-                        className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 hover:bg-purple-100 transition-colors"
-                        title="Cutting Workstation Queue"
+                        className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                        style={{color:'#7c3aed'}}
+                        title="View Cutting Workstation"
                       >
-                        Cut: {pipelineMetrics.cuttingItems}
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("pairing")}
-                        className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 hover:bg-indigo-100 transition-colors"
-                        title="Pairing Buffer Queue"
-                      >
-                        Pair: {pipelineMetrics.pairingItems}
-                      </button>
-                      <button
+                        ◉&nbsp; Cut <b>{effectiveStats.pendingCutting ?? 0}</b>
+                      </span>
+                      <span
                         onClick={() => setActiveTab("dgu")}
-                        className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 hover:bg-teal-100 transition-colors"
-                        title="DGU Assembly Station"
+                        className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                        style={{color:'#059669'}}
+                        title="View DGU Workstation"
                       >
-                        DGU: {pipelineMetrics.dguUnits}
-                      </button>
-                      <button
+                        ◉&nbsp; DGU <b>{effectiveStats.pendingDGU ?? 0}</b>
+                      </span>
+                      <span
                         onClick={() => setActiveTab("lamination")}
-                        className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors"
-                        title="Lamination Stage Queue"
+                        className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                        style={{color:'#b45309'}}
+                        title="View Lamination Workstation"
                       >
-                        Lam: {pipelineMetrics.laminationItems}
-                      </button>
-                      <button
+                        ◉&nbsp; Lam <b>{effectiveStats.pendingLamination ?? 0}</b>
+                      </span>
+                      <span
                         onClick={() => setActiveTab("finished")}
-                        className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors"
-                        title="Finished Warehouse Inventory"
+                        className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                        style={{color:'#10b981'}}
+                        title="View Finished & Dispatched Warehouse"
                       >
-                        Fin: {pipelineMetrics.finishedItems}
-                      </button>
+                        ◉&nbsp; Fin <b>{completedItems}</b>
+                      </span>
                     </div>
-                  </div>
+                  </section>
 
-                  {/* Widget 3: TODAY'S OVERVIEW Dynamic Real-Time Progress Bars */}
-                  <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                        TODAY'S OVERVIEW
+                  {/* Today's Overview */}
+                  <section className="ppb-panel ppb-overview-panel">
+                    <div className="ppb-panel-heading">
+                      <div
+                        onClick={() => setActiveTab("analytics")}
+                        className="cursor-pointer group flex items-center gap-2"
+                        title="Click to view detailed Enterprise Performance Analytics"
+                      >
+                        <Factory className="ppb-heading-icon group-hover:scale-110 transition-transform" size={20} />
+                        <h3 className="group-hover:text-blue-600 transition-colors">Today's Overview</h3>
                       </div>
                       <button
+                        type="button"
                         onClick={() => setActiveTab("analytics")}
-                        className="text-[10px] font-bold text-purple-600 hover:text-purple-800 flex items-center gap-0.5 hover:underline"
-                        title="Open Performance Analytics"
+                        className="flex items-center gap-1 font-bold text-xs text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                        title="Open Enterprise Performance Analytics"
                       >
-                        Analytics <ChevronRight className="w-3 h-3" />
+                        Analytics <ArrowRight size={15} />
                       </button>
                     </div>
-
-                    {(() => {
-                      const totalDashboardItems = pipelineMetrics.totalItems || items.length;
-                      const completedDashboardItems = (stats?.finishedItems ?? pipelineMetrics.finishedItems) || 0;
-                      const rejectedDashboardItems = (stats?.rejectItems ?? pipelineMetrics.rejectedItems) || 0;
-                      const reworkDashboardItems = (stats?.reworkItems ?? pipelineMetrics.reworkItems) || 0;
-
-                      const efficiencyRate = totalDashboardItems > 0
-                        ? Math.min(99, Math.max(90, Math.round(94 + (completedDashboardItems > 0 ? 3 : 0) - (rejectedDashboardItems > 0 ? 2 : 0))))
-                        : 96;
-
-                      const onTimeRate = 99.2;
-                      const reworkRate = totalDashboardItems > 0 ? parseFloat(((reworkDashboardItems / totalDashboardItems) * 100).toFixed(1)) : 0.0;
-                      const plantLoadPercent = totalDashboardItems > 0 ? Math.min(100, Math.round((totalDashboardItems / 500) * 100)) : 0;
-
-                      return (
-                        <div className="space-y-3 text-xs">
-                          {/* 1: Production Efficiency */}
-                          <div>
-                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
-                              <span>Production Efficiency</span>
-                              <span className="font-black text-purple-700 font-mono">{efficiencyRate}%</span>
-                            </div>
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                              <div
-                                className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all duration-700"
-                                style={{ width: `${efficiencyRate}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* 2: On-Time Delivery */}
-                          <div>
-                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
-                              <span>On-Time Delivery</span>
-                              <span className="font-black text-emerald-600 font-mono">{onTimeRate}%</span>
-                            </div>
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                              <div
-                                className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full rounded-full transition-all duration-700"
-                                style={{ width: `${onTimeRate}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* 3: Quality First-Pass Yield / Rework Rate */}
-                          <div>
-                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
-                              <span>Quality Yield Rate</span>
-                              <span className="font-black text-teal-700 font-mono">{pipelineMetrics.yieldRate}%</span>
-                            </div>
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                              <div
-                                className="bg-gradient-to-r from-teal-500 to-cyan-500 h-full rounded-full transition-all duration-700"
-                                style={{ width: `${pipelineMetrics.yieldRate}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* 4: Plant Load / Utilization Rate */}
-                          <div>
-                            <div className="flex items-center justify-between text-slate-600 font-semibold mb-1">
-                              <span>Facility Active Load</span>
-                              <span className="font-black text-blue-700 font-mono">{plantLoadPercent}% ({totalDashboardItems} WIP)</span>
-                            </div>
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                              <div
-                                className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-700"
-                                style={{ width: `${plantLoadPercent}%` }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+                    <div
+                      className="ppb-progress-row cursor-pointer hover:bg-blue-50/50 p-1.5 rounded-lg transition-colors"
+                      onClick={() => setActiveTab("production-overview")}
+                      title={`Production Efficiency: ${efficiencyRate}% (Based on completed workstation stages across ${totalItems} items)`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-700">Production Efficiency</span>
+                        <strong className="text-xs font-black text-blue-700">{`${efficiencyRate}%`}</strong>
+                      </div>
+                      <div className="ppb-progress-bar">
+                        <div
+                          className="ppb-progress-fill ppb-progress-fill-blue"
+                          style={{ width: `${efficiencyRate}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      className="ppb-progress-row cursor-pointer hover:bg-emerald-50/50 p-1.5 rounded-lg transition-colors"
+                      style={{ marginTop: 8 }}
+                      onClick={() => setActiveTab("analytics")}
+                      title={`On-Time Delivery: ${onTimeRate}% (Based on customer order delivery schedule)`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-700">On-Time Delivery</span>
+                        <strong className="text-xs font-black" style={{ color: "#059669" }}>
+                          {`${onTimeRate}%`}
+                        </strong>
+                      </div>
+                      <div className="ppb-progress-bar">
+                        <div
+                          className="ppb-progress-fill ppb-progress-fill-green"
+                          style={{ width: `${onTimeRate}%` }}
+                        />
+                      </div>
+                    </div>
+                  </section>
                 </div>
+              </div>
+              {/* Dashboard End Custom Footer Card */}
+              <div className="mt-5 w-full bg-white rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-slate-200 flex items-center relative overflow-hidden h-[70px]">
+                
+                {/* 40% Background Image aligned to right */}
+                <div className="absolute right-0 top-0 h-full pointer-events-none z-0" style={{ width: '40%' }}>
+                  <div className="absolute inset-0 bg-gradient-to-r from-white via-white/40 to-transparent z-10" />
+                  <img src="/image copy 5.png" alt="Skyline Background" className="h-full w-full object-cover object-right opacity-90 mix-blend-multiply" />
+                </div>
+
+                {/* Content Container */}
+                <div className="flex w-full relative z-10 items-center justify-between pl-5 pr-4 h-full">
+                  
+                  {/* Left side: Logo & Text */}
+                  <div className="flex items-center gap-3 py-2 shrink-0 bg-white/60 pr-4 rounded-r-3xl backdrop-blur-sm">
+                    <div className="w-8 h-8 bg-blue-600 rounded-md flex items-center justify-center text-white font-bold shrink-0 shadow-sm">
+                      <Building2 size={16} />
+                    </div>
+                    <div className="flex flex-col justify-center">
+                      <h4 className="text-[10px] font-black text-slate-900 leading-tight">SEJAL GLASS &amp; GLASS MANUFACTURING PRODUCTS LLC</h4>
+                      <p className="text-[7.5px] font-bold text-slate-500 mt-0.5">Reflecting Values • Precision Glass Production • Built for Dubai. Made for Excellence.</p>
+                    </div>
+                  </div>
+
+                  {/* Center: 4 mini stats */}
+                  <div className="flex items-center gap-5 bg-white/60 px-4 py-2 rounded-3xl backdrop-blur-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded flex items-center justify-center shrink-0"><Layers size={12} /></div>
+                      <div className="flex flex-col justify-center">
+                        <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Total Batches</div>
+                        <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{pis.length}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center shrink-0"><CheckSquare size={12} /></div>
+                      <div className="flex flex-col justify-center">
+                        <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Finished Items</div>
+                        <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems ?? 0}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded flex items-center justify-center shrink-0"><TrendingUp size={12} /></div>
+                      <div className="flex flex-col justify-center">
+                        <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Efficiency</div>
+                        <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{efficiencyRate}%</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center shrink-0"><Clock size={12} /></div>
+                      <div className="flex flex-col justify-center">
+                        <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">On-Time Delivery</div>
+                        <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{onTimeRate}%</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Empty spacer to push content left if needed, letting the 40% bg image shine on the right */}
+                  <div className="w-[15%]"></div>
+                </div>
+
+              </div>
+            </div>
+            );
+          })()}
+
+          {/* Universal Module Page Back Button & Breadcrumbs */}
+          {activeTab !== "overview" && (
+            <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setActiveTab("overview")}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border border-slate-200/90 shadow-2xs font-bold text-xs transition-all cursor-pointer group active:scale-95"
+                title="Back to Main Dashboard"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-slate-500 group-hover:-translate-x-1 group-hover:text-blue-600 transition-all" />
+                <span>Back to Dashboard</span>
+              </button>
+
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+                <span
+                  className="hover:text-blue-600 cursor-pointer transition-colors"
+                  onClick={() => setActiveTab("overview")}
+                  title="Return to Dashboard"
+                >
+                  Dashboard
+                </span>
+                <span>/</span>
+                <span className="text-slate-800 font-extrabold">
+                  {activeTab === "pis" ? "Sticker & Batch" :
+                   activeTab === "production-overview" ? "Production Overview" :
+                   activeTab === "dispatched-history" ? "Dispatched History" :
+                   activeTab === "cutting" ? "Cutting Workstation" :
+                   activeTab === "pairing" ? "Glass Pairing" :
+                   activeTab === "dgu" ? "DGU/IGU Assembly" :
+                   activeTab === "lamination" ? "Lamination Line" :
+                   activeTab === "finished" ? "Finished Warehouse" :
+                   activeTab === "reports" ? "Reports & Analytics" :
+                   activeTab === "analytics" ? "Performance Analytics" :
+                   activeTab === "settings" ? "System Settings" : activeTab}
+                </span>
               </div>
             </div>
           )}
+
 
           {/* TAB: PRODUCTION OVERVIEW */}
           {activeTab === "production-overview" && (
@@ -2229,7 +2158,7 @@ export default function Index() {
           )}
 
           {/* OTHER WORKSTATION TABS (Cutting, DGU, Lamination, Finished) */}
-          {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && activeTab !== "dispatched-history" && (
+          {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && activeTab !== "dispatched-history" && activeTab !== "settings" && (
             <ProductionStageView
               stage={
                 activeTab === "cutting" ? "Cutting" :
@@ -2266,425 +2195,577 @@ export default function Index() {
           {/* TAB: STICKER & BATCH STATUS MANAGEMENT */}
           {activeTab === "pis" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div>
-                  <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
-                    <Boxes className="w-5 h-5 text-purple-600" />
-                    Sticker & Batch Status
-                  </h2>
-                  <p className="text-xs text-slate-500 font-medium">Track and manage active glass sticker batches and shop floor orders grouped by customer.</p>
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                    <Boxes className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                        Sticker &amp; Batch Status
+                      </h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1 shadow-2xs">
+                        <FileText className="w-3 h-3 text-rose-600" />
+                        {totalUploadedPdfs} {totalUploadedPdfs === 1 ? "PDF" : "PDFs"} Uploaded
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1 shadow-2xs">
+                        <Layers className="w-3 h-3 text-blue-600" />
+                        {pis.length} Batches
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Track and manage {totalUploadedPdfs} uploaded sticker PDF {totalUploadedPdfs === 1 ? "file" : "files"} ({pis.length} batches) and shop floor orders grouped by customer.
+                    </p>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* View Uploaded PDFs */}
+                  <Button
+                    onClick={() => setUploadedPdfsModalOpen(true)}
+                    size="sm"
+                    variant="outline"
+                    className="border-rose-200 text-rose-700 bg-rose-50/70 hover:bg-rose-100 font-bold text-xs gap-1.5 rounded-xl shadow-xs h-9 px-3.5"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-rose-600" /> View Uploaded PDFs ({totalUploadedPdfs})
+                  </Button>
+
+                  {/* Export Excel */}
+                  <Button
+                    ref={batchExportBtnRef}
+                    size="sm"
+                    onClick={() => {
+                      const willOpen = !isBatchExportOpen;
+                      if (willOpen && batchExportBtnRef.current) {
+                        const rect = batchExportBtnRef.current.getBoundingClientRect();
+                        setBatchExportPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                      }
+                      setIsBatchExportOpen(willOpen);
+                    }}
+                    className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 rounded-xl shadow-xs h-9 px-3.5 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
+                    <ChevronDown className={`w-3 h-3 transition-transform ${isBatchExportOpen ? "rotate-180" : ""}`} />
+                  </Button>
+
+                  {isBatchExportOpen && batchExportPos && ReactDOM.createPortal(
+                    <div
+                      style={{ position: "fixed", top: batchExportPos.top, right: batchExportPos.right, zIndex: 9999 }}
+                      className="w-72 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in zoom-in-95"
+                    >
+                      <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                        Export Excel Options (Sticker &amp; Batch)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsBatchExportOpen(false);
+                          exportStageWipToExcel("Cutting", items, "All_Batch_Items_Full");
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2 cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <div>
+                          <div>Export All Items ({items.length} Items)</div>
+                          <div className="text-[10px] text-slate-400 font-normal">Full item list across all batches</div>
+                        </div>
+                      </button>
+                      {pis.map((pi) => (
+                        <button
+                          key={pi.id}
+                          type="button"
+                          onClick={() => {
+                            setIsBatchExportOpen(false);
+                            const batchItems = items.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
+                            exportBatchProgressMatrixToExcel(pi, batchItems);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50 hover:text-blue-900 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                          <div>
+                            <div>Batch {formatBatchNumber(pi.piNumber) || pi.piNumber}</div>
+                            <div className="text-[10px] text-slate-400 font-normal">{pi.customerName} — Progress matrix</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
+
                   {userRole === "Admin" && (
                     <>
-                      <Button
-                        onClick={() => setManualPIModalOpen(true)}
-                        size="sm"
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs gap-1.5 rounded-lg shadow-xs h-9"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Manual Entry
-                      </Button>
                       <Button
                         onClick={() => setStickerUploadModalOpen(true)}
                         size="sm"
                         variant="outline"
-                        className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs gap-1.5 rounded-lg shadow-xs h-9"
+                        className="border-slate-300 text-slate-700 bg-white hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl shadow-xs h-9 px-3.5"
                       >
-                        <Upload className="w-3.5 h-3.5" /> Upload Sticker PDF
+                        <Upload className="w-3.5 h-3.5 text-blue-600" /> Upload Sticker PDF
+                      </Button>
+                      <Button
+                        onClick={() => setManualPIModalOpen(true)}
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 rounded-xl shadow-xs h-9 px-3.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Manual Entry
                       </Button>
                     </>
                   )}
                 </div>
               </div>
 
-              {/* Filters & Search Toolbar */}
-              <div className="bg-white border border-slate-200/80 rounded-xl p-3 shadow-2xs flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setPiFinishFilter("ALL")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      piFinishFilter === "ALL"
-                        ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                        : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                    }`}
-                  >
-                    <span>All Glass</span>
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      piFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
-                    }`}>
-                      {pis.length}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPiFinishFilter("CLEAR")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      piFinishFilter === "CLEAR"
-                        ? "bg-cyan-600 text-white shadow-xs"
-                        : "text-cyan-800 hover:bg-cyan-100/60"
-                    }`}
-                  >
-                    <span>Clear Glass</span>
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      piFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
-                    }`}>
-                      {clearBatchesCount}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPiFinishFilter("COLOUR")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                      piFinishFilter === "COLOUR"
-                        ? "bg-purple-600 text-white shadow-xs"
-                        : "text-purple-800 hover:bg-purple-100/60"
-                    }`}
-                  >
-                    <span>Coloured Glass</span>
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      piFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
-                    }`}>
-                      {colourBatchesCount}
-                    </span>
-                  </button>
+              {/* KPI Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+                <div
+                  className="ppb-metric-card cursor-pointer hover:border-rose-300 hover:shadow-md transition-all group"
+                  onClick={() => setUploadedPdfsModalOpen(true)}
+                  title="Click to view details of all uploaded PDF files"
+                >
+                  <div className="ppb-metric-main">
+                    <div className="ppb-metric-copy">
+                      <h3>Uploaded PDFs</h3>
+                      <strong>
+                        {totalUploadedPdfs} <span style={{ fontSize: "16px" }}>{totalUploadedPdfs === 1 ? "File" : "Files"}</span>
+                      </strong>
+                      <div className="ppb-metric-change">
+                        <span className="text-rose-600 font-bold text-[11px] flex items-center gap-1 group-hover:underline">
+                          <FileText className="w-3 h-3" /> View {totalUploadedPdfs} Source {totalUploadedPdfs === 1 ? "PDF" : "PDFs"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="ppb-metric-icon" style={{ background: "linear-gradient(135deg, #f43f5e, #be123c)", color: "#fff" }}>
+                      <FileText size={24} />
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {groupedCustomerData.length > 0 && (
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setAllCustomersExpanded(true)}
-                        className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
-                      >
-                        Expand All
-                      </Button>
-                      <span className="text-slate-300">|</span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setAllCustomersExpanded(false)}
-                        className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
-                      >
-                        Collapse All
-                      </Button>
+                <div className="ppb-metric-card">
+                  <div className="ppb-metric-main">
+                    <div className="ppb-metric-copy">
+                      <h3>Active Batches</h3>
+                      <strong>{pis.length} <span style={{fontSize:'16px'}}>Batches</span></strong>
+                      <div className="ppb-metric-change">
+                        <span className="ppb-metric-change-up">In Production</span>
+                      </div>
                     </div>
-                  )}
+                    <div className="ppb-metric-icon ppb-metric-icon-blue"><Layers size={24} /></div>
+                  </div>
+                </div>
+                
+                <div className="ppb-metric-card">
+                  <div className="ppb-metric-main">
+                    <div className="ppb-metric-copy">
+                      <h3>Glass Units</h3>
+                      <strong>{items.length} <span style={{fontSize:'16px'}}>Items</span></strong>
+                      <div className="ppb-metric-change">
+                        <span className="ppb-metric-change-up">Being tracked</span>
+                      </div>
+                    </div>
+                    <div className="ppb-metric-icon ppb-metric-icon-green"><Boxes size={24} /></div>
+                  </div>
+                </div>
 
-                  <div className="relative w-64 md:w-72">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      placeholder="Search customer, batch, project..."
-                      value={piSearchTerm}
-                      onChange={(e) => setPiSearchTerm(e.target.value)}
-                      className="pl-8 text-xs bg-slate-50 border-slate-200 rounded-lg h-9"
-                    />
+                <div className="ppb-metric-card">
+                  <div className="ppb-metric-main">
+                    <div className="ppb-metric-copy">
+                      <h3>Clear Batches</h3>
+                      <strong>{clearBatchesCount} <span style={{fontSize:'16px'}}>Orders</span></strong>
+                      <div className="ppb-metric-change">
+                        <span className="text-cyan-700 font-bold text-[11px]">{clearPdfCount} Clear {clearPdfCount === 1 ? "PDF" : "PDFs"}</span>
+                      </div>
+                    </div>
+                    <div className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff'}}><Truck size={24} /></div>
+                  </div>
+                </div>
+
+                <div className="ppb-metric-card">
+                  <div className="ppb-metric-main">
+                    <div className="ppb-metric-copy">
+                      <h3>Coloured Batches</h3>
+                      <strong>{colourBatchesCount} <span style={{fontSize:'16px'}}>Orders</span></strong>
+                      <div className="ppb-metric-change">
+                        <span className="text-purple-700 font-bold text-[11px]">{colourPdfCount} Coloured {colourPdfCount === 1 ? "PDF" : "PDFs"}</span>
+                      </div>
+                    </div>
+                    <div className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #a855f7, #7e22ce)', color: '#fff'}}><Briefcase size={24} /></div>
                   </div>
                 </div>
               </div>
 
-              {/* GROUP BY CUSTOMER */}
+              {/* Filters & Search Toolbar */}
+              <div className="ppb-panel p-3 bg-white border border-slate-200/80 rounded-2xl shadow-xs mb-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  {/* Left Side: Finish Filter Tabs & PDF Dropdown */}
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80">
+                      <button
+                        type="button"
+                        onClick={() => setPiFinishFilter("ALL")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                          piFinishFilter === "ALL"
+                            ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                        }`}
+                      >
+                        <span>All Glass</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          piFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                        }`}>
+                          {pis.length}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPiFinishFilter("CLEAR")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                          piFinishFilter === "CLEAR"
+                            ? "bg-cyan-600 text-white shadow-xs"
+                            : "text-cyan-800 hover:bg-cyan-100/60"
+                        }`}
+                      >
+                        <span>Clear Glass</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          piFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                        }`}>
+                          {clearBatchesCount}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPiFinishFilter("COLOUR")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                          piFinishFilter === "COLOUR"
+                            ? "bg-purple-600 text-white shadow-xs"
+                            : "text-purple-800 hover:bg-purple-100/60"
+                        }`}
+                      >
+                        <span>Coloured Glass</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          piFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                        }`}>
+                          {colourBatchesCount}
+                        </span>
+                      </button>
+                    </div>
+
+                    {uploadedPdfsSummary.length > 1 && (
+                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 rounded-xl px-3 py-1.5 shadow-2xs">
+                        <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                        <select
+                          value={selectedPdfFilter}
+                          onChange={(e) => setSelectedPdfFilter(e.target.value)}
+                          className="text-xs font-bold bg-transparent border-0 text-slate-700 focus:outline-hidden cursor-pointer"
+                          title="Filter batches by uploaded PDF"
+                        >
+                          <option value="ALL">All PDFs ({totalUploadedPdfs})</option>
+                          {uploadedPdfsSummary.map((pdf) => (
+                            <option key={pdf.fileName} value={pdf.fileName}>
+                              {pdf.fileName} ({pdf.batches.length} {pdf.batches.length === 1 ? "batch" : "batches"})
+                            </option>
+                          ))}
+                        </select>
+                        {selectedPdfFilter !== "ALL" && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPdfFilter("ALL")}
+                            className="text-[10px] text-rose-600 hover:text-rose-800 font-black ml-1 px-1 rounded hover:bg-rose-100 cursor-pointer"
+                            title="Clear PDF filter"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Side: Expand/Collapse + Responsive Search Bar */}
+                  <div className="flex items-center gap-2.5 flex-1 justify-end min-w-[280px]">
+                    {groupedCustomerData.length > 0 && (
+                      <div className="flex items-center gap-1 bg-slate-100/80 border border-slate-200/80 rounded-xl px-2 py-0.5 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAllCustomersExpanded(true)}
+                          className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-7 px-2"
+                        >
+                          Expand All
+                        </Button>
+                        <span className="text-slate-300">|</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAllCustomersExpanded(false)}
+                          className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-7 px-2"
+                        >
+                          Collapse All
+                        </Button>
+                      </div>
+                    )}
+
+                    <div className="relative flex-1 max-w-md min-w-[180px]">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        placeholder="Search customer, batch, project..."
+                        value={piSearchTerm}
+                        onChange={(e) => setPiSearchTerm(e.target.value)}
+                        className="pl-8.5 pr-8 text-xs bg-slate-50/90 border-slate-200 rounded-xl h-9 font-medium focus:bg-white transition-all w-full"
+                      />
+                      {piSearchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setPiSearchTerm("")}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                          title="Clear search"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* GROUP BY CUSTOMER & PROJECT */}
               <div className="space-y-3">
                   {groupedCustomerData.length > 0 ? (
                     groupedCustomerData.map((customer) => {
-                      const isExpanded = isCustomerExpanded(customer.customerName);
+                      const isExpanded = isCustomerExpanded(customer.groupKey);
                       const isCompleted = customer.status === "Completed" || (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces);
 
                       return (
                         <div
-                          key={customer.customerName}
-                          className={`rounded-2xl transition-all overflow-hidden ${
-                            isCompleted
-                              ? "bg-emerald-50/25 border-2 border-emerald-400 shadow-xs hover:border-emerald-500 hover:shadow-md"
-                              : "bg-white border border-slate-200/90 shadow-2xs hover:border-purple-300"
-                          }`}
+                          key={customer.groupKey}
+                          className={`ppb-panel p-0 overflow-hidden transition-all duration-300 ${isCompleted ? "border-2 border-emerald-500 shadow-[0_8px_30px_rgb(16,185,129,0.12)]" : "hover:border-[#1680f5] shadow-[0_4px_20px_rgb(22,128,245,0.06)] hover:shadow-[0_8px_30px_rgb(22,128,245,0.15)]"}`}
                         >
                           {/* Customer Summary Card Header */}
                           <div
-                            onClick={() => toggleCustomerExpanded(customer.customerName)}
-                            className={`p-4 cursor-pointer select-none transition-colors ${
-                              isCompleted
-                                ? "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-teal-50/20 hover:from-emerald-100/90"
-                                : "bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30"
-                            }`}
+                            onClick={() => toggleCustomerExpanded(customer.groupKey)}
+                            className={`w-full m-0 p-4 sm:p-5 cursor-pointer select-none transition-all duration-300 border-b-0 relative overflow-hidden group flex items-start md:items-center justify-between gap-4 flex-col md:flex-row ${isCompleted ? "bg-gradient-to-r from-emerald-50/80 to-teal-50/40 hover:from-emerald-100/60" : "bg-gradient-to-r from-[#f8fafc] to-white hover:from-blue-50/50"}`}
                           >
-                            <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
-                              {/* Left: Customer Info & Badges */}
-                              <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <div
-                                  className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
-                                    isCompleted
-                                      ? "bg-gradient-to-br from-emerald-600 to-teal-700 ring-2 ring-emerald-300 shadow-emerald-200/50"
-                                      : "bg-gradient-to-br from-purple-600 to-indigo-700"
-                                  }`}
-                                >
+                            {/* Left: Customer Info & Badges */}
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <div
+                                className={`w-12 h-12 rounded-[14px] text-white flex items-center justify-center font-black text-lg shrink-0 shadow-sm transition-transform duration-300 group-hover:scale-105 ${isCompleted ? "bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-200/50" : "bg-gradient-to-br from-[#1680f5] to-[#1470e0] shadow-blue-200/50"}`}
+                              >
+                                {isCompleted ? (
+                                  <CheckCircle className="w-5 h-5 text-emerald-50" />
+                                ) : (
+                                  <Building2 className="w-5 h-5" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3
+                                    className="text-[17px] font-black tracking-tight truncate text-rose-700 flex items-center gap-2"
+                                    title={customer.pdfFiles?.join(', ') || customer.customerName}
+                                  >
+                                    <FileText className="w-5 h-5 text-rose-500 shrink-0" />
+                                    <span className="truncate">
+                                      {customer.pdfFiles && customer.pdfFiles.length > 0
+                                        ? customer.pdfFiles.join(', ')
+                                        : customer.customerName}
+                                    </span>
+                                  </h3>
+                                  {customer.projectName && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
+                                      <Briefcase className="w-3 h-3 text-blue-600" />
+                                      {customer.projectName}
+                                    </span>
+                                  )}
+                                  {customer.hasColour && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                      Coloured
+                                    </span>
+                                  )}
+                                  {customer.hasClear && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                      Clear
+                                    </span>
+                                  )}
                                   {isCompleted ? (
-                                    <CheckCircle className="w-5 h-5 text-emerald-50" />
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
+                                      <Check className="w-3 h-3 stroke-[3]" /> COMPLETED
+                                    </span>
                                   ) : (
-                                    <Building2 className="w-5 h-5" />
+                                    <StatusBadge status={customer.status} />
                                   )}
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <h3
-                                      className={`text-base font-extrabold truncate ${
-                                        isCompleted ? "text-emerald-950" : "text-slate-900"
-                                      }`}
-                                    >
-                                      {customer.customerName}
-                                    </h3>
-                                    {customer.hasColour && (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                        Coloured
+                                <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                                  <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                                    <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                    <span>{customer.customerName}</span>
+                                  </span>
+                                  {customer.projectName && (
+                                    <>
+                                      <span className="text-slate-300">•</span>
+                                      <span className="flex items-center gap-1">
+                                        <span className="text-slate-400 font-semibold">Project:</span>
+                                        <span className="font-bold text-slate-700">{customer.projectName}</span>
                                       </span>
-                                    )}
-                                    {customer.hasClear && (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-800 border border-cyan-200">
-                                        Clear
-                                      </span>
-                                    )}
-                                    {isCompleted ? (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
-                                        <Check className="w-3 h-3 stroke-[3]" /> COMPLETED
-                                      </span>
-                                    ) : (
-                                      <StatusBadge status={customer.status} />
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
-                                    <span>
-                                      {customer.projects.length > 0
-                                        ? customer.projects.join(" • ")
-                                        : "General Shop Floor Production"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Center: Stage Flow Breakdown Pills */}
-                              <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPiSearchTerm(customer.customerName);
-                                    setActiveTab("cutting");
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
-                                    customer.inCutting > 0
-                                      ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
-                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
-                                  }`}
-                                  title="View Cutting items for this customer"
-                                >
-                                  <Scissors className="w-3 h-3 text-purple-600" />
-                                  <span>Cutting: <strong>{customer.inCutting}</strong></span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPiSearchTerm(customer.customerName);
-                                    setActiveTab("pairing");
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
-                                    customer.inPairing > 0
-                                      ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
-                                  }`}
-                                  title="View Pairing Buffer items for this customer"
-                                >
-                                  <RefreshCw className="w-3 h-3 text-blue-600" />
-                                  <span>Pairing: <strong>{customer.inPairing}</strong></span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPiSearchTerm(customer.customerName);
-                                    setActiveTab("lamination");
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
-                                    customer.inLamination > 0
-                                      ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
-                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
-                                  }`}
-                                  title="View Lamination items for this customer"
-                                >
-                                  <Flame className="w-3 h-3 text-amber-600" />
-                                  <span>Lamination: <strong>{customer.inLamination}</strong></span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPiSearchTerm(customer.customerName);
-                                    setActiveTab("dgu");
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
-                                    customer.inDgu > 0
-                                      ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100"
-                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
-                                  }`}
-                                  title="View DLGU / IGU items for this customer"
-                                >
-                                  <ShieldCheck className="w-3 h-3 text-teal-600" />
-                                  <span>DLGU: <strong>{customer.inDgu}</strong></span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPiSearchTerm(customer.customerName);
-                                    setActiveTab("finished");
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 ${
-                                    customer.inFinished > 0
-                                      ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
-                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
-                                  }`}
-                                  title="View Finished Warehouse items for this customer"
-                                >
-                                  <Truck className="w-3 h-3 text-emerald-600" />
-                                  <span>Finished: <strong>{customer.inFinished}</strong></span>
-                                </button>
-                              </div>
-
-                              {/* Right: Quantities, Progress & Accordion Trigger */}
-                              <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
-                                <div className="text-right">
-                                  <div className="font-mono text-xs font-black text-slate-900">
-                                    <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-purple-700"}>
-                                      {customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}
-                                    </span>
-                                    <span className="text-slate-400 mx-1.5">•</span>
-                                    <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
-                                      {customer.completedPieces}/{customer.totalPieces} pcs
-                                    </span>
-                                    <span className="text-slate-400 mx-1.5">•</span>
-                                    <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
-                                  </div>
-                                  <div className="flex items-center gap-2 justify-end mt-1">
-                                    <div
-                                      className={`w-24 h-1.5 rounded-full overflow-hidden ${
-                                        isCompleted ? "bg-emerald-200" : "bg-slate-200"
-                                      }`}
-                                    >
-                                      <div
-                                        className={`h-full rounded-full transition-all ${
-                                          isCompleted
-                                            ? "bg-gradient-to-r from-emerald-500 to-teal-600"
-                                            : "bg-gradient-to-r from-purple-500 to-indigo-600"
-                                        }`}
-                                        style={{ width: `${customer.progressPct}%` }}
-                                      />
-                                    </div>
-                                    <span
-                                      className={`text-[10px] font-mono ${
-                                        isCompleted ? "text-emerald-700 font-extrabold" : "text-slate-500 font-bold"
-                                      }`}
-                                    >
-                                      {customer.progressPct}%
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div
-                                  className={`p-1.5 rounded-lg transition-colors ${
-                                    isCompleted
-                                      ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                                      : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700"
-                                  }`}
-                                >
-                                  {isExpanded ? (
-                                    <ChevronUp className="w-4 h-4" />
-                                  ) : (
-                                    <ChevronDown className="w-4 h-4" />
+                                    </>
                                   )}
                                 </div>
                               </div>
                             </div>
-                          </div>
 
-                          {/* Collapsible Customer Sub-Table & Quick Jump */}
-                          {isExpanded && (
-                            <div className="border-t border-slate-200 bg-slate-50/50 p-4 space-y-3">
-                              {/* Quick Jump Bar for this customer */}
-                              <div className="flex items-center justify-between flex-wrap gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
-                                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                                  <Workflow className="w-3.5 h-3.5 text-purple-600" />
-                                  <span>Workstations with {customer.customerName} stickers:</span>
+                            {/* Center: Stage Flow Breakdown Pills */}
+                            <div className="flex items-center gap-2 flex-wrap bg-slate-50/60 p-1.5 rounded-2xl border border-slate-100/80" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("cutting");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${
+                                  customer.inCutting > 0
+                                    ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                }`}
+                                title="View Cutting items for this customer and project"
+                              >
+                                <Scissors className="w-3 h-3 text-purple-600" />
+                                <span>Cutting: <strong>{customer.inCutting}</strong></span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("pairing");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${
+                                  customer.inPairing > 0
+                                    ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                }`}
+                                title="View Pairing Buffer items for this customer and project"
+                              >
+                                <RefreshCw className="w-3 h-3 text-blue-600" />
+                                <span>Pairing: <strong>{customer.inPairing}</strong></span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("lamination");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${
+                                  customer.inLamination > 0
+                                    ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                }`}
+                                title="View Lamination items for this customer and project"
+                              >
+                                <Flame className="w-3 h-3 text-amber-600" />
+                                <span>Lamination: <strong>{customer.inLamination}</strong></span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("dgu");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${
+                                  customer.inDgu > 0
+                                    ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                }`}
+                                title="View DLGU / IGU items for this customer and project"
+                              >
+                                <ShieldCheck className="w-3 h-3 text-teal-600" />
+                                <span>DLGU: <strong>{customer.inDgu}</strong></span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("finished");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${
+                                  customer.inFinished > 0
+                                    ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                }`}
+                                title="View Finished Warehouse items for this customer and project"
+                              >
+                                <Truck className="w-3 h-3 text-emerald-600" />
+                                <span>Finished: <strong>{customer.inFinished}</strong></span>
+                              </button>
+                            </div>
+
+                            {/* Right: Quantities, Progress & Accordion Trigger */}
+                            <div className="flex items-center gap-5 shrink-0 justify-between md:justify-end w-full md:w-auto mt-2 md:mt-0">
+                              <div className="text-left md:text-right">
+                                <div className="font-mono text-xs font-black text-slate-900 flex items-center justify-start md:justify-end gap-1.5 flex-wrap">
+                                  <span className="text-rose-700 font-bold inline-flex items-center gap-0.5" title={`Source: ${customer.pdfFiles?.join(', ') || ''}`}>
+                                    <FileText className="w-3 h-3 text-rose-500" />
+                                    {customer.pdfFiles?.length || 1} {customer.pdfFiles?.length === 1 ? 'PDF' : 'PDFs'}
+                                  </span>
+                                  <span className="text-slate-400">•</span>
+                                  <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
+                                    {customer.completedPieces}/{customer.totalPieces} pcs
+                                  </span>
+                                  <span className="text-slate-400">•</span>
+                                  <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                                 </div>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setPiSearchTerm(customer.customerName);
-                                      setActiveTab("cutting");
-                                    }}
-                                    className="h-7 text-[11px] font-bold border-purple-200 text-purple-700 hover:bg-purple-50 gap-1 rounded-lg"
+                                <div className="flex items-center gap-2 justify-start md:justify-end mt-1.5">
+                                  <div
+                                    className={`w-32 sm:w-40 h-2 rounded-full overflow-hidden ${
+                                      isCompleted ? "bg-emerald-200" : "bg-slate-200"
+                                    }`}
                                   >
-                                    <Scissors className="w-3 h-3" /> Cutting Station
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setPiSearchTerm(customer.customerName);
-                                      setActiveTab("pairing");
-                                    }}
-                                    className="h-7 text-[11px] font-bold border-blue-200 text-blue-700 hover:bg-blue-50 gap-1 rounded-lg"
+                                    <div
+                                      className={`h-full rounded-full transition-all ${
+                                        isCompleted
+                                          ? "bg-gradient-to-r from-emerald-500 to-teal-600"
+                                          : "bg-gradient-to-r from-purple-500 to-indigo-600"
+                                      }`}
+                                      style={{ width: `${customer.progressPct}%` }}
+                                    />
+                                  </div>
+                                  <span
+                                    className={`text-xs font-mono font-bold ${
+                                      isCompleted ? "text-emerald-700 font-extrabold" : "text-slate-500"
+                                    }`}
                                   >
-                                    <RefreshCw className="w-3 h-3" /> Pairing Buffer
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setPiSearchTerm(customer.customerName);
-                                      setActiveTab("lamination");
-                                    }}
-                                    className="h-7 text-[11px] font-bold border-amber-200 text-amber-700 hover:bg-amber-50 gap-1 rounded-lg"
-                                  >
-                                    <Flame className="w-3 h-3" /> Lamination
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setPiSearchTerm(customer.customerName);
-                                      setActiveTab("dgu");
-                                    }}
-                                    className="h-7 text-[11px] font-bold border-teal-200 text-teal-700 hover:bg-teal-50 gap-1 rounded-lg"
-                                  >
-                                    <ShieldCheck className="w-3 h-3" /> DLGU / IGU
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setPiSearchTerm(customer.customerName);
-                                      setActiveTab("finished");
-                                    }}
-                                    className="h-7 text-[11px] font-bold border-emerald-200 text-emerald-700 hover:bg-emerald-50 gap-1 rounded-lg"
-                                  >
-                                    <Truck className="w-3 h-3" /> Finished Warehouse
-                                  </Button>
+                                    {customer.progressPct}%
+                                  </span>
                                 </div>
                               </div>
 
+                              <div
+                                className={`p-2 rounded-xl transition-all shadow-2xs shrink-0 ${
+                                  isCompleted
+                                    ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 group-hover:scale-105"
+                                    : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 group-hover:scale-105"
+                                }`}
+                              >
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 stroke-[2.5]" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 stroke-[2.5]" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Collapsible Customer Sub-Table */}
+                          {isExpanded && (
+                            <div className="border-t border-slate-200 bg-slate-50/50 p-4 space-y-3">
                               {/* Customer Batches Table */}
-                              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                              <div className="ppb-panel p-0 overflow-hidden shadow-[0_4px_20px_rgb(22,128,245,0.04)] border-slate-100/60">
                                 <TableHorizontalScrollWrapper>
                                   <table className="w-full text-left text-xs border-collapse">
                                   <thead>
-                                    <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
+                                    <tr className="border-b border-slate-100 text-[10px] font-extrabold text-[#1680f5] uppercase tracking-widest bg-blue-50/40">
                                       <th className="py-2.5 px-3 whitespace-nowrap">BATCH NO</th>
+                                      <th className="py-2.5 px-3 whitespace-nowrap">SOURCE PDF</th>
                                       <th className="py-2.5 px-3 whitespace-nowrap">FINISH</th>
                                       <th className="py-2.5 px-3 whitespace-nowrap">PROJECT</th>
                                       <th className="py-2.5 px-3 whitespace-nowrap">CURRENT STAGE</th>
@@ -2702,10 +2783,16 @@ export default function Index() {
                                         <tr
                                           key={pi.id}
                                           onClick={() => openPIDetails(pi)}
-                                          className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+                                          className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
                                         >
                                           <td className="py-2.5 px-3 font-mono font-bold text-purple-700 whitespace-nowrap group-hover:underline">
                                             {formatBatchNumber(pi.batchNo || pi.piNumber)}
+                                          </td>
+                                          <td className="py-2.5 px-3 whitespace-nowrap">
+                                            <div className="flex items-center gap-1.5 text-slate-700 max-w-[190px] truncate" title={pi.fileName || "Sticker PDF"}>
+                                              <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                              <span className="truncate text-xs font-mono font-bold text-slate-800">{pi.fileName || "Sticker PDF"}</span>
+                                            </div>
                                           </td>
                                           <td className="py-2.5 px-3 whitespace-nowrap">
                                             {pi.colorOrClear === "Colour" ? (
@@ -2836,38 +2923,40 @@ export default function Index() {
                 </div>
               }
             >
-              <PerformanceAnalyticsView />
+              <PerformanceAnalyticsView onNavigateTab={(tab) => setActiveTab(tab as any)} />
             </React.Suspense>
+          )}
+          {/* TAB: SETTINGS */}
+          {activeTab === "settings" && (
+            <div className="flex-1 w-full animate-in fade-in duration-200">
+              <SettingsView />
+            </div>
           )}
         </main>
       </div>
 
-      {/* Bottom Footer */}
-      <footer className="shrink-0 bg-white border-t border-slate-200 px-5 py-2 flex items-center justify-between text-[11px] text-slate-500 z-30">
-        <div className="flex items-center gap-3">
-          <img
-            src="/sejal-glass-logo.png"
-            alt="SEJAL GLASS"
-            className="h-6 w-auto object-contain shrink-0"
-          />
-          <div>
-            <span className="font-extrabold text-slate-900">SEJAL GLASS & GLASS MANUFACTURING PRODUCTS LLC</span>
-            <span className="hidden md:inline text-slate-400 ml-2">
-              Reflecting Values • Precision Glass Production • Built for Dubai. Made for Excellence.
-            </span>
-          </div>
-        </div>
 
-        <div className="hidden lg:flex items-center gap-4 text-[10px] font-mono text-slate-400">
-          <span>Tel: +971 4 8900 7625</span>
-          <span>TRN: 100423583600003</span>
-          <span>License: TRN-DBR-984720</span>
-          <span>Timezone: GST (GMT+4)</span>
-        </div>
-      </footer>
 
       {/* Modals - Lazy Loaded on Demand to Keep Network Lean */}
       <React.Suspense fallback={null}>
+        {uploadedPdfsModalOpen && (
+          <UploadedPdfsModal
+            open={uploadedPdfsModalOpen}
+            onOpenChange={setUploadedPdfsModalOpen}
+            pdfSummaries={uploadedPdfsSummary}
+            pis={pis}
+            items={items}
+            onSelectPdfFilter={(fileName) => {
+              setSelectedPdfFilter(fileName);
+              setActiveTab("pis");
+            }}
+            onOpenUploadModal={() => setStickerUploadModalOpen(true)}
+            onDeletePI={handleDeletePI}
+            onViewPIDocument={openPIDetails}
+            userRole={userRole}
+          />
+        )}
+
         {stickerUploadModalOpen && (
           <StickerUploaderModal
             open={stickerUploadModalOpen}
@@ -2932,6 +3021,7 @@ export default function Index() {
           />
         )}
       </React.Suspense>
+      </div>
     </div>
   );
 }

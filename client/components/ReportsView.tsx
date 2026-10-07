@@ -13,6 +13,8 @@ import {
   Search,
   Filter,
   CheckCircle2,
+  CheckCircle,
+  ShieldCheck,
   Clock,
   Layers,
   Boxes,
@@ -46,6 +48,7 @@ import {
   getDisplayStage,
 } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { resolveGlassMakeupDetails } from "@/lib/excelExport";
 import { ReportsResponse, PIMaster, GlassItem, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage } from "@shared/api";
 
 interface BatchSheetGroup<T> {
@@ -1153,54 +1156,98 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         toast.error("No items to export in current filtered view");
         return;
       }
-      const data = filteredItems.map((item, idx) => {
+      const exportRows = filteredItems.map((item, idx) => {
         const eff = getDguEffectiveQtyAndSqm(item);
         const finish = getItemFinish(item);
         const cust = getCustomerNameForItem(item);
+        const matchingPI = (reportData?.pis || []).find(
+          (p) => p.id === item.piId || p.piNumber === item.piNumber || (item.batchNo && p.batchNo === item.batchNo)
+        );
+
+        const productType = isDlguGlass(item) || (item as any).glassCategory === "DLGU"
+          ? "DLGU Unit"
+          : isDguGlass(item) || (item as any).glassCategory === "DGU"
+          ? "DGU / IGU Unit"
+          : isLaminatedGlass(item) || (item as any).glassCategory === "Lamination"
+          ? "Laminated Glass"
+          : "General Monolithic";
+
+        const routeText = Array.isArray(item.processRoute)
+          ? item.processRoute.join(" → ")
+          : String(item.processRoute || "—");
+
+        const makeupDetails = resolveGlassMakeupDetails(item, filteredItems, reportData?.pis || []);
 
         return {
-          "SL No": idx + 1,
-          "Customer": cust,
-          "PI": item.piNumber || item.orderNo || item.batchNo || "—",
-          "POS No": item.posNo || "—",
-          "Finish / Type": finish,
+          "Sr No": idx + 1,
+          "Order #": item.orderNo || matchingPI?.jobOrderNumber || matchingPI?.proformaInvNo || "—",
+          "OB #": item.obNo || matchingPI?.obNo || "—",
+          "SFO #": item.sfoNo || matchingPI?.sfoNo || matchingPI?.jobOrderNumber || "—",
+          "Batch #": item.batchNo || formatBatchNumber(item.piNumber) || matchingPI?.batchNo || "—",
+          "POS #": item.posNo || "—",
+          "Barcode": item.barcode,
+          "Serial Number": item.serialNumber,
+          "Customer Name": cust,
+          "Project Name": item.projectName || matchingPI?.projectName || "—",
+          "Glass Code": item.glassCode || item.itemCode || "—",
+          "Glass Description": item.glassType,
+          "Glass Makeup / Buildup": makeupDetails.makeup,
+          "Outer Glass (OP)": makeupDetails.outerGlass,
+          "Spacer / Cavity": makeupDetails.spacer,
+          "Inner Glass (IP)": makeupDetails.innerGlass,
+          "Product Category": productType,
+          "Glass Finish": finish,
           "Width (mm)": item.width,
           "Height (mm)": item.height,
-          "Quantity": eff.qty,
+          "Order Qty (Line Qty)": item.lineQty || item.qty || 1,
+          "Stage Qty": eff.qty,
           "Unit": eff.unitLabel,
-          "SQM": eff.sqm,
-          "Glass Code": item.glassCode || item.itemCode || "—",
-          "Glass Type / Spec": item.glassType,
-          "OB": item.obNo || "—",
-          "SFO": item.sfoNo || "—",
-          "Batch": item.batchNo || "—",
-          "Barcode": item.barcode,
+          "Total SQM": eff.sqm,
+          "Sheet / Rack No": item.rackNo || "—",
+          "Process Route": routeText,
+          "Delivery Date": item.delDate || matchingPI?.deliveryDate || "—",
+          "OPT Date": item.optDate || matchingPI?.sfoDate || matchingPI?.issueDate || "—",
+          "Origin": "MADE IN UAE",
+          "Delivery Location": item.delLocation || "FACTORY",
           "Current Stage": getDisplayStage(item, item.currentStage),
           "Status": item.status || "Pending",
           "Last Updated": formatDubaiDateTime(item.updatedAt || item.createdAt),
+          "Remarks": item.remarks || "",
         };
       });
-      const ws = XLSX.utils.json_to_sheet(data);
+      const ws = XLSX.utils.json_to_sheet(exportRows);
       ws["!cols"] = [
-        { wch: 8 },
-        { wch: 25 },
-        { wch: 16 },
-        { wch: 10 },
-        { wch: 14 },
-        { wch: 12 },
-        { wch: 12 },
-        { wch: 10 },
-        { wch: 10 },
-        { wch: 12 },
-        { wch: 18 },
-        { wch: 32 },
-        { wch: 10 },
-        { wch: 12 },
-        { wch: 10 },
-        { wch: 20 },
-        { wch: 14 },
-        { wch: 14 },
-        { wch: 20 },
+        { wch: 6 },  // Sr No
+        { wch: 12 }, // Order #
+        { wch: 12 }, // OB #
+        { wch: 12 }, // SFO #
+        { wch: 14 }, // Batch #
+        { wch: 8 },  // POS #
+        { wch: 22 }, // Barcode
+        { wch: 14 }, // Serial Number
+        { wch: 30 }, // Customer Name
+        { wch: 22 }, // Project Name
+        { wch: 22 }, // Glass Code
+        { wch: 36 }, // Glass Description
+        { wch: 30 }, // Glass Makeup
+        { wch: 18 }, // Product Category
+        { wch: 12 }, // Glass Finish
+        { wch: 12 }, // Width
+        { wch: 12 }, // Height
+        { wch: 14 }, // Order Qty
+        { wch: 10 }, // Stage Qty
+        { wch: 10 }, // Unit
+        { wch: 12 }, // Total SQM
+        { wch: 14 }, // Sheet / Rack No
+        { wch: 26 }, // Process Route
+        { wch: 14 }, // Delivery Date
+        { wch: 14 }, // OPT Date
+        { wch: 14 }, // Origin
+        { wch: 16 }, // Delivery Location
+        { wch: 16 }, // Current Stage
+        { wch: 14 }, // Status
+        { wch: 22 }, // Last Updated
+        { wch: 25 }, // Remarks
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Glass Items");
       XLSX.writeFile(wb, `Sejal_Glass_Items_Report_${dateStr}.xlsx`);
@@ -1371,7 +1418,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   if (loading) {
     return (
       <div className="py-20 flex flex-col items-center justify-center space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shadow-sm">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shadow-lg">
           <Activity className="w-6 h-6 animate-spin" />
         </div>
         <div className="text-center">
@@ -1393,21 +1440,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   return (
     <div className="space-y-5">
       {/* ── HEADER & REAL-TIME CONTROLS ── */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <BarChart2 className="w-5 h-5 text-indigo-600" />
-              Live Production & Quality Reports
-            </h2>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Real-Time Sync Active</span>
-            </div>
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200/90 shadow-md">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-blue-500 to-blue-700 flex items-center justify-center text-white shadow-lg shrink-0">
+            <BarChart2 className="w-5 h-5" />
           </div>
-          <p className="text-xs text-slate-500 font-medium">
-            Customer-wise production tracking, quality defects, rework routes, and instant Excel exports.
-          </p>
+          <div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                Live Production &amp; Quality Reports
+              </h2>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Real-Time Sync Active</span>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Customer-wise production tracking, quality defects, rework routes, and instant Excel exports.
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -1415,14 +1466,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <button
             type="button"
             onClick={() => setAutoSync(!autoSync)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer ${
               autoSync
-                ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                ? "bg-blue-50 border-blue-200 text-blue-700"
                 : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
             }`}
             title={autoSync ? "Auto-sync every 10s is ON" : "Auto-sync is paused"}
           >
-            <Zap className={`w-3.5 h-3.5 ${autoSync ? "text-indigo-600" : "text-slate-400"}`} />
+            <Zap className={`w-3.5 h-3.5 ${autoSync ? "text-blue-600" : "text-slate-400"}`} />
             <span>Auto-Sync {autoSync ? "ON (10s)" : "PAUSED"}</span>
           </button>
 
@@ -1433,10 +1484,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             disabled={isRefreshing}
             size="sm"
             variant="outline"
-            className="h-8 text-xs font-bold border-slate-300 hover:bg-slate-50 text-slate-700 gap-1.5"
+            className="h-8 text-xs font-bold border-slate-300 hover:bg-slate-50 text-slate-700 gap-1.5 rounded-xl"
             title="Fetch latest database state immediately"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-indigo-600" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
             <span>{isRefreshing ? "Syncing..." : "Sync Now"}</span>
           </Button>
 
@@ -1445,7 +1496,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             type="button"
             onClick={handleExportCurrentView}
             size="sm"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 h-8 shadow-2xs"
+            className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 h-8 rounded-xl shadow-md"
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>Export Filtered ({activeTab.toUpperCase()})</span>
@@ -1458,25 +1509,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         {/* 1. Total Batches */}
         <div
           onClick={() => handleTabSelect("pis")}
-          className={`p-3.5 rounded-xl border shadow-2xs cursor-pointer hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] select-none ${
+          className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group select-none ${
             activeTab === "pis"
-              ? "bg-purple-50/40 border-purple-400 ring-2 ring-purple-500/50"
-              : "bg-white border-slate-200/90 hover:border-purple-300"
+              ? "bg-blue-50/30 border-blue-400 ring-2 ring-blue-500/30 shadow-md"
+              : "bg-white border-slate-200 hover:border-blue-300 shadow-md"
           }`}
           title="Click to view all Proforma Invoices & Batches"
+          role="button" tabIndex={0}
         >
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Total Batches</span>
-            <Boxes className="w-4 h-4 text-purple-600" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shrink-0 shadow-lg text-white">
+              <Boxes className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-blue-700 transition-colors">
+                Total Batches
+              </div>
+              <div className="text-2xl font-black text-slate-900 mt-0.5 tracking-tight font-mono leading-none">
+                {summaryMetrics.totalPis}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-slate-900 font-mono">{summaryMetrics.totalPis}</span>
-            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-              {summaryMetrics.completedPis} Done
+          <div className="flex items-center gap-1.5 mt-3">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
+              <CheckCircle className="w-3 h-3" /> {summaryMetrics.completedPis} Done
             </span>
           </div>
-          <div className="mt-1.5 text-[10px] text-slate-500">
-            {summaryMetrics.inProgressPis} In Production
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1 text-[11px] text-blue-700 font-semibold">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+            <span>{summaryMetrics.inProgressPis} in Production</span>
           </div>
         </div>
 
@@ -1486,25 +1547,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             handleTabSelect("rejects");
             setRejectsFilterMode("rejected_only");
           }}
-          className={`p-3.5 rounded-xl border shadow-2xs cursor-pointer hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] select-none ${
+          className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group select-none ${
             activeTab === "rejects" && rejectsFilterMode === "rejected_only"
-              ? "bg-red-50/50 border-red-400 ring-2 ring-red-500/50"
-              : "bg-white border-slate-200/90 hover:border-red-300"
+              ? "bg-rose-50/30 border-rose-400 ring-2 ring-rose-500/30 shadow-md"
+              : "bg-white border-slate-200 hover:border-rose-300 shadow-md"
           }`}
           title="Click to view only Rejected Glass Pieces"
+          role="button" tabIndex={0}
         >
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Rejected Pieces</span>
-            <Layers className="w-4 h-4 text-red-600" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-rose-500 to-rose-700 flex items-center justify-center shrink-0 shadow-lg text-white">
+              <Layers className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-rose-700 transition-colors">
+                Rejected Pieces
+              </div>
+              <div className="text-2xl font-black text-rose-700 mt-0.5 tracking-tight font-mono leading-none">
+                {summaryMetrics.rejectedUnits}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-red-600 font-mono">{summaryMetrics.rejectedUnits}</span>
-            <span className="text-[10px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
-              {summaryMetrics.defectRate.toFixed(1)}% Scrap
+          <div className="flex items-center gap-1.5 mt-3">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-md">
+              <AlertTriangle className="w-3 h-3" /> {summaryMetrics.defectRate.toFixed(1)}% Scrap
             </span>
           </div>
-          <div className="mt-1.5 text-[10px] text-slate-500">
-            Total Defective Glass Pieces
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1 text-[11px] text-rose-600 font-semibold">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+            <span>Total Defective Glass</span>
           </div>
         </div>
 
@@ -1514,25 +1585,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             handleTabSelect("rejects");
             setRejectsFilterMode("rejected_only");
           }}
-          className={`p-3.5 rounded-xl border shadow-2xs cursor-pointer hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] select-none ${
+          className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group select-none ${
             activeTab === "rejects" && rejectsFilterMode === "rejected_only"
-              ? "bg-red-50/50 border-red-400 ring-2 ring-red-500/50"
-              : "bg-white border-slate-200/90 hover:border-red-300"
+              ? "bg-rose-50/30 border-rose-400 ring-2 ring-rose-500/30 shadow-md"
+              : "bg-white border-slate-200 hover:border-rose-300 shadow-md"
           }`}
           title="Click to view Scrapped Glass Volume"
+          role="button" tabIndex={0}
         >
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Rejected Volume</span>
-            <AlertOctagon className="w-4 h-4 text-rose-600" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center shrink-0 shadow-lg text-white">
+              <AlertOctagon className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-rose-700 transition-colors">
+                Rejected Volume
+              </div>
+              <div className="text-2xl font-black text-rose-700 mt-0.5 tracking-tight font-mono leading-none">
+                {formatAENumber(summaryMetrics.rejectedSqm, 1)} <span className="text-xs font-bold text-slate-500">m²</span>
+              </div>
+            </div>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-rose-700 font-mono">
-              {formatAENumber(summaryMetrics.rejectedSqm, 1)}
+          <div className="flex items-center gap-1.5 mt-3">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-md">
+              Scrapped Area
             </span>
-            <span className="text-[10px] font-extrabold text-rose-800">SQM</span>
           </div>
-          <div className="mt-1.5 text-[10px] text-slate-500">
-            Scrapped Glass Area
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1 text-[11px] text-slate-500 font-semibold">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+            <span>Material Loss Tracker</span>
           </div>
         </div>
 
@@ -1542,25 +1623,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             handleTabSelect("rejects");
             setRejectsFilterMode("rejected_only");
           }}
-          className={`p-3.5 rounded-xl border shadow-2xs cursor-pointer hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] select-none ${
+          className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group select-none ${
             activeTab === "rejects" && rejectsFilterMode === "rejected_only"
-              ? "bg-red-50/50 border-red-400 ring-2 ring-red-500/50"
-              : "bg-white border-slate-200/90 hover:border-red-300"
+              ? "bg-rose-50/30 border-rose-400 ring-2 ring-rose-500/30 shadow-md"
+              : "bg-white border-slate-200 hover:border-rose-300 shadow-md"
           }`}
           title="Click to view only Quality Rejects & Defect Scrap"
+          role="button" tabIndex={0}
         >
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Quality Rejects</span>
-            <AlertCircle className="w-4 h-4 text-red-600" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-red-500 to-rose-700 flex items-center justify-center shrink-0 shadow-lg text-white">
+              <AlertCircle className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-red-700 transition-colors">
+                Quality Rejects
+              </div>
+              <div className="text-2xl font-black text-rose-700 mt-0.5 tracking-tight font-mono leading-none">
+                {summaryMetrics.totalRejects}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-red-600 font-mono">{summaryMetrics.totalRejects}</span>
-            <span className="text-[10px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
-              {summaryMetrics.defectRate.toFixed(1)}% Rate
+          <div className="flex items-center gap-1.5 mt-3">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-red-700 bg-red-50 px-1.5 py-0.5 rounded-md">
+              <ShieldCheck className="w-3 h-3" /> {summaryMetrics.defectRate.toFixed(1)}% Rate
             </span>
           </div>
-          <div className="mt-1.5 text-[10px] text-slate-500">
-            Recorded Scrap & Defects
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1 text-[11px] text-red-600 font-semibold">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"></span>
+            <span>Recorded Scrap &amp; Defects</span>
           </div>
         </div>
 
@@ -1570,25 +1661,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             handleTabSelect("reworks");
             setReworksFilterMode("reworks_only");
           }}
-          className={`p-3.5 rounded-xl border shadow-2xs cursor-pointer hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] select-none ${
+          className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden group select-none ${
             activeTab === "reworks" && reworksFilterMode === "reworks_only"
-              ? "bg-amber-50/50 border-amber-400 ring-2 ring-amber-500/50"
-              : "bg-white border-slate-200/90 hover:border-amber-300"
+              ? "bg-amber-50/30 border-amber-400 ring-2 ring-amber-500/30 shadow-md"
+              : "bg-white border-slate-200 hover:border-amber-300 shadow-md"
           }`}
           title="Click to view only Reprocessed / In-Rework pieces"
+          role="button" tabIndex={0}
         >
-          <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold uppercase tracking-wider">
-            <span>Reworks</span>
-            <RotateCcw className="w-4 h-4 text-amber-600" />
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shrink-0 shadow-lg text-white">
+              <RotateCcw className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider group-hover:text-amber-700 transition-colors">
+                Reworks
+              </div>
+              <div className="text-2xl font-black text-amber-700 mt-0.5 tracking-tight font-mono leading-none">
+                {summaryMetrics.totalReworks}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-xl font-black text-amber-600 font-mono">{summaryMetrics.totalReworks}</span>
-            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-              {summaryMetrics.reworkRate.toFixed(1)}% Rate
+          <div className="flex items-center gap-1.5 mt-3">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md">
+              <RotateCcw className="w-3 h-3" /> {summaryMetrics.reworkRate.toFixed(1)}% Rate
             </span>
           </div>
-          <div className="mt-1.5 text-[10px] text-slate-500">
-            Reprocessed Pieces
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1 text-[11px] text-amber-700 font-semibold">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+            <span>Reprocessed Pieces</span>
           </div>
         </div>
       </div>
@@ -1699,7 +1800,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => handleTabSelect("pis")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "pis"
-              ? "border-indigo-600 text-indigo-600"
+              ? "border-blue-600 text-blue-600 font-extrabold"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
@@ -1709,17 +1810,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => handleTabSelect("items")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "items"
-              ? "border-indigo-600 text-indigo-600"
+              ? "border-blue-600 text-blue-600 font-extrabold"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          Glass Units & Inventory ({filteredItems.length})
+          Glass Units &amp; Inventory ({filteredItems.length})
         </button>
         <button
           onClick={() => handleTabSelect("history")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
             activeTab === "history"
-              ? "border-indigo-600 text-indigo-600"
+              ? "border-blue-600 text-blue-600 font-extrabold"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
@@ -1729,14 +1830,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => handleTabSelect("rejects")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
             activeTab === "rejects"
-              ? "border-indigo-600 text-indigo-600"
+              ? "border-blue-600 text-blue-600 font-extrabold"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
           <span>Quality Rejects Log</span>
           <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
             totalRejectsInFilter > 0
-              ? "bg-red-100 text-red-700 border border-red-200"
+              ? "bg-rose-100 text-rose-700 border border-rose-200"
               : "bg-slate-100 text-slate-600"
           }`}>
             {totalRejectsInFilter}
@@ -1746,7 +1847,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => handleTabSelect("reworks")}
           className={`pb-2.5 px-4 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
             activeTab === "reworks"
-              ? "border-indigo-600 text-indigo-600"
+              ? "border-blue-600 text-blue-600 font-extrabold"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
@@ -1817,7 +1918,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   type="button"
                   size="sm"
                   variant="default"
-                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                  className="h-8 px-3 text-xs font-bold bg-gradient-to-r from-indigo-500 to-indigo-700 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
                 >
                   <Search className="w-3.5 h-3.5" />
                   <span>Search</span>
@@ -1831,7 +1932,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("all")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                     selectedFinish === "all"
-                      ? "bg-white text-slate-900 shadow-xs"
+                      ? "bg-white text-slate-900 shadow-md"
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
@@ -1842,7 +1943,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Colour")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Colour"
-                      ? "bg-purple-600 text-white shadow-xs"
+                      ? "bg-gradient-to-r from-purple-500 to-purple-700 text-white shadow-md"
                       : "text-purple-700 hover:text-purple-900 hover:bg-purple-50"
                   }`}
                 >
@@ -1854,7 +1955,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Clear")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Clear"
-                      ? "bg-sky-600 text-white shadow-xs"
+                      ? "bg-sky-600 text-white shadow-md"
                       : "text-sky-700 hover:text-sky-900 hover:bg-sky-50"
                   }`}
                 >
@@ -1995,7 +2096,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   type="button"
                   size="sm"
                   variant="default"
-                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                  className="h-8 px-3 text-xs font-bold bg-gradient-to-r from-indigo-500 to-indigo-700 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
                 >
                   <Search className="w-3.5 h-3.5" />
                   <span>Search</span>
@@ -2009,7 +2110,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("all")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                     selectedFinish === "all"
-                      ? "bg-white text-slate-900 shadow-xs"
+                      ? "bg-white text-slate-900 shadow-md"
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
@@ -2020,7 +2121,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Colour")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Colour"
-                      ? "bg-purple-600 text-white shadow-xs"
+                      ? "bg-gradient-to-r from-purple-500 to-purple-700 text-white shadow-md"
                       : "text-purple-700 hover:text-purple-900 hover:bg-purple-50"
                   }`}
                 >
@@ -2032,7 +2133,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Clear")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Clear"
-                      ? "bg-sky-600 text-white shadow-xs"
+                      ? "bg-sky-600 text-white shadow-md"
                       : "text-sky-700 hover:text-sky-900 hover:bg-sky-50"
                   }`}
                 >
@@ -2287,7 +2388,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   type="button"
                   size="sm"
                   variant="default"
-                  className="h-8 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                  className="h-8 px-3 text-xs font-bold bg-gradient-to-r from-indigo-500 to-indigo-700 hover:bg-indigo-700 text-white rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer shrink-0"
                 >
                   <Search className="w-3.5 h-3.5" />
                   <span>Search</span>
@@ -2301,7 +2402,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("all")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                     selectedFinish === "all"
-                      ? "bg-white text-slate-900 shadow-xs"
+                      ? "bg-white text-slate-900 shadow-md"
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
@@ -2312,7 +2413,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Colour")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Colour"
-                      ? "bg-purple-600 text-white shadow-xs"
+                      ? "bg-gradient-to-r from-purple-500 to-purple-700 text-white shadow-md"
                       : "text-purple-700 hover:text-purple-900 hover:bg-purple-50"
                   }`}
                 >
@@ -2324,7 +2425,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   onClick={() => setSelectedFinish("Clear")}
                   className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                     selectedFinish === "Clear"
-                      ? "bg-sky-600 text-white shadow-xs"
+                      ? "bg-sky-600 text-white shadow-md"
                       : "text-sky-700 hover:text-sky-900 hover:bg-sky-50"
                   }`}
                 >
@@ -2495,7 +2596,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setRejectsFilterMode("all")}
                       className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
                         rejectsFilterMode === "all"
-                          ? "bg-white text-slate-900 shadow-xs"
+                          ? "bg-white text-slate-900 shadow-md"
                           : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
@@ -2506,7 +2607,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setRejectsFilterMode("rejected_only")}
                       className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         rejectsFilterMode === "rejected_only"
-                          ? "bg-red-600 text-white shadow-xs"
+                          ? "bg-red-600 text-white shadow-md"
                           : "text-red-700 hover:text-red-900 hover:bg-red-50"
                       }`}
                     >
@@ -2522,7 +2623,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("all")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                         selectedFinish === "all"
-                          ? "bg-white text-slate-900 shadow-xs"
+                          ? "bg-white text-slate-900 shadow-md"
                           : "text-slate-500 hover:text-slate-800"
                       }`}
                     >
@@ -2533,7 +2634,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("Colour")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         selectedFinish === "Colour"
-                          ? "bg-purple-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-purple-500 to-purple-700 text-white shadow-md"
                           : "text-purple-700 hover:text-purple-900 hover:bg-purple-50"
                       }`}
                     >
@@ -2545,7 +2646,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("Clear")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         selectedFinish === "Clear"
-                          ? "bg-sky-600 text-white shadow-xs"
+                          ? "bg-sky-600 text-white shadow-md"
                           : "text-sky-700 hover:text-sky-900 hover:bg-sky-50"
                       }`}
                     >
@@ -2830,7 +2931,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                         className="p-3 bg-gradient-to-r from-purple-50/70 via-white to-slate-50/60 hover:from-purple-100/70 border-b border-purple-100/80 flex items-center justify-between cursor-pointer select-none transition-colors"
                                                       >
                                                         <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                                                          <div className="w-7 h-7 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black text-xs shadow-2xs shrink-0">
+                                                          <div className="w-7 h-7 rounded-xl bg-gradient-to-r from-purple-500 to-purple-700 text-white flex items-center justify-center font-black text-xs shadow-2xs shrink-0">
                                                             {sheetGroup.rackNo || (sheetIdx + 1)}
                                                           </div>
                                                           <div>
@@ -3209,7 +3310,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setReworksFilterMode("all")}
                       className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
                         reworksFilterMode === "all"
-                          ? "bg-white text-slate-900 shadow-xs"
+                          ? "bg-white text-slate-900 shadow-md"
                           : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
@@ -3220,7 +3321,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setReworksFilterMode("reworks_only")}
                       className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         reworksFilterMode === "reworks_only"
-                          ? "bg-amber-600 text-white shadow-xs"
+                          ? "bg-amber-600 text-white shadow-md"
                           : "text-amber-800 hover:text-amber-950 hover:bg-amber-50"
                       }`}
                     >
@@ -3236,7 +3337,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("all")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                         selectedFinish === "all"
-                          ? "bg-white text-slate-900 shadow-xs"
+                          ? "bg-white text-slate-900 shadow-md"
                           : "text-slate-500 hover:text-slate-800"
                       }`}
                     >
@@ -3247,7 +3348,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("Colour")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         selectedFinish === "Colour"
-                          ? "bg-purple-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-purple-500 to-purple-700 text-white shadow-md"
                           : "text-purple-700 hover:text-purple-900 hover:bg-purple-50"
                       }`}
                     >
@@ -3259,7 +3360,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       onClick={() => setSelectedFinish("Clear")}
                       className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
                         selectedFinish === "Clear"
-                          ? "bg-sky-600 text-white shadow-xs"
+                          ? "bg-sky-600 text-white shadow-md"
                           : "text-sky-700 hover:text-sky-900 hover:bg-sky-50"
                       }`}
                     >

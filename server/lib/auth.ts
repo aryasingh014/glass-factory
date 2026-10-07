@@ -11,10 +11,11 @@ export interface AuthPayload {
   email?: string;
   name?: string;
   role: UserRole;
+  sessionId?: string;
   exp: number;
 }
 
-export function generateToken(role: UserRole, username = "User"): string {
+export function generateToken(role: UserRole, username = "User", sessionId?: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload: AuthPayload = {
     userId: `user-${role.toLowerCase()}`,
@@ -22,6 +23,7 @@ export function generateToken(role: UserRole, username = "User"): string {
     email: `${role.toLowerCase()}@sejalglass.com`,
     name: `${role} User`,
     role,
+    sessionId: sessionId || `ses-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days expiration
   };
   const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -32,7 +34,7 @@ export function generateToken(role: UserRole, username = "User"): string {
   return `${header}.${payloadEncoded}.${signature}`;
 }
 
-export function generateUserToken(user: UserProfile): string {
+export function generateUserToken(user: UserProfile, sessionId?: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload: AuthPayload = {
     userId: user.id,
@@ -40,6 +42,7 @@ export function generateUserToken(user: UserProfile): string {
     email: user.email,
     name: user.name,
     role: user.role,
+    sessionId: sessionId || `ses-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days expiration
   };
   const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString("base64url");

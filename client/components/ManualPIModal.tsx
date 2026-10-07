@@ -228,11 +228,11 @@ export const ManualPIModal: React.FC<ManualPIModalProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto bg-white text-slate-900 border-slate-200 shadow-2xl p-6">
         <DialogHeader className="border-b border-slate-100 pb-4">
-          <DialogTitle className="text-xl font-black flex items-center gap-2.5 text-blue-600">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-              <FilePlus className="w-6 h-6" />
+          <DialogTitle className="text-xl font-black flex items-center gap-2.5 text-slate-900">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+              <FilePlus className="w-5 h-5 text-white" />
             </div>
-            Manual PI Generation & Order Entry
+            <span>Manual PI Generation & Order Entry</span>
           </DialogTitle>
           <DialogDescription className="text-slate-500 text-xs font-medium mt-1">
             Fill in the customer, order header info, and glass item specifications manually to generate a PI Status record.

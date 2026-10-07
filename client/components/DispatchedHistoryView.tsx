@@ -18,6 +18,7 @@ import {
   ChevronUp,
   Link2,
   CheckCircle2,
+  Check,
   Boxes,
   Layers,
   Clock,
@@ -48,7 +49,7 @@ import {
   isDlguGlass,
   formatDubaiDateTime,
 } from "@/lib/utils";
-import { exportPartialDispatchNoteToExcel } from "@/lib/excelExport";
+import { exportPartialDispatchNoteToExcel, resolveGlassMakeupDetails } from "@/lib/excelExport";
 
 interface DispatchedHistoryViewProps {
   items: GlassItem[];
@@ -738,36 +739,58 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
       const excelRows = rowsToExport.map((r, idx) => {
         const it = r.item;
         const partner = r.partnerItem;
+        const parentPI = pis.find(
+          (p) => p.id === it.piId || p.piNumber === it.piNumber || (it.batchNo && p.batchNo === it.batchNo)
+        );
         const dispDate = r.dispatchedTimestamp
           ? formatDubaiDateTime(r.dispatchedTimestamp)
           : formatPlatformDate(new Date());
 
+        const routeText = Array.isArray(it.processRoute)
+          ? it.processRoute.join(" → ")
+          : String(it.processRoute || "—");
+
+        const makeupDetails = resolveGlassMakeupDetails(it, items, pis);
+
         return {
           "Sr No": idx + 1,
-          "Dispatched Date": dispDate,
-          "Customer Name": r.customerName || "—",
-          "Project Name": r.projectName || "—",
-          "Batch No": it.batchNo || formatBatchNumber(it.piNumber) || "—",
-          "PI / Order No": it.piNumber || it.orderNo || "—",
-          "Job Order / SFO": it.sfoNo || it.orderNo || "—",
-          "Pos No": it.posNo || "—",
+          "Order #": it.orderNo || parentPI?.jobOrderNumber || "—",
+          "OB #": it.obNo || parentPI?.obNo || "—",
+          "SFO #": it.sfoNo || parentPI?.sfoNo || "—",
+          "Batch #": it.batchNo || formatBatchNumber(it.piNumber) || parentPI?.batchNo || "—",
+          "POS #": it.posNo || "—",
+          "Barcode": it.barcode || "—",
           "Unit / Sticker Serial": it.serialNumber,
-          Barcode: it.barcode || "—",
-          "Partner Pane Serials":
-            r.allSerials.length > 1 ? r.allSerials.filter((s) => s !== it.serialNumber).join(", ") : "Single Lite",
+          "Customer Name": r.customerName || parentPI?.customerName || "—",
+          "Project Name": r.projectName || parentPI?.projectName || "—",
+          "Glass Code": it.glassCode || it.itemCode || "—",
+          "Glass Description": it.glassType || it.itemCode || "—",
+          "Glass Makeup / Buildup": makeupDetails.makeup,
+          "Outer Glass (OP)": makeupDetails.outerGlass,
+          "Spacer / Cavity": makeupDetails.spacer,
+          "Inner Glass (IP)": makeupDetails.innerGlass,
           "Glass Category": r.glassCategory,
           "Finish Type": getItemFinish(it),
-          "Glass Description": it.glassType || it.itemCode || "—",
           "Width (mm)": it.width,
           "Height (mm)": it.height,
-          "Qty (Units)": r.effectiveQty,
+          "Order Qty (Line Qty)": it.lineQty || it.qty || 1,
+          "Dispatched QTY (Units)": r.effectiveQty,
           "Area (SQM)": parseFloat(r.effectiveSqm.toFixed(2)),
+          "Sheet / Rack No": it.rackNo || "—",
+          "Process Route": routeText,
+          "Delivery Date": it.delDate || parentPI?.deliveryDate || "—",
+          "OPT Date": it.optDate || parentPI?.sfoDate || parentPI?.issueDate || "—",
+          "Origin": "MADE IN UAE",
           "Delivery Location": it.delLocation || "FACTORY",
+          "Dispatch Note No": it.dispatchNoteNo || "—",
+          "Dispatched Date": dispDate,
           "Dispatched By": r.operatorName || "Dispatch Desk",
+          "Partner Pane Serials":
+            r.allSerials.length > 1 ? r.allSerials.filter((s) => s !== it.serialNumber).join(", ") : "Single Lite",
           "IP Glass Details": partner
             ? `${partner.serialNumber} (${partner.glassType || "Inner Pane"})`
             : "—",
-          Status: "Dispatched",
+          "Status": "Dispatched",
         };
       });
 
@@ -831,7 +854,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                       setSelectedRowIds((prev) => prev.filter((id) => !rowIds.includes(id)));
                     }
                   }}
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  className="w-[18px] h-[18px] rounded-md border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer transition-transform active:scale-95"
                 />
               </th>
               <th className="py-3 px-3">Dispatched Time</th>
@@ -882,7 +905,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => handleToggleRowSelect(row.id)}
-                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer transition-transform active:scale-95"
                         />
                       </td>
 
@@ -1119,158 +1142,161 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
   return (
     <div className="space-y-6">
       {/* ── Page Header & Top Controls ── */}
-      <div className="flex items-center justify-between flex-wrap gap-4 bg-white border border-slate-200/90 p-5 rounded-2xl shadow-xs">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
+      <div className="ppb-panel bg-white border border-slate-100 p-5 shadow-[0_4px_20px_rgb(16,185,129,0.06)] mb-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          {/* Left: Title & Subtitle */}
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm shrink-0">
               <PackageCheck className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl font-black text-slate-900 tracking-tight">Dispatched History</h1>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200 shrink-0">
                   Customer-Wise Dispatch Records
                 </span>
               </div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
+              <p className="text-xs text-slate-500 font-medium mt-0.5 max-w-xl">
                 Complete historical record of all glass items, paired units, and batches dispatched, organized customer wise.
               </p>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {onNavigateToDispatchQueue && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onNavigateToDispatchQueue}
-              className="h-9 px-3.5 text-xs font-bold text-slate-700 hover:text-emerald-800 hover:bg-emerald-50 border-slate-300 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              <Truck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Dispatch & Shipping Queue</span>
-            </Button>
-          )}
+          {/* Right / Secondary Toolbar: Buttons */}
+          <div className="w-full lg:w-auto flex flex-wrap items-center justify-between lg:justify-end gap-2.5 pt-3.5 border-t border-slate-100 lg:border-0 lg:pt-0 shrink-0">
+            {/* Navigation & Refresh Group */}
+            <div className="flex items-center gap-2">
+              {onNavigateToDispatchQueue && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onNavigateToDispatchQueue}
+                  className="h-9 px-3.5 text-xs font-bold text-slate-700 hover:text-blue-800 hover:bg-blue-50 border-slate-300 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap transition-colors"
+                >
+                  <Truck className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Dispatch &amp; Shipping Queue</span>
+                </Button>
+              )}
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            className="h-9 px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 border-slate-300 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs"
-            title="Refresh dispatched records"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
-          </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRefresh}
+                className="h-9 px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 border-slate-300 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap transition-colors"
+                title="Refresh dispatched records"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </Button>
+            </div>
 
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleExportDispatchedToExcel}
-            className="h-9 px-3.5 text-xs font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>
-              Export Excel ({selectedRowIds.length > 0 ? `${selectedRowIds.length} Selected` : "All"})
-            </span>
-          </Button>
+            {/* Separator on desktop */}
+            <div className="h-5 w-px bg-slate-200 hidden lg:block mx-1" />
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => handleExportDeliveryNote()}
-            className="h-9 px-3.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer"
-          >
-            <Truck className="w-3.5 h-3.5 text-emerald-700" />
-            <span>Delivery Note (.xlsx)</span>
-          </Button>
+            {/* Export Actions Group */}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleExportDispatchedToExcel}
+                className="h-9 px-3.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>
+                  Export Excel ({selectedRowIds.length > 0 ? `${selectedRowIds.length} Selected` : "All"})
+                </span>
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleExportDeliveryNote()}
+                className="h-9 px-3.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+              >
+                <Truck className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Delivery Note (.xlsx)</span>
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ── 4 KPI Stats Grid ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ── Executive KPI Overview ── */}
+      <div className="ppb-metrics-grid">
         {/* Card 1: Total Dispatched Units */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs relative overflow-hidden group hover:border-emerald-400 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Dispatched Units
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <PackageCheck className="w-4 h-4" />
+        <div className="ppb-metric-card">
+          <div className="ppb-metric-main">
+            <div className="ppb-metric-copy">
+              <h3>Dispatched Units</h3>
+              <strong>{kpiStats.totalUnits} <span style={{fontSize:'16px'}}>Units</span></strong>
+              <div className="ppb-metric-change">
+                <span className="ppb-metric-change-up"><Check size={12} className="inline mr-1" />Assembled & Released</span>
+              </div>
             </div>
+            <div className="ppb-metric-icon ppb-metric-icon-green"><PackageCheck size={24} /></div>
           </div>
-          <div className="text-3xl font-black text-slate-900 mt-2 font-mono tracking-tight">
-            {kpiStats.totalUnits}
-          </div>
-          <div className="text-[11px] text-slate-500 font-semibold mt-1 flex items-center gap-1.5">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-            <span>{kpiStats.totalPanes} individual glass panes assembled into {kpiStats.totalUnits} units</span>
+          <div className="ppb-metric-note ppb-note-green">
+            <span>{kpiStats.totalPanes} glass panes assembled</span>
           </div>
         </div>
 
         {/* Card 2: Total Dispatched SQM */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs relative overflow-hidden group hover:border-teal-400 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Total Dispatched Area
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
-              <Boxes className="w-4 h-4" />
+        <div className="ppb-metric-card">
+          <div className="ppb-metric-main">
+            <div className="ppb-metric-copy">
+              <h3>Total Dispatched Area</h3>
+              <strong>{kpiStats.totalSqm.toLocaleString()} <span style={{fontSize:'16px'}}>m²</span></strong>
+              <div className="ppb-metric-change">
+                <span className="ppb-metric-change-up">Verified Area</span>
+              </div>
             </div>
+            <div className="ppb-metric-icon ppb-metric-icon-blue"><Boxes size={24} /></div>
           </div>
-          <div className="text-3xl font-black text-slate-900 mt-2 font-mono tracking-tight">
-            {kpiStats.totalSqm.toLocaleString()} <span className="text-lg font-bold text-slate-500">m²</span>
-          </div>
-          <div className="text-[11px] text-teal-700 font-semibold mt-1 flex items-center gap-1.5">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-teal-500"></span>
-            <span>Verified output surface area</span>
+          <div className="ppb-metric-note ppb-note-blue">
+            <span>Surface area output</span>
           </div>
         </div>
 
         {/* Card 3: Dispatched Batches / SFOs */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs relative overflow-hidden group hover:border-blue-400 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Dispatched Batches
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-              <Layers className="w-4 h-4" />
+        <div className="ppb-metric-card">
+          <div className="ppb-metric-main">
+            <div className="ppb-metric-copy">
+              <h3>Dispatched Batches</h3>
+              <strong>{kpiStats.totalBatches} <span style={{fontSize:'16px'}}>Batches</span></strong>
+              <div className="ppb-metric-change">
+                <span className="ppb-metric-change-up">Fulfilled Orders</span>
+              </div>
             </div>
+            <div className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff'}}><Layers size={24} /></div>
           </div>
-          <div className="text-3xl font-black text-slate-900 mt-2 font-mono tracking-tight">
-            {kpiStats.totalBatches}
-          </div>
-          <div className="text-[11px] text-blue-700 font-semibold mt-1 flex items-center gap-1.5">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+          <div className="ppb-metric-note" style={{background: 'rgba(14,165,233,0.07)', color: '#0369a1'}}>
             <span>Batches fulfilled & released</span>
           </div>
         </div>
 
         {/* Card 4: Customers Delivered To */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs relative overflow-hidden group hover:border-purple-400 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-              Clients Served
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
-              <Users className="w-4 h-4" />
+        <div className="ppb-metric-card">
+          <div className="ppb-metric-main">
+            <div className="ppb-metric-copy">
+              <h3>Clients Served</h3>
+              <strong>{kpiStats.totalCustomers} <span style={{fontSize:'16px'}}>Clients</span></strong>
+              <div className="ppb-metric-change">
+                <span className="ppb-metric-change-up" style={{color: '#8b5cf6'}}>Corporate Accounts</span>
+              </div>
             </div>
+            <div className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #a855f7, #7e22ce)', color: '#fff'}}><Users size={24} /></div>
           </div>
-          <div className="text-3xl font-black text-slate-900 mt-2 font-mono tracking-tight">
-            {kpiStats.totalCustomers}
-          </div>
-          <div className="text-[11px] text-purple-700 font-semibold mt-1 flex items-center gap-1.5">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+          <div className="ppb-metric-note" style={{background: 'rgba(168,85,247,0.07)', color: '#6b21a8'}}>
             <span>Active corporate accounts</span>
           </div>
         </div>
       </div>
 
       {/* ── Search, View Switcher & Filters Bar ── */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs space-y-3.5">
+      <div className="ppb-panel space-y-3.5 mb-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           {/* Universal Search Bar */}
           <div className="relative flex-1 w-full">
@@ -1539,7 +1565,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
               return (
                 <div
                   key={customer.customerName}
-                  className="bg-white border-2 border-slate-200/90 hover:border-emerald-300 rounded-2xl shadow-xs overflow-hidden transition-all"
+                  className="ppb-panel p-0 overflow-hidden shadow-[0_4px_20px_rgb(16,185,129,0.04)] border-slate-100 hover:border-emerald-400 transition-all duration-300"
                 >
                   {/* Customer Card Header Bar */}
                   <div
@@ -1633,7 +1659,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                   {/* Customer Dispatched Table (Rendered when expanded) */}
                   {isExpanded && (
                     <div className="border-t border-slate-200 bg-slate-50/30 p-3.5">
-                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                      <div className="ppb-panel p-0 overflow-hidden shadow-[0_4px_20px_rgb(16,185,129,0.04)] border-slate-100/60">
                         {renderDispatchedRowsTable(customer.rows, false)}
                       </div>
                     </div>

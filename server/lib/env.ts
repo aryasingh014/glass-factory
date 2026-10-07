@@ -13,6 +13,21 @@ export const envSchema = z.object({
     .min(8, "JWT_SECRET must be at least 8 characters long")
     .default("sejal-glass-manufacturing-secret-key-2026"),
   DATA_DIR: z.string().optional(),
+  SMTP_HOST: z.string().default("smtp.gmail.com"),
+  SMTP_PORT: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .or(z.number())
+    .default(465),
+  SMTP_SECURE: z
+    .string()
+    .transform((val) => val === "true" || val === "1")
+    .or(z.boolean())
+    .default(true),
+  SMTP_USER: z.string().default("novaaias014@gmail.com"),
+  SMTP_PASS: z.string().default("avhdszmxuxmacmix"),
+  SMTP_FROM: z.string().default('"Sejal Glass ERP" <novaaias014@gmail.com>'),
+  APP_URL: z.string().default("http://localhost:8080"),
 });
 
 export type Env = z.infer<typeof envSchema>;

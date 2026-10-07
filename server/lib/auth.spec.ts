@@ -5,7 +5,10 @@ import {
   validatePassword, 
   hashPassword, 
   getUserProfile, 
-  usersDatabase 
+  usersDatabase,
+  createUser,
+  updateUser,
+  deleteUser
 } from "./users";
 
 describe("Authentication & RBAC System", () => {
@@ -34,7 +37,7 @@ describe("Authentication & RBAC System", () => {
       expect(payload?.userId).toBe("usr-admin-01");
       expect(payload?.role).toBe("Admin");
       expect(payload?.username).toBe("admin");
-      expect(payload?.email).toBe("admin@sejalglass.com");
+      expect(payload?.email).toBe("gauravraj77820@gmail.com");
     });
 
     it("should reject tampered or invalid tokens", () => {
@@ -45,8 +48,8 @@ describe("Authentication & RBAC System", () => {
     });
   });
 
-  describe("Real User Authentication for 3 Roles", () => {
-    it("should authenticate Admin role with valid credentials", () => {
+  describe("Admin & Dynamic User Provisioning", () => {
+    it("should authenticate initial seeded Admin with default credentials", () => {
       const user = findUserByUsernameOrEmail("admin");
       expect(user).toBeDefined();
       expect(user?.role).toBe("Admin");
@@ -54,20 +57,33 @@ describe("Authentication & RBAC System", () => {
       expect(validatePassword(user!, "WrongPass@123")).toBe(false);
     });
 
-    it("should authenticate Supervisor role with valid credentials", () => {
-      const user = findUserByUsernameOrEmail("supervisor@sejalglass.com");
-      expect(user).toBeDefined();
-      expect(user?.role).toBe("Supervisor");
-      expect(validatePassword(user!, "Supervisor@123")).toBe(true);
-      expect(validatePassword(user!, "InvalidPass")).toBe(false);
-    });
+    it("should allow Admin to create, authenticate, and update new role credentials dynamically", () => {
+      // 1. Create new Supervisor
+      const newSupervisor = createUser({
+        username: "testsupervisor",
+        email: "supervisor.test@sejalglass.com",
+        name: "Test Supervisor",
+        role: "Supervisor",
+        password: "SuperSecret@2026",
+      });
 
-    it("should authenticate Operator role with valid credentials", () => {
-      const user = findUserByUsernameOrEmail("operator");
+      expect(newSupervisor.id).toBeDefined();
+      expect(newSupervisor.role).toBe("Supervisor");
+
+      // 2. Verify authentication
+      const user = findUserByUsernameOrEmail("testsupervisor");
       expect(user).toBeDefined();
-      expect(user?.role).toBe("Operator");
-      expect(validatePassword(user!, "Operator@123")).toBe(true);
+      expect(validatePassword(user!, "SuperSecret@2026")).toBe(true);
       expect(validatePassword(user!, "WrongPassword")).toBe(false);
+
+      // 3. Update password
+      updateUser(newSupervisor.id, { password: "NewSupervisorPass@99" });
+      const updatedUser = findUserByUsernameOrEmail("testsupervisor");
+      expect(validatePassword(updatedUser!, "NewSupervisorPass@99")).toBe(true);
+
+      // 4. Clean up
+      deleteUser(newSupervisor.id);
+      expect(findUserByUsernameOrEmail("testsupervisor")).toBeUndefined();
     });
 
     it("should return safe public user profile without sensitive salt or hash", () => {
@@ -94,6 +110,60 @@ describe("Authentication & RBAC System", () => {
       expect(res1.hash).not.toBe(res2.hash);
     });
   });
-});
 
+  describe("Real-Time Sessions & Heartbeat Tracking", () => {
+    it("should register active sessions and update heartbeats", async () => {
+      const { createSession, updateSessionHeartbeat, getActiveSessionsList, revokeSession } = await import("./users");
+      const testUser = {
+        id: "usr-test-01",
+        username: "testuser",
+        email: "test@sejalglass.com",
+        name: "Test User",
+        role: "Operator" as const,
+      };
+
+      const session = createSession(testUser, "192.168.1.100", "Mozilla Test Scanner");
+      expect(session.sessionId).toBeDefined();
+      expect(session.status).toBe("Active");
+
+      const updated = updateSessionHeartbeat(session.sessionId);
+      expect(updated).toBe(true);
+
+      const sessions = getActiveSessionsList();
+      expect(sessions.some((s) => s.sessionId === session.sessionId)).toBe(true);
+
+      const revoked = revokeSession(session.sessionId);
+      expect(revoked).toBe(true);
+    });
+  });
+
+  describe("Password Reset & OTP Workflow", () => {
+    it("should generate 6-digit OTP and reset password upon verification", async () => {
+      const { createPasswordResetOtp, verifyAndResetPassword } = await import("./users");
+
+      // 1. Generate OTP for admin
+      const { otp, user } = createPasswordResetOtp("admin");
+      expect(otp).toBeDefined();
+      expect(otp).toHaveLength(6);
+      expect(/^\d{6}$/.test(otp)).toBe(true);
+      expect(user.username).toBe("admin");
+
+      // 2. Reject incorrect OTP
+      expect(() => {
+        verifyAndResetPassword("admin", "000000", "NewAdminSecret@999");
+      }).toThrow(/Invalid OTP code/);
+
+      // 3. Accept correct OTP
+      const result = verifyAndResetPassword("admin", otp, "NewAdminSecret@999");
+      expect(result.success).toBe(true);
+
+      // 4. Verify user can now authenticate with new password
+      const updatedAdmin = findUserByUsernameOrEmail("admin")!;
+      expect(validatePassword(updatedAdmin, "NewAdminSecret@999")).toBe(true);
+
+      // 5. Restore default Admin password for standard test suite
+      updateUser(updatedAdmin.id, { password: "Admin@123" });
+    });
+  });
+});
 

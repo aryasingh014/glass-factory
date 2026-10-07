@@ -266,13 +266,17 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
     const stageAnalyticsMap: StageAnalytics[] = stagesToAnalyze.map((stage) => {
       if (stage === "Finished") {
         const finishedItemsList = filteredItems.filter(
-          (i) => i.currentStage === "Finished" && i.status !== "Rejected"
+          (i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected"
         );
         const finishedSqm = finishedItemsList.reduce((acc, item) => acc + (item.sqm || 0), 0);
         const utilization =
           totalGlassItems > 0
             ? parseFloat(((finishedItemsList.length / totalGlassItems) * 100).toFixed(1))
             : 0;
+
+        const stageRejects = filteredRejects.filter((r) => r.stage === "Finished" || r.stage === "Dispatched").length;
+        const totalOps = finishedItemsList.length + stageRejects;
+        const qualityYield = totalOps > 0 ? parseFloat(((finishedItemsList.length / totalOps) * 100).toFixed(1)) : 100;
 
         return {
           stage,
@@ -283,6 +287,8 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
           throughputRate: finishedItemsList.length,
           avgCycleTimeMinutes: 12,
           capacityUtilization: utilization,
+          rejectedCount: stageRejects,
+          qualityYield,
         };
       }
 
@@ -302,6 +308,10 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
       const utilization =
         totalStageUnits > 0 ? parseFloat(((completedCount / totalStageUnits) * 100).toFixed(1)) : 0;
 
+      const stageRejects = filteredRejects.filter((r) => r.stage === stage).length;
+      const totalOps = completedCount + stageRejects;
+      const qualityYield = totalOps > 0 ? parseFloat(((completedCount / totalOps) * 100).toFixed(1)) : 100;
+
       return {
         stage,
         pendingCount,
@@ -311,6 +321,8 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
         throughputRate: completedCount,
         avgCycleTimeMinutes: benchmarkCycleTime[stage] || 20,
         capacityUtilization: utilization,
+        rejectedCount: stageRejects,
+        qualityYield,
       };
     });
 

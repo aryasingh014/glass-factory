@@ -674,18 +674,16 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md bg-white text-slate-900 border-slate-200 shadow-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className={`text-lg font-bold flex items-center gap-2 ${mode === "reject" ? "text-red-600" : "text-amber-600"}`}>
-            {mode === "reject" ? (
-              <>
-                <AlertOctagon className="w-5 h-5 text-red-600" />
-                {isDlgu ? "Mark DLGU Unit as REJECTED" : isDgu ? "Mark DGU Unit as REJECTED" : isLam ? "Mark Laminated Unit as REJECTED" : "Mark Glass Item as REJECTED"}
-              </>
-            ) : (
-              <>
-                <RefreshCw className="w-5 h-5 text-amber-600" />
-                {isDlgu ? "Send DLGU Unit to REWORK" : isDgu ? "Send DGU Unit to REWORK" : isLam ? "Send Laminated Unit to REWORK" : "Send Glass Item to REWORK"}
-              </>
-            )}
+          <DialogTitle className="text-lg font-extrabold flex items-center gap-2.5 text-slate-900">
+            <div className={`w-8 h-8 rounded-lg ${mode === "reject" ? "bg-rose-600" : "bg-amber-600"} text-white flex items-center justify-center shadow-sm shrink-0`}>
+              {mode === "reject" ? <AlertOctagon className="w-4 h-4 text-white" /> : <RefreshCw className="w-4 h-4 text-white" />}
+            </div>
+            <span>
+              {mode === "reject"
+                ? (isDlgu ? "Mark DLGU Unit as REJECTED" : isDgu ? "Mark DGU Unit as REJECTED" : isLam ? "Mark Laminated Unit as REJECTED" : "Mark Glass Item as REJECTED")
+                : (isDlgu ? "Send DLGU Unit to REWORK" : isDgu ? "Send DGU Unit to REWORK" : isLam ? "Send Laminated Unit to REWORK" : "Send Glass Item to REWORK")
+              }
+            </span>
           </DialogTitle>
         </DialogHeader>
 

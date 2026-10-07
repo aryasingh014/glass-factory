@@ -367,7 +367,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
     );
     if (piItems.length === 0) continue;
-    const completedCount = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
+    const completedCount = piItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected").length;
     pi.completedItemsCount = completedCount;
     if (completedCount >= piItems.length && piItems.length > 0) {
       pi.status = "Completed";
@@ -2758,6 +2758,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
     colorOrClear,
     glassColor,
     glassCategory,
+    overwrite,
   } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -2769,7 +2770,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
   const normalizedBatchId = batchIdentifier.trim().toLowerCase();
   const normalizedFileName = String(fileName || "").trim().toLowerCase();
 
-  // Strict PDF Duplicate Check: 1 PDF cannot be uploaded 2 times
+  // Strict PDF Duplicate Check: 1 PDF cannot be uploaded 2 times unless overwrite requested
   const existingBatch = piDatabase.find((p) => {
     if (normalizedFileName && p.fileName && p.fileName.trim().toLowerCase() === normalizedFileName) {
       return true;
@@ -2781,17 +2782,33 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
   });
 
   if (existingBatch) {
-    res.status(409).json({
-      error: "PDF Batch Already Uploaded",
-      message: `Cannot upload: PDF "${existingBatch.fileName || existingBatch.piNumber}" has already been uploaded previously into production. 1 PDF cannot be uploaded 2 times.`,
-      existingBatch: {
-        piNumber: existingBatch.piNumber,
-        fileName: existingBatch.fileName,
-        createdAt: existingBatch.createdAt,
-        itemsCount: existingBatch.itemsCount,
-      },
-    });
-    return;
+    if (!overwrite) {
+      res.status(409).json({
+        error: "PDF Batch Already Uploaded",
+        message: `Cannot upload: PDF "${existingBatch.fileName || existingBatch.piNumber}" has already been uploaded previously into production. 1 PDF cannot be uploaded 2 times without overwrite.`,
+        existingBatch: {
+          piNumber: existingBatch.piNumber,
+          fileName: existingBatch.fileName,
+          createdAt: existingBatch.createdAt,
+          itemsCount: existingBatch.itemsCount,
+        },
+      });
+      return;
+    } else {
+      // Overwrite: remove previously uploaded batch and its glass items to re-import cleanly
+      const oldPiId = existingBatch.id;
+      const oldPiNum = existingBatch.piNumber;
+      for (let i = piDatabase.length - 1; i >= 0; i--) {
+        if (piDatabase[i].id === oldPiId || piDatabase[i].piNumber === oldPiNum) {
+          piDatabase.splice(i, 1);
+        }
+      }
+      for (let i = glassItemsDatabase.length - 1; i >= 0; i--) {
+        if (glassItemsDatabase[i].piId === oldPiId || glassItemsDatabase[i].piNumber === oldPiNum) {
+          glassItemsDatabase.splice(i, 1);
+        }
+      }
+    }
   }
 
   const batchId = `batch-${Date.now()}`;
@@ -2958,6 +2975,9 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
         currentStage: "Cutting",
         status: "Pending",
         completedStages: [],
+        delDate: raw.delDate || finalDelDate || "",
+        optDate: raw.optDate || finalOptDate || "",
+        makeup: raw.makeup || "",
         updatedAt: new Date().toISOString(),
       };
     });
@@ -3017,6 +3037,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
 
       let groupSqm = 0;
       let groupQty = 0;
+      const firstRaw = group.rawItems[0] || {};
 
       const groupGlassItems: GlassItem[] = group.rawItems.map((raw: any) => {
         const width = parseFloat(raw.width) || 1000;
@@ -3110,6 +3131,9 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
           currentStage: "Cutting",
           status: "Pending",
           completedStages: [],
+          delDate: raw.delDate || firstRaw.delDate || deliveryDate || "",
+          optDate: raw.optDate || firstRaw.optDate || optDate || "",
+          makeup: raw.makeup || "",
           updatedAt: new Date().toISOString(),
         };
 
@@ -3117,7 +3141,6 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
         return itemObj;
       });
 
-      const firstRaw = group.rawItems[0] || {};
       const subBatchRecord: PIMaster = {
         id: subBatchId,
         piNumber: subBatchPiNumber,
@@ -3211,6 +3234,12 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
 // Dashboard Stats API
 export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   const totalPI = piDatabase.length;
+  const uniquePdfFileNames = new Set(
+    piDatabase
+      .map((p) => (p.fileName || (p.jobOrderNumber ? `${p.jobOrderNumber}.pdf` : `${p.piNumber}.pdf`)).trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const stickerUploadCount = uniquePdfFileNames.size;
   const pendingPI = piDatabase.filter((p) => p.status === "Pending" || p.status === "In Production").length;
   const completedPI = piDatabase.filter((p) => p.status === "Completed").length;
 
@@ -3309,6 +3338,7 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
 
   const stats: DashboardStats = {
     totalPI,
+    stickerUploadCount,
     pendingPI,
     completedPI,
     pendingCutting,
@@ -3635,7 +3665,7 @@ export const handleDeleteItems: RequestHandler = (req, res) => {
     if (pi) {
       const remainingItems = glassItemsDatabase.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
       pi.itemsCount = remainingItems.length;
-      pi.completedItemsCount = remainingItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
+      pi.completedItemsCount = remainingItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected").length;
     }
   }
 
@@ -3778,9 +3808,10 @@ export const handleDispatchItems: RequestHandler = (req, res) => {
     const pi = piDatabase.find((p) => p.id === piRef || p.piNumber === piRef);
     if (pi) {
       const piItems = glassItemsDatabase.filter((i) => i.piId === pi.id || i.piNumber === pi.piNumber);
-      const allDispatched = piItems.length > 0 && piItems.every((i) => i.isDispatched || i.status === "Rejected");
+      const allDispatched = piItems.length > 0 && piItems.every((i) => i.isDispatched || i.currentStage === "Dispatched" || i.status === "Completed" || i.status === "Rejected");
       if (allDispatched) {
         pi.status = "Completed";
+        pi.completedItemsCount = piItems.filter((i) => i.status !== "Rejected").length;
       }
     }
   }

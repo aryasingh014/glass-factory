@@ -15,6 +15,7 @@ import {
   ClipboardList,
   Search,
   ArrowRight,
+  ArrowLeft,
   ArrowUpRight,
   FileText,
   Scissors,
@@ -26,6 +27,7 @@ import {
   Sparkles,
   TrendingUp,
   ChevronDown,
+  RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -391,16 +393,21 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* ── Page Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-black text-slate-900 tracking-tight">Production Pipeline Overview</h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
-              Dubai Plant Facility
-            </span>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm shrink-0">
+            <Factory className="w-5 h-5" />
           </div>
-          <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Real-time plant load, workstation throughput, specialty glass assembly tracking, and stage-wise allocation.
-          </p>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">Production Pipeline Overview</h2>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
+                Dubai Plant Facility
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Real-time plant load, workstation throughput, specialty glass assembly tracking, and stage-wise allocation.
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 relative">
@@ -538,7 +545,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    {metrics.finishedCount} Pcs
+                    {metrics.finishedCount} Units
                   </span>
                 </button>
               </div>
@@ -547,465 +554,153 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         </div>
       </div>
 
-      {/* ── Section 1: Executive 6-Card Production Summary Grid ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* ── Section 1: Executive Production Summary Grid ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         {/* 1. Total Production */}
-        <div
-          onClick={() => onNavigateTab("pis")}
-          className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-blue-300 transition-all cursor-pointer group"
-          title="Click to view all Sticker & Batch statuses"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            Total Production
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pis")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-blue"><Boxes className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Total Production</h3>
+              <strong>{metrics.totalItems} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Plant Total</span></div>
+            </div>
+            <div className="ppb-sparkline">{[20,25,24,34,30,48,51,72].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#3b82f6'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight font-mono">
-            {metrics.totalItems} <span className="text-xs font-bold text-blue-700">Pcs</span>
-          </div>
-          <div className="text-[11px] text-blue-700 font-semibold mt-1">
-            {metrics.totalSqm.toFixed(1)} m² Total
-          </div>
+          <div className="ppb-metric-note ppb-note-blue"><span style={{width:8,height:8,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />{metrics.totalSqm.toFixed(1)} m² • {batchRows.length} Active Batches</div>
         </div>
 
         {/* 2. In-Progress Quantity */}
-        <div
-          onClick={() => onNavigateTab("cutting")}
-          className="bg-white border border-cyan-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-cyan-300 transition-all cursor-pointer group"
-          title="Click to view active Workstation queues"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            In-Progress WIP
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-blue"><Clock className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>In-Progress WIP</h3>
+              <strong>{metrics.inProgressCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Active</span><small>in Pipeline</small></div>
+            </div>
+            <div className="ppb-sparkline">{[30,40,35,50,45,60,55,70].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#3b82f6'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-cyan-900 mt-2 tracking-tight font-mono">
-            {metrics.inProgressCount} <span className="text-xs font-bold text-cyan-700">Pcs</span>
-          </div>
-          <div className="text-[11px] text-cyan-700 font-semibold mt-1">
-            {metrics.inProgressSqm.toFixed(1)} m² Active
-          </div>
+          <div className="ppb-metric-note ppb-note-blue"><span style={{width:8,height:8,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />{metrics.inProgressSqm.toFixed(1)} m² Active WIP</div>
         </div>
 
         {/* 3. Completed Quantity */}
-        <div
-          onClick={() => onNavigateTab("finished")}
-          className="bg-white border border-emerald-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300 transition-all cursor-pointer group"
-          title="Click to view Finished Items Warehouse"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            Completed Units
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Completed Units</h3>
+              <strong>{metrics.finishedCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>for Dispatch</small></div>
+            </div>
+            <div className="ppb-sparkline">{[10,15,12,25,20,35,40,65].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#10b981'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-emerald-900 mt-2 tracking-tight font-mono">
-            {metrics.finishedCount} <span className="text-xs font-bold text-emerald-700">Units</span>
-          </div>
-          <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            {metrics.completionPercent}% Inspected
-          </div>
+          <div className="ppb-metric-note ppb-note-green"><span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'inline-block',flexShrink:0}} />Quality Inspected</div>
         </div>
 
-        {/* 4. Pending Quantity */}
-        <div
-          onClick={() => onNavigateTab("cutting")}
-          className="bg-white border border-amber-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-amber-300 transition-all cursor-pointer group"
-          title="Click to view Pending Cutting queue"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            Pending Cutting
+        {/* 4. Pending Cutting */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-yellow"><Scissors className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Pending Cutting</h3>
+              <strong>{metrics.pendingCuttingCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Panes</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-flat" style={{color:'#d97706', fontWeight:700}}>Awaiting</span><small>Cutting</small></div>
+            </div>
+            <div className="ppb-sparkline">{[60,55,70,50,45,35,25,15].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#f59e0b'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-amber-900 mt-2 tracking-tight font-mono">
-            {metrics.pendingCuttingCount} <span className="text-xs font-bold text-amber-700">Panes</span>
-          </div>
-          <div className="text-[11px] text-amber-700 font-semibold mt-1">
-            {metrics.distinctCuttingSheets} Raw Sheets
-          </div>
+          <div className="ppb-metric-note ppb-note-yellow"><span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block',flexShrink:0}} />{metrics.distinctCuttingSheets} Raw Sheets</div>
         </div>
 
-        {/* 5. Rejected Quantity */}
-        <div
-          onClick={() => onNavigateTab("reports")}
-          className="bg-white border border-rose-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-rose-300 transition-all cursor-pointer group"
-          title="Click to view Quality Rejects & Defect Log"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            Rejected Items
+        {/* 5. Rejected Items */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Rejected Items</h3>
+              <strong>{metrics.rejectedCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Panes</small></strong>
+              <div className="ppb-metric-change"><span style={{color:'#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>Quality Yield</small></div>
+            </div>
+            <div className="ppb-sparkline">{[5,10,2,8,12,5,3,6].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#ef4444'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-rose-900 mt-2 tracking-tight font-mono">
-            {metrics.rejectedCount} <span className="text-xs font-bold text-rose-700">Panes</span>
-          </div>
-          <div className="text-[11px] text-rose-600 font-semibold mt-1">
-            {metrics.yieldRate}% Pass Rate
-          </div>
+          <div className="ppb-metric-note ppb-note-red"><span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block',flexShrink:0}} />{metrics.rejectedCount === 0 ? "No rejection today" : "Rejection logged"}</div>
         </div>
 
-        {/* 6. Rework Quantity */}
-        <div
-          onClick={() => onNavigateTab("reports")}
-          className="bg-white border border-orange-200/80 rounded-2xl p-4 shadow-2xs hover:shadow-md hover:-translate-y-0.5 hover:border-orange-300 transition-all cursor-pointer group"
-          title="Click to view Rework Tracking"
-        >
-          <div className="text-slate-500 text-[10.5px] font-extrabold uppercase tracking-wider">
-            Rework Items
+        {/* 6. Rework Items */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}}>
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #a855f7, #7e22ce)', color: '#fff'}}><RotateCw className="w-6 h-6" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Rework Items</h3>
+              <strong>{metrics.reworkCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Items</small></strong>
+              <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>Active</span><small>Re-routing</small></div>
+            </div>
+            <div className="ppb-sparkline">{[8,15,10,20,12,18,10,25].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#a855f7'}} />)}</div>
           </div>
-          <div className="text-2xl font-black text-orange-900 mt-2 tracking-tight font-mono">
-            {metrics.reworkCount} <span className="text-xs font-bold text-orange-700">Items</span>
-          </div>
-          <div className="text-[11px] text-orange-700 font-semibold mt-1">
-            Re-routed Flow
-          </div>
+          <div className="ppb-metric-note" style={{color:'#7e22ce', background:'#faf5ff', borderColor:'#f3e8ff'}}><span style={{width:8,height:8,borderRadius:'50%',background:'#a855f7',display:'inline-block',flexShrink:0}} />Secondary Route Active</div>
         </div>
       </div>
 
-      {/* ── Section 2: Specialty Glass Types & Assembly Status (DGU / IGU / DLGU / Laminated / Monolithic) ── */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
-          <div className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-indigo-600" />
-            SPECIALTY GLASS TYPES & ASSEMBLY STATUS (DGU / IGU / DLGU / LAMINATED)
+            
+      {/* ── Section 2 & 3: Horizontal Queues ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Section 2: Specialty Glass */}
+        <section className="ppb-panel">
+          <div className="ppb-panel-heading">
+            <div><Sparkles className="ppb-heading-icon" size={20} /><h3>Specialty Glass Assembly</h3></div>
+            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Automated 1+1 Pairing</div>
           </div>
-          <span className="text-[11px] font-mono text-slate-500">
-            Automated 1+1 Pane Pairing & Interlayer Processing
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-          {/* 1. DGU / IGU Double Glazing Units */}
-          <div className="bg-gradient-to-br from-teal-50/70 via-white to-teal-50/20 border-2 border-teal-200/90 rounded-2xl p-4 shadow-2xs relative group hover:shadow-md transition-all">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-teal-100 text-teal-900 border border-teal-300">
-                DGU / IGU Assembly
-              </span>
-              <ClipboardList className="w-4 h-4 text-teal-600" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
+              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={22} /></span>
+              <div><strong style={{fontSize:'12px'}}>DGU / IGU Units</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.dguTotalUnits}</b> Units Assembly</span></div>
             </div>
-
-            <div className="mt-2.5">
-              <div className="text-xl font-black text-slate-900">
-                {metrics.dguTotalUnits} <span className="text-xs font-bold text-teal-700">DGU Units</span>
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                {metrics.dguTotalSqm} m² Total Assembly Area
-              </div>
+            <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
+              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={22} /></span>
+              <div><strong style={{fontSize:'12px'}}>DLGU Multi-Layer</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.dlguTotalUnits}</b> Units Processed</span></div>
             </div>
-
-            <div className="mt-3 pt-2.5 border-t border-teal-100 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Outer Coloured Panes:</span>
-                <strong className="text-purple-700 font-bold">{metrics.dguColourPanes} pcs</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Inner Clear Panes:</span>
-                <strong className="text-cyan-700 font-bold">{metrics.dguClearPanes} pcs</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Ready / Dispatched:</span>
-                <strong className="text-emerald-700 font-bold">{metrics.dguFinishedUnits} Units</strong>
-              </div>
+            <div className="ppb-queue-tile ppb-queue-tile-amber" onClick={() => onNavigateTab("lamination")}>
+              <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={22} /></span>
+              <div><strong style={{fontSize:'12px'}}>Lamination Line</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.lamTotalUnits}</b> Pairs Autoclave</span></div>
             </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("dgu")}
-              className="mt-3.5 w-full h-7 text-xs font-black bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-2xs"
-            >
-              <span>Manage DGU Station</span>
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
           </div>
+        </section>
 
-          {/* 2. DLGU (Double Laminated Glazed Units) */}
-          <div className="bg-gradient-to-br from-indigo-50/70 via-white to-indigo-50/20 border-2 border-indigo-200/90 rounded-2xl p-4 shadow-2xs relative group hover:shadow-md transition-all">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-100 text-indigo-900 border border-indigo-300">
-                DLGU Multi-Layer
-              </span>
-              <Layers className="w-4 h-4 text-indigo-600" />
-            </div>
-
-            <div className="mt-2.5">
-              <div className="text-xl font-black text-slate-900">
-                {metrics.dlguTotalUnits} <span className="text-xs font-bold text-indigo-700">DLGU Units</span>
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                {metrics.dlguTotalSqm} m² Acoustic / Security
-              </div>
-            </div>
-
-            <div className="mt-3 pt-2.5 border-t border-indigo-100 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Phase 1 (Lamination):</span>
-                <strong className="text-amber-700 font-bold">{metrics.dlguActiveUnits > 0 ? "In Process" : "Done"}</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Phase 2 (DGU Chamber):</span>
-                <strong className="text-teal-700 font-bold">Argon Dual-Seal</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Finished DLGU:</span>
-                <strong className="text-emerald-700 font-bold">{metrics.dlguFinishedUnits} Units</strong>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("pairing")}
-              className="mt-3.5 w-full h-7 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs"
-            >
-              <span>View Pairing Buffer</span>
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
+        {/* Section 3: Stage-Wise Workflows */}
+        <section className="ppb-panel">
+          <div className="ppb-panel-heading">
+            <div><Activity className="ppb-heading-icon" size={20} /><h3>Stage-Wise Workflows</h3></div>
+            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Cutting ➔ Assembly ➔ Dispatch</div>
           </div>
-
-          {/* 3. Laminated Glass (PVB Interlayer) */}
-          <div className="bg-gradient-to-br from-amber-50/70 via-white to-amber-50/20 border-2 border-amber-200/90 rounded-2xl p-4 shadow-2xs relative group hover:shadow-md transition-all">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-300">
-                Lamination Autoclave
-              </span>
-              <Flame className="w-4 h-4 text-amber-600" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
+              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={18} /></span>
+              <div><strong style={{fontSize:'11px'}}>1. Cutting</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.cuttingCount}</b> Panes</span></div>
             </div>
-
-            <div className="mt-2.5">
-              <div className="text-xl font-black text-slate-900">
-                {metrics.lamTotalUnits} <span className="text-xs font-bold text-amber-700">Laminated Pairs</span>
-              </div>
-              <div className="text-[11px] text-slate-500 font-medium">
-                {metrics.lamTotalSqm} m² PVB Interlayer
-              </div>
+            <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
+              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={18} /></span>
+              <div><strong style={{fontSize:'11px'}}>2. Pairing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.pairingCount}</b> Panes</span></div>
             </div>
-
-            <div className="mt-3 pt-2.5 border-t border-amber-100 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Autoclave Heating:</span>
-                <strong className="text-amber-800 font-bold">140°C Vacuum</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Active in Line:</span>
-                <strong className="text-slate-800 font-bold">{metrics.lamActiveUnits} Pairs</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Dispatched Laminated:</span>
-                <strong className="text-emerald-700 font-bold">{metrics.lamFinishedUnits} Units</strong>
-              </div>
+            <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
+              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={18} /></span>
+              <div><strong style={{fontSize:'11px'}}>3. Assembly</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
             </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("lamination")}
-              className="mt-3.5 w-full h-7 text-xs font-black bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-2xs"
-            >
-              <span>Manage Lamination</span>
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
+            <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
+              <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={18} /></span>
+              <div><strong style={{fontSize:'11px'}}>4. Dispatch</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.finishedCount}</b> Ready</span></div>
+            </div>
           </div>
-        </div>
-      </div>
-
-      {/* ── Section 3: Stage-Wise Production Flow & Workstation Status Cards ── */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
-          <div className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-purple-600" />
-            STAGE-WISE STATUS & MATERIAL WORKFLOW
-          </div>
-          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-50 text-purple-700 border border-purple-200">
-            Cutting ➔ Pairing & Buffer ➔ DGU / Lamination ➔ Dispatch Ready
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Stage 1: Cutting Floor */}
-          <div className="p-4 rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/80 via-white to-purple-50/30 flex flex-col justify-between space-y-3.5 hover:shadow-lg hover:-translate-y-1 hover:border-purple-300 transition-all group">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-extrabold text-purple-900">
-                <span className="uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-[10px] font-black">1</span>
-                  Cutting Floor
-                </span>
-                <Scissors className="w-4 h-4 text-purple-600 group-hover:scale-110 group-hover:rotate-6 transition-transform" />
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {metrics.cuttingCount} <span className="text-xs font-bold text-purple-700">Panes</span>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-medium text-slate-600">
-                <div className="flex items-center justify-between">
-                  <span>Raw Sheets in Queue:</span>
-                  <strong className="text-purple-900 font-bold">{metrics.distinctCuttingSheets} Sheets</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Colour vs Clear:</span>
-                  <strong className="text-slate-800 font-bold">{metrics.cuttingColour} Col / {metrics.cuttingClear} Clr</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Queue Area:</span>
-                  <strong className="text-slate-800 font-bold">{metrics.cuttingSqm.toFixed(1)} m²</strong>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-purple-700 font-extrabold bg-purple-100/70 px-2 py-1 rounded-lg flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
-                <span>Auto-Scan & Batch Advance Active</span>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("cutting")}
-              className="h-8 text-xs font-black text-purple-700 border border-purple-200 bg-white hover:bg-purple-600 hover:text-white rounded-xl justify-between w-full shadow-2xs transition-all"
-            >
-              <span>Manage Cutting Floor</span>
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-
-          {/* Stage 2: Pairing & Buffer Rack */}
-          <div className="p-4 rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-indigo-50/30 flex flex-col justify-between space-y-3.5 hover:shadow-lg hover:-translate-y-1 hover:border-indigo-300 transition-all group">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-extrabold text-indigo-900">
-                <span className="uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">2</span>
-                  Pairing & Buffer Rack
-                </span>
-                <Layers className="w-4 h-4 text-indigo-600 group-hover:scale-110 group-hover:rotate-6 transition-transform" />
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {metrics.pairingCount} <span className="text-xs font-bold text-indigo-700">Panes in Buffer</span>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-medium text-slate-600">
-                <div className="flex items-center justify-between">
-                  <span>Matched 1+1 Sets:</span>
-                  <strong className="text-indigo-900 font-bold">{metrics.pairingPairs} Pairs Ready</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Colour / Clear Staged:</span>
-                  <strong className="text-slate-800 font-bold">{metrics.pairingColour} / {metrics.pairingClear}</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Buffer Area:</span>
-                  <strong className="text-slate-800 font-bold">{metrics.pairingSqm.toFixed(1)} m²</strong>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-indigo-800 font-extrabold bg-indigo-100/70 px-2 py-1 rounded-lg flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                <span>Pairing Validation Enforced</span>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("pairing")}
-              className="h-8 text-xs font-black text-indigo-700 border border-indigo-200 bg-white hover:bg-indigo-600 hover:text-white rounded-xl justify-between w-full shadow-2xs transition-all"
-            >
-              <span>Manage Pairing Buffer</span>
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-
-          {/* Stage 3: DGU / Lamination Station */}
-          <div className="p-4 rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50/80 via-white to-teal-50/30 flex flex-col justify-between space-y-3.5 hover:shadow-lg hover:-translate-y-1 hover:border-teal-300 transition-all group">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-extrabold text-teal-900">
-                <span className="uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-teal-600 text-white flex items-center justify-center text-[10px] font-black">3</span>
-                  DGU / Lamination Lines
-                </span>
-                <ClipboardList className="w-4 h-4 text-teal-600 group-hover:scale-110 group-hover:rotate-6 transition-transform" />
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {metrics.dguCount + metrics.laminationCount} <span className="text-xs font-bold text-teal-700">Units Active</span>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-medium text-slate-600">
-                <div className="flex items-center justify-between">
-                  <span>DGU Assembly Line:</span>
-                  <strong className="text-teal-900 font-bold">{metrics.dguCount} Units</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Lamination Autoclave:</span>
-                  <strong className="text-amber-800 font-bold">{metrics.laminationCount} Panes</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Active Area:</span>
-                  <strong className="text-slate-800 font-bold">{(metrics.dguSqm + metrics.laminationSqm).toFixed(1)} m²</strong>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-teal-800 font-extrabold bg-teal-100/70 px-2 py-1 rounded-lg flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
-                <span>Argon Sealing & PVB Heating</span>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("dgu")}
-              className="h-8 text-xs font-black text-teal-700 border border-teal-200 bg-white hover:bg-teal-600 hover:text-white rounded-xl justify-between w-full shadow-2xs transition-all"
-            >
-              <span>Manage Assembly Lines</span>
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-
-          {/* Stage 4: Finished Warehouse & Dispatch */}
-          <div className="p-4 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/80 via-white to-emerald-50/30 flex flex-col justify-between space-y-3.5 hover:shadow-lg hover:-translate-y-1 hover:border-emerald-300 transition-all group">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-extrabold text-emerald-900">
-                <span className="uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">4</span>
-                  Finished Warehouse
-                </span>
-                <Truck className="w-4 h-4 text-emerald-600 group-hover:scale-110 group-hover:rotate-6 transition-transform" />
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {metrics.finishedCount} <span className="text-xs font-bold text-emerald-700">Dispatch Ready</span>
-              </div>
-
-              <div className="space-y-1 text-[11px] font-medium text-slate-600">
-                <div className="flex items-center justify-between">
-                  <span>DGU Ready:</span>
-                  <strong className="text-teal-900 font-bold">{metrics.dguFinishedUnits} Units</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Laminated Ready:</span>
-                  <strong className="text-amber-900 font-bold">{metrics.lamFinishedUnits} Units</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Finished Area:</span>
-                  <strong className="text-emerald-900 font-bold">{metrics.finishedSqm.toFixed(1)} m²</strong>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-emerald-800 font-extrabold bg-emerald-100/70 px-2 py-1 rounded-lg flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                <span>100% Quality Inspected</span>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab("finished")}
-              className="h-8 text-xs font-black text-emerald-700 border border-emerald-200 bg-white hover:bg-emerald-600 hover:text-white rounded-xl justify-between w-full shadow-2xs transition-all"
-            >
-              <span>View Finished Warehouse</span>
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
+        </section>
       </div>
 
       {/* ── Section 4: Plant-Level Progress Bar & Live Batch Matrix Table ── */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
-        {/* Overall Facility Progress Bar */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs font-black text-slate-900 uppercase tracking-wider">
-            <span className="flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-purple-600" /> Overall Plant Completion Progress
-            </span>
-            <span className="text-purple-700 font-mono text-sm">{metrics.completionPercent}% Completed</span>
-          </div>
-
+      <section className="ppb-panel ppb-summary-panel w-full">
+        <div className="ppb-panel-heading">
+          <div><TrendingUp className="ppb-heading-icon" size={20} /><h3>Plant Completion Matrix</h3><span className="ppb-live-badge"><i />Live</span></div>
+          <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>{metrics.completionPercent}% Completed</div>
+        </div>
+        
+        <div className="space-y-4 mb-4">
           <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden flex shadow-inner">
             {metrics.completionPercent > 0 && (
               <div
@@ -1065,10 +760,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                 <button
                   key={st}
                   onClick={() => setStageFilter(st)}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition-all ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
                     stageFilter === st
-                      ? "bg-white text-purple-900 shadow-xs ring-1 ring-slate-200"
-                      : "text-slate-600 hover:text-slate-900"
+                      ? "bg-blue-600 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
                   }`}
                 >
                   {st === "ALL" ? "All Stages" : st}
@@ -1251,26 +946,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <div className="text-[11px] text-slate-500 mt-0.5">Try changing stage or glass type filter to see all production batches.</div>
           </div>
         )}
-      </div>
+        
+          
+      </section>
+
     </div>
   );
 };
-
-function ChevronRightIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="m9 18 6-6-6-6" />
-    </svg>
-  );
-}

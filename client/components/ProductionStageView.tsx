@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
+import ReactDOM from "react-dom";
 import { GlassItem, ProductionStage, PIMaster } from "@shared/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ import {
   MousePointer,
   Truck,
   Building2,
+  Briefcase,
   Users,
   ChevronUp,
   ClipboardList,
@@ -85,7 +87,7 @@ interface ProductionStageViewProps {
 
 // Stage color map
 const STAGE_COLORS: Record<string, string> = {
-  Cutting:    "bg-purple-100 text-purple-700",
+  Cutting:    "bg-blue-100 text-[#1680f5]",
   Pairing:    "bg-indigo-100 text-indigo-700",
   DGU:        "bg-teal-100 text-teal-700",
   Lamination: "bg-amber-100 text-amber-700",
@@ -149,7 +151,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   // Batch table filters & sorting (Cutting stage)
   const [batchSearchTerm, setBatchSearchTerm] = useState("");
+  const [selectedPdfFilter, setSelectedPdfFilter] = useState<string>("ALL");
   const [batchCategoryFilter, setBatchCategoryFilter] = useState<"ALL" | "DLGU" | "DGU" | "LAMINATION">("ALL");
+  const [batchFinishFilter, setBatchFinishFilter] = useState<"ALL" | "CLEAR" | "COLOUR">("ALL");
   const [batchSortField, setBatchSortField] = useState<string>("piNumber");
   const [batchSortAsc, setBatchSortAsc] = useState<boolean>(true);
 
@@ -169,6 +173,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const sheetScrollContainerRef = useRef<HTMLDivElement>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const exportBtnRef = useRef<HTMLButtonElement>(null);
+  const [exportMenuPos, setExportMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [rangeFromInput, setRangeFromInput] = useState<string>("1");
   const [rangeToInput, setRangeToInput] = useState<string>("10");
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
@@ -256,8 +262,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     };
   };
 
-  // Build Batch Summaries across all items & PIs
+  // Build Batch Summaries across all items & PIs (Only computed for Cutting stage to keep stage switching ultra fast)
   const allBatchSummaries = useMemo(() => {
+    if (stage !== "Cutting") return [];
     const map = new Map<
       string,
       {
@@ -387,20 +394,82 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   }, [items, pis, stage]);
 
   const batchSummaries = useMemo(() => {
+    if (stage !== "Cutting") return [];
     return allBatchSummaries.filter((b) => {
       if (stage === "Cutting" && b.stageItemsCount === 0) return false;
       return true;
     });
   }, [allBatchSummaries, stage]);
 
+  // PDF Summaries for Cutting Stage Batches
+  const cuttingPdfsSummary = useMemo(() => {
+    if (stage !== "Cutting") return [];
+    const map = new Map<
+      string,
+      {
+        fileName: string;
+        batches: typeof batchSummaries;
+        totalPieces: number;
+        completedPieces: number;
+        stageItemsCount: number;
+        totalSqm: number;
+        finish: "Clear" | "Colour" | "Mixed";
+      }
+    >();
+
+    batchSummaries.forEach((b) => {
+      const rawFileName = ((b as any).fileName || (b.jobOrderNumber ? `${b.jobOrderNumber}.pdf` : `${b.piNumber}.pdf`)) || "";
+      if (!rawFileName) return;
+      const key = rawFileName.trim().toLowerCase();
+
+      if (!map.has(key)) {
+        map.set(key, {
+          fileName: (b as any).fileName || rawFileName,
+          batches: [],
+          totalPieces: 0,
+          completedPieces: 0,
+          stageItemsCount: 0,
+          totalSqm: 0,
+          finish: b.finish === "Colour" ? "Colour" : "Clear",
+        });
+      }
+
+      const entry = map.get(key)!;
+      entry.batches.push(b);
+      entry.totalPieces += b.totalItems;
+      entry.completedPieces += b.completedCount;
+      entry.stageItemsCount += b.stageItemsCount;
+      entry.totalSqm += b.totalSqm;
+
+      if (entry.finish !== "Mixed") {
+        if ((b.finish === "Colour" && entry.finish === "Clear") || (b.finish !== "Colour" && entry.finish === "Colour")) {
+          entry.finish = "Mixed";
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }, [batchSummaries, stage]);
+
   // Filtered Batches for the Cutting Table View
   const filteredBatches = useMemo(() => {
+    if (stage !== "Cutting") return [];
     return batchSummaries
       .filter((b) => {
         // Category filter (DLGU vs DGU vs LAMINATION)
         if (batchCategoryFilter === "DLGU" && b.glassCategory !== "DLGU") return false;
         if (batchCategoryFilter === "DGU" && b.glassCategory !== "DGU") return false;
         if (batchCategoryFilter === "LAMINATION" && b.glassCategory !== "Lamination") return false;
+
+        // Finish filter (All vs Clear vs Coloured)
+        if (batchFinishFilter === "CLEAR" && b.finish === "Colour") return false;
+        if (batchFinishFilter === "COLOUR" && b.finish !== "Colour") return false;
+
+        // PDF file filter
+        if (selectedPdfFilter !== "ALL") {
+          const bFileName = (((b as any).fileName || (b.jobOrderNumber ? `${b.jobOrderNumber}.pdf` : `${b.piNumber}.pdf`)) || "").trim().toLowerCase();
+          if (bFileName !== selectedPdfFilter.trim().toLowerCase()) return false;
+        }
 
         const q = (batchSearchTerm || externalSearchTerm || "").toLowerCase().trim();
         if (!q) return true;
@@ -422,11 +491,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         if (valA > valB) return batchSortAsc ? 1 : -1;
         return 0;
       });
-  }, [batchSummaries, batchCategoryFilter, batchSearchTerm, externalSearchTerm, batchSortField, batchSortAsc]);
+  }, [batchSummaries, batchCategoryFilter, batchFinishFilter, selectedPdfFilter, batchSearchTerm, externalSearchTerm, batchSortField, batchSortAsc]);
 
   const batchDlguCount = batchSummaries.filter((b) => b.glassCategory === "DLGU").length;
   const batchDguCount = batchSummaries.filter((b) => b.glassCategory === "DGU").length;
   const batchLamCount = batchSummaries.filter((b) => b.glassCategory === "Lamination").length;
+  const batchClearCount = batchSummaries.filter((b) => b.finish !== "Colour").length;
+  const batchColourCount = batchSummaries.filter((b) => b.finish === "Colour").length;
 
   const handleBatchSort = (field: string) => {
     if (batchSortField === field) {
@@ -440,30 +511,34 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const renderSortIcon = (field: string) => {
     if (batchSortField !== field) return <ArrowUpDown className="w-3 h-3 ml-1 inline-block text-slate-300" />;
     return batchSortAsc ? (
-      <ArrowUp className="w-3 h-3 ml-1 inline-block text-purple-600 font-bold" />
+      <ArrowUp className="w-3 h-3 ml-1 inline-block text-[#1680f5] font-bold" />
     ) : (
-      <ArrowDown className="w-3 h-3 ml-1 inline-block text-purple-600 font-bold" />
+      <ArrowDown className="w-3 h-3 ml-1 inline-block text-[#1680f5] font-bold" />
     );
   };
 
   // Cutting Batch Selection - Customer Grouped View State (Default Closed)
   const [expandedBatchCustomers, setExpandedBatchCustomers] = useState<Record<string, boolean>>({});
 
-  const toggleBatchCustomerExpanded = (customerName: string) => {
+  const toggleBatchCustomerExpanded = (key: string) => {
     setExpandedBatchCustomers((prev) => ({
       ...prev,
-      [customerName]: !prev[customerName],
+      [key]: !prev[key],
     }));
   };
 
-  const isBatchCustomerExpanded = (customerName: string) => {
-    return Boolean(expandedBatchCustomers[customerName]); // Closed by default!
+  const isBatchCustomerExpanded = (key: string) => {
+    // In Cutting stage, expand all customer groups by default
+    if (stage === "Cutting") {
+      return expandedBatchCustomers[key] !== undefined ? Boolean(expandedBatchCustomers[key]) : true;
+    }
+    return Boolean(expandedBatchCustomers[key]);
   };
 
   const setAllBatchCustomersExpanded = (expand: boolean) => {
     const newState: Record<string, boolean> = {};
     groupedCustomerBatches.forEach((g) => {
-      newState[g.customerName] = expand;
+      newState[g.groupKey] = expand;
     });
     setExpandedBatchCustomers(newState);
   };
@@ -491,18 +566,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   };
 
   const groupedCustomerBatches = useMemo(() => {
-    const map = new Map<string, typeof filteredBatches>();
+    if (filteredBatches.length === 0) return [];
+    const map = new Map<string, { customerName: string; projectName: string; batches: typeof filteredBatches }>();
 
     filteredBatches.forEach((b) => {
       const cust = (b.customerName || "Customer").trim();
-      if (!map.has(cust)) {
-        map.set(cust, []);
+      const proj = (b.projectName || "").trim();
+      // Group by Customer and Project so different projects are never mixed together
+      const groupKey = proj ? `${cust}:::${proj}` : `${cust}:::(No Project)`;
+      if (!map.has(groupKey)) {
+        map.set(groupKey, { customerName: cust, projectName: proj, batches: [] });
       }
-      map.get(cust)!.push(b);
+      map.get(groupKey)!.batches.push(b);
     });
 
     const groups: Array<{
+      groupKey: string;
       customerName: string;
+      projectName: string;
       batches: typeof filteredBatches;
       totalBatches: number;
       totalPieces: number;
@@ -513,12 +594,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       hasClear: boolean;
       categories: Set<string>;
       projects: string[];
+      pdfFiles: string[];
       isAllCompleted: boolean;
       status: string;
       progressPct: number;
     }> = [];
 
-    map.forEach((batches, customerName) => {
+    map.forEach(({ customerName, projectName, batches }, groupKey) => {
       let totalPieces = 0;
       let completedPieces = 0;
       let stageItemsCount = 0;
@@ -527,6 +609,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       let hasClear = false;
       const categories = new Set<string>();
       const projectsSet = new Set<string>();
+      const pdfFilesSet = new Set<string>();
+      if (projectName) projectsSet.add(projectName);
 
       batches.forEach((b) => {
         totalPieces += b.totalItems;
@@ -537,6 +621,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         else hasClear = true;
         categories.add(b.glassCategory);
         if (b.projectName) projectsSet.add(b.projectName);
+        if ((b as any).fileName) pdfFilesSet.add((b as any).fileName);
       });
 
       const isAllCompleted =
@@ -548,7 +633,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
 
       groups.push({
+        groupKey,
         customerName,
+        projectName,
         batches,
         totalBatches: batches.length,
         totalPieces,
@@ -559,6 +646,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         hasClear,
         categories,
         projects: Array.from(projectsSet),
+        pdfFiles: Array.from(pdfFilesSet),
         isAllCompleted,
         status: isAllCompleted ? "Completed" : "In Production",
         progressPct,
@@ -597,6 +685,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     setIsDraggingSheets(false);
     setSelectedRowIds([]);
     setSearchTerm("");
+    setSelectedPdfFilter("ALL");
     setFinishFilter("ALL");
     setExpandedSheets({});
   }, [stage]);
@@ -740,17 +829,18 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         if (r.partnerItem?.id) itemIdsToDispatch.add(r.partnerItem.id);
       }
 
+      const finalNoteNo = dispatchDialog.dispatchNoteNo?.trim() || `DN-${Date.now()}`;
       const res = await fetch("/api/production/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serialNumbers: Array.from(serialsToDispatch),
           itemIds: Array.from(itemIdsToDispatch),
-          dispatchNoteNo: dispatchDialog.dispatchNoteNo.trim(),
-          vehicleNo: dispatchDialog.vehicleNo.trim(),
-          driverName: dispatchDialog.driverName.trim(),
-          remarks: dispatchDialog.remarks.trim(),
-          dispatchedAt: dispatchDialog.dispatchedAt ? new Date(dispatchDialog.dispatchedAt).toISOString() : new Date().toISOString(),
+          dispatchNoteNo: finalNoteNo,
+          vehicleNo: (dispatchDialog.vehicleNo || "").trim(),
+          driverName: (dispatchDialog.driverName || "").trim(),
+          remarks: (dispatchDialog.remarks || "").trim(),
+          dispatchedAt: new Date().toISOString(),
           operator: operator || "Dispatch Officer",
         }),
       });
@@ -762,7 +852,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       const data = await res.json();
       toast.success(
-        `Successfully dispatched ${dispatchDialog.rows.length} units (${data.count} pieces) under Note #${dispatchDialog.dispatchNoteNo}!`,
+        `Successfully dispatched ${dispatchDialog.rows.length} units (${data.count} pieces)!`,
         {
           action: onNavigateTab
             ? {
@@ -2171,91 +2261,153 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     return (
       <div className="space-y-4 animate-in fade-in duration-200">
         {/* ── Filter Bar with FINISH Tabs (Clear / Colour / All) & Search ── */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-3.5">
-          {/* Top Row: Queue Tabs (Left) & Export Batches Button (Right) */}
+        <div className="ppb-panel bg-white border border-slate-100 p-5 shadow-[0_4px_20px_rgb(22,128,245,0.04)] space-y-4 mb-4">
+          {/* Top Row: Queue Tabs & Finish Filter Tabs (Left) & Export Batches Button (Right) */}
           <div className="flex items-center justify-between flex-wrap gap-3">
-            {/* DLGU vs DGU vs LAMINATION PROCESS QUEUE TABS */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 overflow-x-auto no-scrollbar">
-              <button
-                type="button"
-                onClick={() => setBatchCategoryFilter("ALL")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                  batchCategoryFilter === "ALL"
-                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                }`}
-              >
-                <span>All Queues</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    batchCategoryFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200 text-slate-700"
-                  }`}
-                >
-                  {batchSummaries.length}
-                </span>
-              </button>
-
-              {batchDlguCount > 0 && (
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* DLGU vs DGU vs LAMINATION PROCESS QUEUE TABS */}
+              <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 overflow-x-auto no-scrollbar">
                 <button
                   type="button"
-                  onClick={() => setBatchCategoryFilter("DLGU")}
+                  onClick={() => setBatchCategoryFilter("ALL")}
                   className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                    batchCategoryFilter === "DLGU"
+                    batchCategoryFilter === "ALL"
+                      ? "bg-white text-slate-900 shadow-lg ring-1 ring-slate-200"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                  }`}
+                >
+                  <span>All Queues</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchCategoryFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {batchSummaries.length}
+                  </span>
+                </button>
+
+                {batchDlguCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBatchCategoryFilter("DLGU")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                      batchCategoryFilter === "DLGU"
+                        ? "bg-[#1680f5] text-white shadow-md"
+                        : "text-slate-600 hover:bg-[#1680f5]/10 hover:text-[#1680f5]"
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>DLGU Queue</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        batchCategoryFilter === "DLGU" ? "bg-white/20 text-white" : "bg-[#1680f5]/20 text-[#1680f5]"
+                      }`}
+                    >
+                      {batchDlguCount}
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setBatchCategoryFilter("DGU")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                    batchCategoryFilter === "DGU"
+                      ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white shadow-lg"
+                      : "text-teal-800 hover:bg-teal-100/60"
+                  }`}
+                >
+                  <Boxes className="w-3.5 h-3.5" />
+                  <span>DGU Queue</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchCategoryFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
+                    }`}
+                  >
+                    {batchDguCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setBatchCategoryFilter("LAMINATION")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                    batchCategoryFilter === "LAMINATION"
+                      ? "bg-gradient-to-r from-amber-500 to-amber-700 text-white shadow-lg"
+                      : "text-amber-800 hover:bg-amber-100/60"
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Lamination Queue</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchCategoryFilter === "LAMINATION" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
+                    }`}
+                  >
+                    {batchLamCount}
+                  </span>
+                </button>
+              </div>
+
+              {/* FINISH FILTER TABS (All Glass / Clear Glass / Coloured Glass) */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setBatchFinishFilter("ALL")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    batchFinishFilter === "ALL"
+                      ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                  }`}
+                >
+                  <span>All Glass</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                    }`}
+                  >
+                    {batchSummaries.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setBatchFinishFilter("CLEAR")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    batchFinishFilter === "CLEAR"
+                      ? "bg-cyan-600 text-white shadow-xs"
+                      : "text-cyan-800 hover:bg-cyan-100/60"
+                  }`}
+                >
+                  <span>Clear Glass</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      batchFinishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                    }`}
+                  >
+                    {batchClearCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setBatchFinishFilter("COLOUR")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    batchFinishFilter === "COLOUR"
                       ? "bg-purple-600 text-white shadow-xs"
                       : "text-purple-800 hover:bg-purple-100/60"
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>DLGU Queue</span>
+                  <span>Coloured Glass</span>
                   <span
                     className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      batchCategoryFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                      batchFinishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
                     }`}
                   >
-                    {batchDlguCount}
+                    {batchColourCount}
                   </span>
                 </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setBatchCategoryFilter("DGU")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                  batchCategoryFilter === "DGU"
-                    ? "bg-teal-600 text-white shadow-xs"
-                    : "text-teal-800 hover:bg-teal-100/60"
-                }`}
-              >
-                <Boxes className="w-3.5 h-3.5" />
-                <span>DGU Queue</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    batchCategoryFilter === "DGU" ? "bg-white/20 text-white" : "bg-teal-200 text-teal-900"
-                  }`}
-                >
-                  {batchDguCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setBatchCategoryFilter("LAMINATION")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
-                  batchCategoryFilter === "LAMINATION"
-                    ? "bg-amber-600 text-white shadow-xs"
-                    : "text-amber-800 hover:bg-amber-100/60"
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Lamination Queue</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    batchCategoryFilter === "LAMINATION" ? "bg-white/20 text-white" : "bg-amber-200 text-amber-900"
-                  }`}
-                >
-                  {batchLamCount}
-                </span>
-              </button>
+              </div>
             </div>
 
             {/* Export Batches Excel Button (Top Row - Right Side) */}
@@ -2279,7 +2431,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 }));
                 exportStageWipToExcel("Cutting", items, "Cutting_Batches_Summary");
               }}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0"
+              className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-lg shrink-0"
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Export Batches (.xlsx)</span>
@@ -2300,22 +2452,51 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               {batchSearchTerm && (
                 <button
                   onClick={() => setBatchSearchTerm("")}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            {/* Right side: Expand/Collapse All */}
+            {/* Right side: PDF Dropdown & Expand/Collapse All */}
             <div className="flex items-center gap-2 flex-wrap">
+              {cuttingPdfsSummary.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-slate-100/90 rounded-lg px-2.5 py-1 border border-slate-200 shadow-2xs">
+                  <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                  <select
+                    value={selectedPdfFilter}
+                    onChange={(e) => setSelectedPdfFilter(e.target.value)}
+                    className="text-xs font-bold bg-transparent border-0 text-slate-700 focus:outline-hidden cursor-pointer max-w-[260px] truncate"
+                    title="Filter cutting batches by uploaded PDF"
+                  >
+                    <option value="ALL">All PDFs ({cuttingPdfsSummary.length})</option>
+                    {cuttingPdfsSummary.map((pdf) => (
+                      <option key={pdf.fileName} value={pdf.fileName}>
+                        {pdf.fileName} ({pdf.batches.length} {pdf.batches.length === 1 ? "batch" : "batches"})
+                      </option>
+                    ))}
+                  </select>
+                  {selectedPdfFilter !== "ALL" && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPdfFilter("ALL")}
+                      className="text-[10px] text-rose-600 hover:text-rose-800 font-black ml-1 px-1 rounded hover:bg-rose-100 cursor-pointer"
+                      title="Clear PDF filter"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              )}
+
               {groupedCustomerBatches.length > 0 && (
                 <div className="flex items-center gap-1 mr-1">
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => setAllBatchCustomersExpanded(true)}
-                    className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                    className="text-[11px] font-bold text-slate-600 hover:text-[#1680f5] h-8 px-2"
                   >
                     Expand All
                   </Button>
@@ -2324,7 +2505,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     size="sm"
                     variant="ghost"
                     onClick={() => setAllBatchCustomersExpanded(false)}
-                    className="text-[11px] font-bold text-slate-600 hover:text-purple-700 h-8 px-2"
+                    className="text-[11px] font-bold text-slate-600 hover:text-[#1680f5] h-8 px-2"
                   >
                     Collapse All
                   </Button>
@@ -2338,7 +2519,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         <div className="space-y-3">
             {groupedCustomerBatches.length > 0 ? (
               groupedCustomerBatches.map((customer) => {
-                const isExpanded = isBatchCustomerExpanded(customer.customerName);
+                const isExpanded = isBatchCustomerExpanded(customer.groupKey);
                 const isCompleted =
                   customer.stageItemsCount === 0 &&
                   (customer.isAllCompleted ||
@@ -2347,31 +2528,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
                 return (
                   <div
-                    key={customer.customerName}
-                    className={`rounded-2xl transition-all overflow-hidden ${
-                      isCompleted
-                        ? "bg-emerald-50/25 border-2 border-emerald-400 shadow-xs hover:border-emerald-500 hover:shadow-md"
-                        : "bg-white border border-slate-200/90 shadow-2xs hover:border-purple-300"
-                    }`}
+                    key={customer.groupKey}
+                    className={`ppb-panel p-0 overflow-hidden transition-all duration-300 ${isCompleted ? "border-2 border-emerald-500 shadow-[0_8px_30px_rgb(16,185,129,0.12)]" : "hover:border-[#1680f5] shadow-[0_4px_20px_rgb(22,128,245,0.06)] hover:shadow-[0_8px_30px_rgb(22,128,245,0.15)]"}`}
                   >
                     {/* Customer Header - Click to toggle */}
                     <div
-                      onClick={() => toggleBatchCustomerExpanded(customer.customerName)}
-                      className={`p-4 cursor-pointer select-none transition-colors ${
-                        isCompleted
-                          ? "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-teal-50/20 hover:from-emerald-100/90"
-                          : "bg-gradient-to-r from-slate-50/70 via-white to-purple-50/20 hover:from-purple-50/30"
-                      }`}
+                      onClick={() => toggleBatchCustomerExpanded(customer.groupKey)}
+                      className={`w-full block m-0 p-5 cursor-pointer select-none transition-all duration-300 border-b-0 ${isCompleted ? "bg-gradient-to-r from-emerald-50/80 to-teal-50/40 hover:from-emerald-100/60" : "bg-gradient-to-r from-[#f8fafc] to-white hover:from-blue-50/50"}`}
                     >
-                      <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+                      <div className="w-full flex items-center justify-between gap-6 flex-wrap md:flex-nowrap">
                         {/* Left: Customer Info & Badges */}
                         <div className="flex items-start gap-3 flex-1 min-w-0">
                           <div
-                            className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
-                              isCompleted
-                                ? "bg-gradient-to-br from-emerald-600 to-teal-700 ring-2 ring-emerald-300 shadow-emerald-200/50"
-                                : "bg-gradient-to-br from-purple-600 to-indigo-700"
-                            }`}
+                            className={`w-12 h-12 rounded-[14px] text-white flex items-center justify-center font-black text-lg shrink-0 shadow-sm transition-transform duration-300 hover:scale-105 ${isCompleted ? "bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-200/50" : "bg-gradient-to-br from-[#1680f5] to-[#1470e0] shadow-blue-200/50"}`}
                           >
                             {isCompleted ? (
                               <CheckCircle className="w-5 h-5 text-emerald-50" />
@@ -2382,14 +2551,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <h3
-                                className={`text-base font-extrabold truncate ${
-                                  isCompleted ? "text-emerald-950" : "text-slate-900"
-                                }`}
+                                className="text-[17px] font-black tracking-tight truncate text-rose-700 flex items-center gap-2"
+                                title={customer.pdfFiles?.join(', ') || customer.customerName}
                               >
-                                {customer.customerName}
+                                <FileText className="w-5 h-5 text-rose-500 shrink-0" />
+                                <span className="truncate">
+                                  {customer.pdfFiles && customer.pdfFiles.length > 0
+                                    ? customer.pdfFiles.join(', ')
+                                    : customer.customerName}
+                                </span>
                               </h3>
+                              {customer.projectName && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
+                                  <Briefcase className="w-3 h-3 text-blue-600" />
+                                  {customer.projectName}
+                                </span>
+                              )}
                               {customer.hasColour && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                   Coloured
                                 </span>
                               )}
@@ -2403,7 +2582,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   key={cat}
                                   className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black border ${
                                     cat === "DLGU"
-                                      ? "bg-purple-100 text-purple-900 border-purple-200"
+                                      ? "bg-blue-100 text-purple-900 border-blue-200"
                                       : cat === "DGU"
                                       ? "bg-teal-100 text-teal-900 border-teal-200"
                                       : "bg-amber-100 text-amber-900 border-amber-200"
@@ -2413,38 +2592,53 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </span>
                               ))}
                               {isCompleted ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs border border-emerald-400">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-emerald-500 to-emerald-700 text-white shadow-lg border border-emerald-400">
                                   <Check className="w-3 h-3 stroke-[3]" /> FULLY CUT
                                 </span>
                               ) : (
                                 <StatusBadge status={customer.status} />
                               )}
                             </div>
-                            <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                              {customer.projects.length > 0
-                                ? customer.projects.join(" • ")
-                                : "Standard Shop Floor Order"}
+                            <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                                <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span>{customer.customerName}</span>
+                              </span>
+                              {customer.projectName && (
+                                <>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="flex items-center gap-1">
+                                    <span className="text-slate-400 font-semibold">Project:</span>
+                                    <span className="font-bold text-slate-700">{customer.projectName}</span>
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
 
                         {/* Right: Quantities, Progress & Accordion Trigger */}
-                        <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
+                        <div className="flex items-center gap-5 shrink-0 justify-end ml-auto">
                           <div className="text-right">
-                            <div className="font-mono text-xs font-black text-slate-900">
-                              <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-purple-700"}>
-                                {customer.totalBatches} {customer.totalBatches === 1 ? "Batch" : "Batches"}
-                              </span>
-                              <span className="text-slate-400 mx-1.5">•</span>
+                            <div className="font-mono text-xs font-black text-slate-900 flex items-center justify-end gap-1.5 flex-wrap">
+                              {customer.pdfFiles && customer.pdfFiles.length > 0 && (
+                                <>
+                                  <span className="text-rose-700 font-bold inline-flex items-center gap-0.5" title={`Source: ${customer.pdfFiles.join(', ')}`}>
+                                    <FileText className="w-3 h-3 text-rose-500" />
+                                    {customer.pdfFiles.length} {customer.pdfFiles.length === 1 ? 'PDF' : 'PDFs'}
+                                  </span>
+                                  <span className="text-slate-400">•</span>
+                                </>
+                              )}
                               <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
                                 {customer.completedPieces}/{customer.totalPieces} pcs
                               </span>
-                              <span className="text-slate-400 mx-1.5">•</span>
+                              <span className="text-slate-400">•</span>
                               <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                             </div>
                             <div className="flex items-center gap-2 justify-end mt-1">
                               <div
-                                className={`w-24 h-1.5 rounded-full overflow-hidden ${
+                                className={`w-36 md:w-44 h-2 rounded-full overflow-hidden ${
                                   isCompleted ? "bg-emerald-200" : "bg-slate-200"
                                 }`}
                               >
@@ -2452,7 +2646,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   className={`h-full rounded-full transition-all ${
                                     isCompleted
                                       ? "bg-gradient-to-r from-emerald-500 to-teal-600"
-                                      : "bg-gradient-to-r from-purple-500 to-indigo-600"
+                                      : "bg-gradient-to-r from-[#1680f5] to-[#1470e0]"
                                   }`}
                                   style={{ width: `${customer.progressPct}%` }}
                                 />
@@ -2471,7 +2665,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             className={`p-1.5 rounded-lg transition-colors ${
                               isCompleted
                                 ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                                : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700"
+                                : "bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-[#1680f5]"
                             }`}
                           >
                             {isExpanded ? (
@@ -2487,12 +2681,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     {/* Collapsible Customer Sub-Table */}
                     {isExpanded && (
                       <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
-                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                        <div className="ppb-panel p-0 overflow-hidden shadow-[0_4px_20px_rgb(22,128,245,0.04)] border-slate-100/60">
                           <TableHorizontalScrollWrapper>
                             <table className="w-full text-left text-xs border-collapse">
                             <thead>
-                              <tr className="border-b border-slate-200 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider bg-slate-50/90">
+                              <tr className="border-b border-slate-100/80 text-[10px] font-extrabold text-[#1680f5] uppercase tracking-widest bg-gradient-to-r from-blue-50/80 to-transparent">
                                 <th className="py-2.5 px-3.5 whitespace-nowrap">BATCH NO</th>
+                                <th className="py-2.5 px-3.5 whitespace-nowrap">SOURCE PDF</th>
                                 <th className="py-2.5 px-3.5 whitespace-nowrap">PROJECT</th>
                                 <th className="py-2.5 px-3 text-center whitespace-nowrap">FINISH</th>
                                 <th className="py-2.5 px-3 text-center whitespace-nowrap">COMPLETED</th>
@@ -2516,21 +2711,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       if (!isBatchCompleted) {
                                         setSelectedBatchId(b.id);
                                         setSelectedSheetRackNo("ALL");
+                                        setSelectedSheetRackNos(["ALL"]);
+                                        setFinishFilter("ALL");
+                                        setSelectedRowIds([]);
                                         setExpandedSheets({});
                                       }
                                     }}
                                     className={`transition-colors ${
                                       isBatchCompleted
                                         ? "bg-slate-50/40 hover:bg-slate-50/70 cursor-default"
-                                        : "hover:bg-purple-50/40 cursor-pointer group"
+                                        : "hover:bg-blue-50/40 transition-colors cursor-pointer group"
                                     }`}
                                   >
-                                    <td className="py-2.5 px-3.5 font-bold font-mono text-purple-700">
+                                    <td className="py-2.5 px-3.5 font-bold font-mono text-[#1680f5]">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span>{formatBatchNumber((b as any).batchNo || b.piNumber)}</span>
                                         {b.glassCategory === "DLGU" ? (
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 shadow-2xs">
-                                            <Sparkles className="w-3 h-3 text-purple-700" /> DLGU
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-[#1680f5]/10 text-[#1680f5] border border-[#1680f5]/20 shadow-2xs">
+                                            <Sparkles className="w-3 h-3 text-[#1680f5]" /> DLGU
                                           </span>
                                         ) : b.glassCategory === "DGU" ? (
                                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 shadow-2xs">
@@ -2543,6 +2741,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         )}
                                       </div>
                                     </td>
+                                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                                      <div className="flex items-center gap-1.5 text-slate-700 max-w-[200px] truncate" title={(b as any).fileName || "Sticker PDF"}>
+                                        <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                        <span className="truncate text-xs font-mono font-bold text-slate-800">{(b as any).fileName || "Sticker PDF"}</span>
+                                      </div>
+                                    </td>
                                     <td className="py-2.5 px-3.5 text-slate-600">
                                       <span className="font-semibold text-slate-800">{b.projectName || "—"}</span>
                                     </td>
@@ -2550,7 +2754,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       <span
                                         className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
                                           b.finish === "Colour"
-                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                            ? "bg-blue-100 text-blue-800 border-blue-200"
                                             : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                         }`}
                                       >
@@ -2566,7 +2770,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     </td>
                                     <td className="py-2.5 px-3 whitespace-nowrap font-mono text-xs">
                                       <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                                        <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                        <Calendar className="w-3.5 h-3.5 text-[#1680f5] shrink-0" />
                                         {formatPlatformDate(b.createdAt || b.issueDate)}
                                       </div>
                                     </td>
@@ -2591,9 +2795,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                             e.stopPropagation();
                                             setSelectedBatchId(b.id);
                                             setSelectedSheetRackNo("ALL");
+                                            setSelectedSheetRackNos(["ALL"]);
+                                            setFinishFilter("ALL");
+                                            setSelectedRowIds([]);
                                             setExpandedSheets({});
                                           }}
-                                          className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
+                                          className="bg-[#1680f5] hover:bg-[#1470e0] text-white text-xs font-bold gap-1 rounded-xl shadow-2xs h-7 px-3 group-hover:scale-105 transition-transform"
                                         >
                                           <span>Open Floor</span>
                                           <ChevronRight className="w-3.5 h-3.5" />
@@ -2614,7 +2821,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               })
             ) : (
               <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-                <Users className="w-10 h-10 mx-auto mb-2 opacity-30 text-purple-600" />
+                <Users className="w-10 h-10 mx-auto mb-2 opacity-30 text-[#1680f5]" />
                 <p className="text-sm font-semibold">No customer batches found matching the filters.</p>
               </div>
             )}
@@ -2630,7 +2837,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     <div className="space-y-4 animate-in fade-in duration-200">
       {/* ── Cutting Batch Breadcrumb Header ── */}
       {stage === "Cutting" && selectedBatchId && (
-        <div className="bg-white border-2 border-purple-300 rounded-2xl p-3.5 shadow-xs flex items-center justify-between flex-wrap gap-3">
+        <div className="bg-white border-2 border-blue-300 rounded-2xl p-3.5 shadow-lg flex items-center justify-between flex-wrap gap-3">
           {/* Left: Back button + Batch info */}
           <div className="flex items-center gap-3 shrink-0">
             <Button
@@ -2639,11 +2846,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               onClick={() => {
                 setSelectedBatchId(null);
                 setSelectedSheetRackNo("ALL");
+                setSelectedSheetRackNos(["ALL"]);
+                setFinishFilter("ALL");
+                setSelectedRowIds([]);
               }}
-              className="border-purple-300 text-purple-800 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 h-9 px-3 gap-1.5 rounded-xl shrink-0 font-extrabold text-xs shadow-2xs transition-all cursor-pointer"
+              className="border-blue-300 text-blue-800 bg-blue-50/50 hover:bg-blue-100 hover:border-blue-400 h-9 px-3 gap-1.5 rounded-xl shrink-0 font-extrabold text-xs shadow-2xs transition-all cursor-pointer"
               title="Back to All Batches"
             >
-              <ArrowLeft className="w-4 h-4 text-purple-700" />
+              <ArrowLeft className="w-4 h-4 text-[#1680f5]" />
               <span>Back to Batches</span>
             </Button>
             <div className="whitespace-nowrap">
@@ -2652,8 +2862,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   Batch: {formatBatchNumber((selectedBatch as any)?.batchNo || selectedBatch?.piNumber || selectedBatchId)}
                 </span>
                 {selectedBatch?.glassCategory === "DLGU" ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-200 inline-flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-purple-700" /> DLGU Queue ➔ Pairing
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1680f5]/10 text-[#1680f5] border border-[#1680f5]/20 inline-flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-[#1680f5]" /> DLGU Queue ➔ Pairing
                   </span>
                 ) : selectedBatch?.glassCategory === "DGU" ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-teal-800 border border-teal-200 inline-flex items-center gap-1">
@@ -2668,7 +2878,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   <span
                     className={`px-2 py-0.2 rounded-full text-[10px] font-black border ${
                       selectedBatch.finish === "Colour"
-                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                        ? "bg-blue-100 text-blue-800 border-blue-200"
                         : "bg-cyan-100 text-cyan-800 border-cyan-200"
                     }`}
                   >
@@ -2683,32 +2893,76 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             </div>
           </div>
 
-          {/* Center: Non-clickable Glass Stats Badges (Total Glass & Remaining Glass) */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 shrink-0">
-            <div className="px-3 py-1.5 rounded-lg text-xs font-black bg-white text-slate-800 shadow-xs ring-1 ring-slate-200 flex items-center gap-1.5 cursor-default select-none">
-              <span>Total Glass</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-slate-200 text-slate-800">
-                {selectedBatch.totalItems || totalStagePieces}
+          {/* Center: Finish Filter Tabs (All Glass / Clear Glass / Coloured Glass) */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/80 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                setFinishFilter("ALL");
+                setSelectedSheetRackNos(["ALL"]);
+                setSelectedRowIds([]);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                finishFilter === "ALL"
+                  ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+              }`}
+            >
+              <span>All Glass</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
+                }`}
+              >
+                {selectedBatch?.totalItems || totalStagePieces}
               </span>
-            </div>
+            </button>
 
-            {rawClearCount > 0 && (
-              <div className="px-3 py-1.5 rounded-lg text-xs font-black bg-cyan-100 text-cyan-900 border border-cyan-200 flex items-center gap-1.5 cursor-default select-none">
-                <span>Clear Glass</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-cyan-200 text-cyan-900">
-                  {rawClearCount}
-                </span>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setFinishFilter("CLEAR");
+                setSelectedSheetRackNos(["ALL"]);
+                setSelectedRowIds([]);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                finishFilter === "CLEAR"
+                  ? "bg-cyan-600 text-white shadow-xs"
+                  : "text-cyan-800 hover:bg-cyan-100/60"
+              }`}
+            >
+              <span>Clear Glass</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  finishFilter === "CLEAR" ? "bg-white/20 text-white" : "bg-cyan-200 text-cyan-900"
+                }`}
+              >
+                {rawClearCount}
+              </span>
+            </button>
 
-            {rawColourCount > 0 && (
-              <div className="px-3 py-1.5 rounded-lg text-xs font-black bg-purple-600 text-white shadow-xs flex items-center gap-1.5 cursor-default select-none">
-                <span>Remaining Glass</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-white/20 text-white">
-                  {rawColourCount}
-                </span>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setFinishFilter("COLOUR");
+                setSelectedSheetRackNos(["ALL"]);
+                setSelectedRowIds([]);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                finishFilter === "COLOUR"
+                  ? "bg-purple-600 text-white shadow-xs"
+                  : "text-purple-800 hover:bg-purple-100/60"
+              }`}
+            >
+              <span>Coloured Glass</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                }`}
+              >
+                {rawColourCount}
+              </span>
+            </button>
           </div>
 
           {/* Right: Search Input */}
@@ -2816,7 +3070,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500 font-medium">Remaining Quantity to Scan</span>
-                <span className="font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-lg font-mono text-xs border border-purple-200">
+                <span className="font-bold text-[#1680f5] bg-blue-100 px-2 py-0.5 rounded-lg font-mono text-xs border border-blue-200">
                   {scanRow.item.qty || 1} {scanRow.item.qty === 1 ? "pc" : "pcs"} remaining
                 </span>
               </div>
@@ -2872,7 +3126,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 <Button
                   onClick={handleScanVerify}
                   disabled={!scanInput.trim()}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 shrink-0"
+                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-bold px-4 shrink-0"
                 >
                   <ScanLine className="w-4 h-4" />
                 </Button>
@@ -2897,7 +3151,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   setScanRow(null);
                   await completeStage(targetRow.allSerials, undefined, true);
                 }}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs gap-1.5 shadow-xs"
+                className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs gap-1.5 shadow-lg"
               >
                 <Zap className="w-3.5 h-3.5" /> 1-Click Complete & Advance
               </Button>
@@ -2908,17 +3162,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       {/* ── Unified Header Controls: Finish Tabs + Action Buttons + Search & Filters (For Non-Cutting Workstations or General Stage View) ── */}
       {stage !== "Cutting" && (
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
+        <div className="ppb-panel bg-gradient-to-br from-white/90 to-white/50 backdrop-blur-2xl border-white p-6 rounded-3xl shadow-[0_10px_40px_rgb(22,128,245,0.08)] space-y-4 mb-5 relative overflow-visible ring-1 ring-slate-900/5">
           {/* Row 1: Category / Finish Filter Tabs (Left) & Primary Action Buttons (Right) */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             {/* Left: Finish Filter Tabs */}
-            <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80 flex-wrap">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-50/80 backdrop-blur-sm rounded-xl border border-slate-200/60 shadow-inner flex-wrap">
               <button
                 type="button"
                 onClick={() => setFinishFilter("ALL")}
                 className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                   finishFilter === "ALL"
-                    ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                    ? "bg-white text-slate-900 shadow-lg ring-1 ring-slate-200"
                     : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
                 }`}
               >
@@ -2940,7 +3194,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DIRECT_LAM")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DIRECT_LAM"
-                          ? "bg-amber-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-amber-500 to-amber-700 text-white shadow-lg"
                           : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
@@ -2961,14 +3215,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DLGU_LAM")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DLGU_LAM"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-purple-800 hover:bg-purple-100/60"
+                          ? "bg-[#1680f5] text-white shadow-md"
+                          : "text-slate-600 hover:bg-[#1680f5]/10 hover:text-[#1680f5]"
                       }`}
                     >
                       <span>DLGU Sub-Assembly</span>
                       <span
                         className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                          finishFilter === "DLGU_LAM" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                          finishFilter === "DLGU_LAM" ? "bg-white/20 text-white" : "bg-[#1680f5]/20 text-[#1680f5]"
                         }`}
                       >
                         {lamDlguCount}
@@ -2984,7 +3238,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DGU")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DGU"
-                          ? "bg-teal-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white shadow-lg"
                           : "text-teal-800 hover:bg-teal-100/60"
                       }`}
                     >
@@ -3005,14 +3259,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DLGU")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DLGU"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-purple-800 hover:bg-purple-100/60"
+                          ? "bg-[#1680f5] text-white shadow-md"
+                          : "text-slate-600 hover:bg-[#1680f5]/10 hover:text-[#1680f5]"
                       }`}
                     >
                       <span>DLGU Units</span>
                       <span
                         className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-[#1680f5]/20 text-[#1680f5]"
                         }`}
                       >
                         {dguDlguCount}
@@ -3026,7 +3280,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("WAITING")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "WAITING"
-                          ? "bg-amber-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-amber-500 to-amber-700 text-white shadow-lg"
                           : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
@@ -3049,14 +3303,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DLGU")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DLGU"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-purple-800 hover:bg-purple-100/60"
+                          ? "bg-[#1680f5] text-white shadow-md"
+                          : "text-slate-600 hover:bg-[#1680f5]/10 hover:text-[#1680f5]"
                       }`}
                     >
                       <span>DLGU Units</span>
                       <span
                         className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                          finishFilter === "DLGU" ? "bg-white/20 text-white" : "bg-[#1680f5]/20 text-[#1680f5]"
                         }`}
                       >
                         {finishedDlguCount}
@@ -3070,7 +3324,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("DGU")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "DGU"
-                          ? "bg-teal-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white shadow-lg"
                           : "text-teal-800 hover:bg-teal-100/60"
                       }`}
                     >
@@ -3091,7 +3345,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("LAMINATION")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "LAMINATION"
-                          ? "bg-amber-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-amber-500 to-amber-700 text-white shadow-lg"
                           : "text-amber-800 hover:bg-amber-100/60"
                       }`}
                     >
@@ -3112,7 +3366,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("GENERAL")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "GENERAL"
-                          ? "bg-indigo-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-indigo-500 to-indigo-700 text-white shadow-lg"
                           : "text-indigo-800 hover:bg-indigo-100/60"
                       }`}
                     >
@@ -3135,7 +3389,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("CLEAR")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "CLEAR"
-                          ? "bg-cyan-600 text-white shadow-xs"
+                          ? "bg-gradient-to-r from-cyan-500 to-cyan-700 text-white shadow-lg"
                           : "text-cyan-800 hover:bg-cyan-100/60"
                       }`}
                     >
@@ -3156,14 +3410,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => setFinishFilter("COLOUR")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
                         finishFilter === "COLOUR"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-purple-800 hover:bg-purple-100/60"
+                          ? "bg-[#1680f5] text-white shadow-md"
+                          : "text-slate-600 hover:bg-[#1680f5]/10 hover:text-[#1680f5]"
                       }`}
                     >
                       <span>Coloured Glass</span>
                       <span
                         className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                          finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-purple-200 text-purple-900"
+                          finishFilter === "COLOUR" ? "bg-white/20 text-white" : "bg-[#1680f5]/20 text-[#1680f5]"
                         }`}
                       >
                         {rawColourCount}
@@ -3176,161 +3430,115 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
             {/* Right: Primary Action Buttons */}
             <div className="flex items-center gap-2 flex-wrap">
-              {stage === "DGU" && (
-                selectedRowIds.length > 0 ? (
-                  <Button
-                    size="sm"
-                    onClick={handleBatchComplete}
-                    disabled={
-                      loading ||
+              {stage === "DGU" && selectedRowIds.length > 0 && (
+                <Button
+                  size="sm"
+                  onClick={handleBatchComplete}
+                  disabled={
+                    loading ||
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                  }
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shrink-0 animate-in fade-in transition-all ${
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed border-transparent shadow-none"
+                      : "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-400/50 shadow-[0_4px_14px_rgba(5,150,105,0.4)] hover:shadow-lg active:scale-95 cursor-pointer"
+                  }`}
+                  title={
+                    stageRows
+                      .filter((r) => selectedRowIds.includes(r.id))
+                      .filter((r) => r.dguPairReady).length === 0
+                      ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
+                      : "Send ready paired DGU units to Dispatch"
+                  }
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>
+                    Send Selected to Dispatch (
+                    {
                       stageRows
                         .filter((r) => selectedRowIds.includes(r.id))
-                        .filter((r) => r.dguPairReady).length === 0
-                    }
-                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in ${
-                      stageRows
-                        .filter((r) => selectedRowIds.includes(r.id))
-                        .filter((r) => r.dguPairReady).length === 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
-                    }`}
-                    title={
-                      stageRows
-                        .filter((r) => selectedRowIds.includes(r.id))
-                        .filter((r) => r.dguPairReady).length === 0
-                        ? "Cannot dispatch: none of the selected panes have matching Clear glass cut yet"
-                        : "Send ready paired DGU units to Dispatch"
-                    }
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>
-                      Send Selected to Dispatch (
-                      {
-                        stageRows
-                          .filter((r) => selectedRowIds.includes(r.id))
-                          .filter((r) => r.dguPairReady).length
-                      } Paired)
-                    </span>
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={handleSendAllDguToDispatch}
-                    disabled={loading || displayedRows.filter((r) => r.dguPairReady).length === 0}
-                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 ${
-                      displayedRows.filter((r) => r.dguPairReady).length === 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
-                    }`}
-                    title="Send all ready paired DGU units to Dispatch"
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>Send All to Dispatch ({displayedRows.filter((r) => r.dguPairReady).length} Paired)</span>
-                  </Button>
-                )
+                        .filter((r) => r.dguPairReady).length
+                    } Paired)
+                  </span>
+                </Button>
               )}
 
-              {stage === "Lamination" && (
-                selectedRowIds.length > 0 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleBatchComplete}
-                    disabled={
-                      loading ||
-                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                    }
-                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all ${
-                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
-                    }`}
-                    title={
-                      stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
-                        ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
-                        : "Advance selected ready items from Lamination"
-                    }
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>
-                      Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
-                    </span>
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleSendAllToFinished}
-                    disabled={loading || displayedRows.filter((r) => !r.isHolding).length === 0}
-                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
-                      displayedRows.filter((r) => !r.isHolding).length === 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        : "bg-orange-500 hover:bg-orange-600 text-white cursor-pointer"
-                    }`}
-                    title={
-                      displayedRows.filter((r) => !r.isHolding).length === 0
-                        ? "All DLGU items are holding in Lamination staging awaiting Colour glass cutting"
-                        : "Advance ready items from Lamination"
-                    }
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>Advance Ready Items ({displayedRows.filter((r) => !r.isHolding).length})</span>
-                  </Button>
-                )
+              {stage === "Lamination" && selectedRowIds.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleBatchComplete}
+                  disabled={
+                    loading ||
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                  }
+                  className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shrink-0 animate-in fade-in transition-all ${
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed border-transparent shadow-none"
+                      : "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-400/50 shadow-[0_4px_14px_rgba(5,150,105,0.4)] hover:shadow-lg active:scale-95 cursor-pointer"
+                  }`}
+                  title={
+                    stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length === 0
+                      ? "Cannot advance: Selected DLGU units are holding in staging until matching Colour glass is cut"
+                      : "Advance selected ready items from Lamination"
+                  }
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>
+                    Advance Ready Selected ({stageRows.filter((r) => selectedRowIds.includes(r.id) && !r.isHolding).length})
+                  </span>
+                </Button>
               )}
 
-              {stage === "Finished" && (
-                selectedRowIds.length > 0 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                      openDispatchModal(selectedRows);
-                    }}
-                    disabled={loading || stageRows.filter((r) => selectedRowIds.includes(r.id)).length === 0}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 animate-in fade-in transition-all cursor-pointer"
-                    title="Dispatch selected glass units to Dispatched History"
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>
-                      Send Selected to Dispatch ({stageRows.filter((r) => selectedRowIds.includes(r.id)).length} Units)
-                    </span>
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => openDispatchModal(displayedRows)}
-                    disabled={loading || displayedRows.length === 0}
-                    className={`font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs shrink-0 transition-all ${
-                      displayedRows.length === 0
-                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                        : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
-                    }`}
-                    title="Dispatch all ready glass units to Dispatched History"
-                  >
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>Send All to Dispatch ({displayedRows.length} Units)</span>
-                  </Button>
-                )
+              {stage === "Finished" && selectedRowIds.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
+                    openDispatchModal(selectedRows);
+                  }}
+                  disabled={loading || stageRows.filter((r) => selectedRowIds.includes(r.id)).length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl border border-emerald-400/50 shadow-[0_4px_14px_rgba(5,150,105,0.4)] hover:shadow-lg active:scale-95 shrink-0 animate-in fade-in transition-all cursor-pointer"
+                  title="Dispatch selected glass units to Dispatched History"
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>
+                    Send Selected to Dispatch ({stageRows.filter((r) => selectedRowIds.includes(r.id)).length} Units)
+                  </span>
+                </Button>
               )}
 
               {/* EXPORT EXCEL DROPDOWN BUTTON (Header Position) */}
               <div className="relative inline-block text-left shrink-0" ref={exportMenuRef}>
                 <Button
+                  ref={exportBtnRef}
                   type="button"
                   size="sm"
-                  onClick={() => setIsExportMenuOpen((prev) => !prev)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-xs transition-all cursor-pointer"
+                  onClick={() => {
+                    const willOpen = !isExportMenuOpen;
+                    if (willOpen && exportBtnRef.current) {
+                      const rect = exportBtnRef.current.getBoundingClientRect();
+                      setExportMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                    }
+                    setIsExportMenuOpen(willOpen);
+                  }}
+                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   <span>Export Excel</span>
                   <ChevronDown className={`w-3 h-3 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
                 </Button>
 
-                {isExportMenuOpen && (
-                  <div className="absolute right-0 mt-1.5 w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl z-50 p-2 space-y-1 animate-in fade-in zoom-in-95">
+                {isExportMenuOpen && exportMenuPos && ReactDOM.createPortal(
+                  <div
+                    style={{ position: "fixed", top: exportMenuPos.top, right: exportMenuPos.right, zIndex: 9999 }}
+                    className="w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in zoom-in-95"
+                  >
                     <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
                       Export Excel Options ({stage})
                     </div>
@@ -3381,9 +3589,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
                           exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
                         }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-purple-50 hover:text-purple-900 transition-colors flex items-center gap-2 cursor-pointer"
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2 cursor-pointer"
                       >
-                        <CheckSquare className="w-4 h-4 text-purple-600 shrink-0" />
+                        <CheckSquare className="w-4 h-4 text-[#1680f5] shrink-0" />
                         <div>
                           <div>Export Selected Rows ({selectedRowIds.length})</div>
                           <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
@@ -3414,7 +3622,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         </div>
                       </button>
                     )}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
 
@@ -3423,7 +3632,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   type="button"
                   size="sm"
                   onClick={() => onNavigateTab ? onNavigateTab("dispatched-history") : undefined}
-                  className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+                  className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer shrink-0"
                   title="View complete historical archive of all dispatched glass items and units"
                 >
                   <PackageCheck className="w-3.5 h-3.5" />
@@ -3486,7 +3695,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       {/* ── Sheet-Wise Navigation Header (Cutting stage) ── */}
       {stage === "Cutting" && (
-        <div className="bg-white border-2 border-purple-200/90 rounded-2xl p-3.5 shadow-xs space-y-3">
+        <div className="ppb-panel bg-white border border-slate-100 p-4 shadow-[0_4px_20px_rgb(22,128,245,0.04)] space-y-3 mb-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3 flex-wrap">
               {/* Custom Multi-Select & Drag-to-Select Sheet Dropdown */}
@@ -3494,7 +3703,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsSheetDropdownOpen((prev) => !prev)}
-                  className="flex items-center justify-between gap-2.5 px-3.5 py-2 bg-gradient-to-r from-purple-50 via-indigo-50/60 to-purple-50 border-2 border-purple-300 hover:border-purple-500 text-purple-950 font-black text-xs rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer transition-all min-w-[290px] max-w-[420px] text-left"
+                  className="flex items-center justify-between gap-2.5 px-4 py-2 bg-gradient-to-r from-blue-50/80 to-[#f8fafc] border border-blue-100 hover:border-[#1680f5]/40 hover:shadow-[0_4px_12px_rgb(22,128,245,0.08)] text-[#1680f5] font-black text-xs rounded-xl shadow-lg focus:outline-none focus:ring-2 focus:ring-[#1680f5]/50 cursor-pointer transition-all min-w-[290px] max-w-[420px] text-left"
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="text-sm">📑</span>
@@ -3506,24 +3715,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         : `Selected ${selectedSheetRackNos.length} Sheets (Sheets ${selectedSheetRackNos.join(", ")} • ${displayedRows.reduce((a, b) => a + (b.item.qty || 1), 0)} Pcs)`}
                     </span>
                   </div>
-                  <ChevronDown className={`w-4 h-4 text-purple-600 shrink-0 transition-transform duration-200 ${isSheetDropdownOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`w-4 h-4 text-[#1680f5] shrink-0 transition-transform duration-200 ${isSheetDropdownOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 {/* Dropdown Popup Menu */}
                 {isSheetDropdownOpen && (
-                  <div className="absolute top-full left-0 mt-1.5 w-[380px] sm:w-[460px] max-w-[94vw] bg-white border-2 border-purple-300 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute top-full left-0 mt-1.5 w-[380px] sm:w-[460px] max-w-[94vw] bg-white border border-blue-200 rounded-2xl shadow-[0_8px_30px_rgb(22,128,245,0.15)] z-50 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150">
                     {/* Header with Drag Hint & Quick Presets */}
-                    <div className="p-3 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 border-b border-purple-200 space-y-2">
+                    <div className="p-3 bg-gradient-to-r from-blue-50/90 to-[#f8fafc] border-b border-blue-100 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-black text-xs text-purple-950">
-                          <Layers className="w-3.5 h-3.5 text-purple-600" />
+                        <div className="flex items-center gap-1.5 font-black text-xs text-[#1680f5]">
+                          <Layers className="w-3.5 h-3.5 text-[#1680f5]" />
                           <span>Select Raw Sheets for Cutting</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={handleSelectAllSheets}
-                            className="px-2 py-0.5 text-[10.5px] font-black bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-md transition-colors cursor-pointer"
+                            className="px-2 py-0.5 text-[10.5px] font-black bg-[#1680f5]/10 hover:bg-[#1680f5]/20 text-[#1680f5] rounded-md transition-colors cursor-pointer"
                           >
                             All Sheets
                           </button>
@@ -3541,15 +3750,15 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       </div>
 
                       {/* Direct Range Selector Inputs */}
-                      <form onSubmit={handleApplyRangeInput} className="flex items-center gap-1.5 bg-white/90 p-1.5 rounded-xl border border-purple-200 shadow-2xs flex-wrap">
-                        <span className="text-[10px] font-bold text-slate-600">From Sheet:</span>
+                      <form onSubmit={handleApplyRangeInput} className="flex items-center gap-1.5 bg-white p-1.5 rounded-xl border border-blue-100 shadow-2xs flex-wrap">
+                        <span className="text-[10px] font-bold text-slate-500">From Sheet:</span>
                         <input
                           type="number"
                           min="1"
                           max={sheetGroups.length || 100}
                           value={rangeFromInput}
                           onChange={(e) => setRangeFromInput(e.target.value)}
-                          className="w-12 h-6 px-1 text-center text-xs font-black bg-purple-50 border border-purple-200 rounded-md text-purple-950 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                          className="w-12 h-6 px-1 text-center text-xs font-black bg-blue-50/50 border border-blue-200 rounded-md text-blue-950 focus:outline-none focus:ring-1 focus:ring-[#1680f5]"
                         />
                         <span className="text-[10px] font-bold text-slate-600">to</span>
                         <input
@@ -3558,11 +3767,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           max={sheetGroups.length || 100}
                           value={rangeToInput}
                           onChange={(e) => setRangeToInput(e.target.value)}
-                          className="w-12 h-6 px-1 text-center text-xs font-black bg-purple-50 border border-purple-200 rounded-md text-purple-950 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                          className="w-12 h-6 px-1 text-center text-xs font-black bg-blue-50/50 border border-blue-200 rounded-md text-blue-950 focus:outline-none focus:ring-1 focus:ring-[#1680f5]"
                         />
                         <button
                           type="submit"
-                          className="h-6 px-2.5 text-[10.5px] font-extrabold bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors shadow-2xs ml-auto cursor-pointer"
+                          className="h-6 px-2.5 text-[10.5px] font-extrabold bg-[#1680f5] hover:bg-[#1470e0] text-white rounded-md transition-colors shadow-2xs ml-auto cursor-pointer"
                         >
                           Select Range
                         </button>
@@ -3577,11 +3786,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       {/* All Glasses Row */}
                       <div
                         onClick={handleSelectAllSheets}
-                        className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition-colors ${
-                          isAllSheetsSelected
-                            ? "bg-purple-600 text-white shadow-xs"
-                            : "hover:bg-purple-50 text-slate-800"
-                        }`}
+                        className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition-colors ${isAllSheetsSelected ? "bg-[#1680f5] text-white shadow-md" : "hover:bg-blue-50 text-slate-800"}`}
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-base">📑</span>
@@ -3609,13 +3814,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             key={g.rackNo}
                             data-sheet-index={index}
                             onClick={() => handleToggleSheet(g.rackNo)}
-                            className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-all border ${
-                              isSelected
-                                ? "bg-purple-600 text-white border-purple-700 shadow-xs scale-[1.005]"
-                                : isAllSheetsSelected
-                                ? "bg-slate-50/70 border-slate-100 text-slate-700 hover:bg-purple-50"
-                                : "hover:bg-purple-50 text-slate-800 border-transparent"
-                            }`}
+                            className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-all border ${isSelected ? "bg-[#1680f5] text-white border-blue-600 shadow-md scale-[1.005]" : isAllSheetsSelected ? "bg-slate-50/70 border-slate-100 text-slate-700 hover:bg-blue-50" : "hover:bg-blue-50 text-slate-800 border-transparent"}`}
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <div
@@ -3637,7 +3836,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 {isSelected ? (
                                   <CheckSquare className="w-4 h-4 text-white" />
                                 ) : (
-                                  <Square className="w-4 h-4 text-slate-400 hover:text-purple-600" />
+                                  <Square className="w-4 h-4 text-slate-400 hover:text-[#1680f5]" />
                                 )}
                               </div>
                               <div className="font-extrabold text-xs truncate">
@@ -3653,7 +3852,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </div>
                               </div>
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                isSelected ? "bg-white/20 text-white" : "bg-purple-100 text-purple-800"
+                                isSelected ? "bg-white/20 text-white" : "bg-blue-100 text-blue-800"
                               }`}>
                                 {g.finish === "Colour" ? "Colour" : "Clear"}
                               </span>
@@ -3674,7 +3873,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         type="button"
                         size="sm"
                         onClick={() => setIsSheetDropdownOpen(false)}
-                        className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold h-7 px-3 rounded-lg shadow-2xs cursor-pointer"
+                        className="bg-[#1680f5] hover:bg-gradient-to-r from-blue-500 to-blue-700 text-white text-xs font-bold h-7 px-3 rounded-lg shadow-sm cursor-pointer"
                       >
                         Apply / Close
                       </Button>
@@ -3691,7 +3890,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   size="sm"
                   onClick={goToPrevSheet}
                   disabled={isAllSheetsSelected && currentSheetIndex <= 0}
-                  className="h-8 px-2.5 text-xs font-bold gap-1 rounded-xl border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-40"
+                  className="h-8 px-2.5 text-xs font-bold gap-1 rounded-xl border-blue-200 text-[#1680f5] hover:bg-blue-50/50 disabled:opacity-40"
                   title="Previous Sheet"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" /> Prev
@@ -3703,7 +3902,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   size="sm"
                   onClick={goToNextSheet}
                   disabled={currentSheetIndex >= sheetGroups.length - 1}
-                  className="h-8 px-2.5 text-xs font-bold gap-1 rounded-xl border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-40"
+                  className="h-8 px-2.5 text-xs font-bold gap-1 rounded-xl border-blue-200 text-[#1680f5] hover:bg-blue-50/50 disabled:opacity-40"
                   title="Next Sheet"
                 >
                   Next <ChevronRight className="w-3.5 h-3.5" />
@@ -3713,7 +3912,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
             {/* Sheet Index Indicator & Export Excel Dropdown in Top Bar */}
             <div className="flex items-center gap-2.5">
-              <div className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-900 border border-purple-200 text-[11px] font-black font-mono">
+              <div className="px-2.5 py-1 rounded-lg bg-blue-50/50 text-purple-900 border border-blue-200 text-[11px] font-black font-mono">
                 {isAllSheetsSelected
                   ? `All ${sheetGroups.length} Sheets`
                   : isSingleSheet
@@ -3727,7 +3926,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   type="button"
                   size="sm"
                   onClick={() => setIsExportMenuOpen((prev) => !prev)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs h-8 px-3 gap-1.5 rounded-xl shadow-xs transition-all"
+                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-8 px-3 gap-1.5 rounded-xl shadow-lg transition-all"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   <span>Export Excel</span>
@@ -3786,9 +3985,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
                           exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
                         }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-purple-50 hover:text-purple-900 transition-colors flex items-center gap-2"
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2"
                       >
-                        <CheckSquare className="w-4 h-4 text-purple-600 shrink-0" />
+                        <CheckSquare className="w-4 h-4 text-[#1680f5] shrink-0" />
                         <div>
                           <div>Export Selected Rows ({selectedRowIds.length})</div>
                           <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
@@ -3804,19 +4003,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       )}
 
       {/* ── Glass Items / DGU Units Table View ── */}
-      <div className="border-2 border-slate-300 rounded-2xl bg-white shadow-xs overflow-hidden">
+      <div className="ppb-panel p-0 overflow-hidden shadow-[0_12px_40px_rgb(22,128,245,0.12)] border border-slate-100/50 bg-white/60 backdrop-blur-xl rounded-3xl">
         {/* Table Summary Sub-bar */}
-        <div className="p-3 bg-gradient-to-r from-slate-50 via-teal-50/20 to-blue-50/30 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs">
+        <div className="ppb-panel-heading bg-gradient-to-r from-blue-50/50 via-white to-transparent border-b border-slate-100/80 p-5 m-0 flex items-center justify-between flex-wrap gap-4 relative overflow-hidden">
           <div className="flex items-center gap-2.5 flex-wrap">
             {stage === "Cutting" && (
-              <label className="flex items-center gap-2 cursor-pointer bg-white px-2.5 py-1.5 rounded-xl border-2 border-purple-300 shadow-2xs hover:bg-purple-50 transition-colors mr-1">
+              <label className="flex items-center gap-2 cursor-pointer bg-white px-2.5 py-1.5 rounded-xl border-2 border-blue-300 shadow-2xs hover:bg-blue-50/50 transition-colors mr-1">
                 <input
                   type="checkbox"
                   checked={selectedRowIds.length === displayedRows.length && displayedRows.length > 0}
                   onChange={toggleSelectAll}
-                  className="w-4 h-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                  className="w-[18px] h-[18px] rounded-md border-slate-300 text-[#1680f5] focus:ring-[#1680f5] cursor-pointer"
                 />
-                <span className="text-xs font-black text-purple-950 select-none">
+                <span className="text-xs font-black text-blue-950 select-none">
                   Select All Sheets ({displayedSheetGroups.length})
                 </span>
               </label>
@@ -3839,7 +4038,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <span
                 className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
                   finishFilter === "COLOUR" || (rawClearCount === 0 && rawColourCount > 0) || (currentGroup && currentGroup.finish === "Colour")
-                    ? "bg-purple-100 text-purple-800 border-purple-200"
+                    ? "bg-blue-100 text-blue-800 border-blue-200"
                     : "bg-cyan-100 text-cyan-800 border-cyan-200"
                 }`}
               >
@@ -3869,7 +4068,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={expandAllSheets}
-                  className="h-6 px-2 text-[10px] font-extrabold border-purple-200 text-purple-700 hover:bg-purple-50 rounded-lg shadow-2xs"
+                  className="h-6 px-2 text-[10px] font-extrabold border-blue-200 text-[#1680f5] hover:bg-blue-50/50 rounded-lg shadow-2xs"
                 >
                   Expand All
                 </Button>
@@ -3915,9 +4114,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 size="sm"
                 onClick={handleBatchComplete}
                 disabled={loading}
-                className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-black text-xs h-7 px-3.5 gap-1.5 rounded-xl shadow-xs border border-orange-400/30 active:scale-95 transition-all animate-in fade-in"
+                className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs h-7 px-3.5 gap-1.5 rounded-xl shadow-[0_4px_14px_rgba(5,150,105,0.4)] border border-emerald-400/50 hover:shadow-lg active:scale-95 transition-all animate-in fade-in"
               >
-                <CheckCircle className="w-3.5 h-3.5 text-amber-100" /> Cut & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+                <CheckCircle className="w-3.5 h-3.5 text-white" /> Cut & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
               </Button>
             )}
 
@@ -3929,7 +4128,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               {stage === "Cutting" ? (
                 <>
                   Total in Cutting Queue:{" "}
-                  <strong className="text-purple-700 font-bold">
+                  <strong className="text-[#1680f5] font-bold">
                     {displayedSheetGroups.length} {displayedSheetGroups.length === 1 ? "Sheet" : "Sheets"} ({stageRows.length} pcs)
                   </strong>
                 </>
@@ -3956,7 +4155,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </>
               ) : (
                 <>
-                  Total In Stage Queue: <strong className="text-purple-700 font-bold">{stageItems.length} Stickers</strong>
+                  Total In Stage Queue: <strong className="text-[#1680f5] font-bold">{stageItems.length} Stickers</strong>
                 </>
               )}
             </div>
@@ -3968,7 +4167,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           /* Cutting Workstation: Sheet-Grouped View (Each Sheet shown ONE time, Click Sheet to view all data) */
           <div className="space-y-3 p-3 bg-slate-50/50">
             {displayedSheetGroups.length === 0 ? (
-              <div className="text-center py-12 px-4 bg-white rounded-2xl border-2 border-dashed border-purple-200 max-w-xl mx-auto my-6 space-y-4 shadow-xs">
+              <div className="text-center py-12 px-4 bg-white rounded-2xl border-2 border-dashed border-blue-200 max-w-xl mx-auto my-6 space-y-4 shadow-lg">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
                   <CheckCircle className="w-8 h-8" />
                 </div>
@@ -3986,8 +4185,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     onClick={() => {
                       setSelectedBatchId(null);
                       setSelectedSheetRackNo("ALL");
+                      setSelectedSheetRackNos(["ALL"]);
+                      setFinishFilter("ALL");
+                      setSelectedRowIds([]);
                     }}
-                    className="bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs h-9 px-4 gap-2 rounded-xl shadow-xs transition-all cursor-pointer"
+                    className="bg-[#1680f5] hover:bg-[#1470e0] text-white font-extrabold text-xs h-9 px-4 gap-2 rounded-xl shadow-lg transition-all cursor-pointer"
                   >
                     <ArrowLeft className="w-4 h-4" />
                     <span>Back to All Batches</span>
@@ -4016,16 +4218,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 return (
                   <div
                     key={group.rackNo}
-                    className="border-2 border-purple-200/90 rounded-2xl bg-white shadow-xs overflow-hidden transition-all"
+                    className="ppb-panel p-0 overflow-hidden transition-all duration-300 hover:border-[#1680f5] shadow-[0_4px_20px_rgb(22,128,245,0.04)]"
                   >
                     {/* Sheet Header Row (Displays Sheet ONE time only) */}
                     <div
                       onClick={() => toggleSheetExpand(group.rackNo)}
-                      className={`p-3 sm:p-3.5 flex items-center justify-between flex-wrap gap-3 cursor-pointer transition-colors select-none ${
-                        isExpanded
-                          ? "bg-gradient-to-r from-purple-50 via-indigo-50/40 to-purple-50 border-b border-purple-200"
-                          : "hover:bg-purple-50/50"
-                      }`}
+                      className={`ppb-panel-heading m-0 p-4 flex items-center justify-between flex-wrap gap-3 cursor-pointer transition-all duration-300 border-b-0 ${isExpanded ? "bg-gradient-to-r from-blue-50/80 to-[#f8fafc]" : "hover:bg-blue-50/40"}`}
                     >
                       <div className="flex items-center gap-3">
                         {/* Checkbox for entire sheet (Only shown when collapsed) */}
@@ -4045,25 +4243,25 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               type="checkbox"
                               checked={isGroupAllSelected}
                               onChange={() => {}}
-                              className="w-4 h-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                              className="w-[18px] h-[18px] rounded-md border-slate-300 text-[#1680f5] focus:ring-[#1680f5] cursor-pointer"
                             />
                           </div>
                         )}
 
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black text-xs shadow-2xs">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#1680f5] to-[#1470e0] text-white flex items-center justify-center font-black text-sm shadow-md hover:scale-105 transition-transform duration-300">
                             {group.rackNo}
                           </div>
                           <div>
                             <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2 flex-wrap">
                               <span>Raw Sheet {group.rackNo}</span>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#1680f5]/10 text-[#1680f5] border border-[#1680f5]/20">
                                 {totalPieces} {totalPieces === 1 ? "Piece" : "Pieces"} • {group.totalSqm.toFixed(2)} m²
                               </span>
                               <span
                                 className={`text-[9.5px] font-black px-1.5 py-0.2 rounded border ${
                                   group.finish === "Colour"
-                                    ? "bg-purple-100 text-purple-800 border-purple-200"
+                                    ? "bg-blue-100 text-blue-800 border-blue-200"
                                     : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                 }`}
                               >
@@ -4072,14 +4270,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             </div>
                             <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
                               {group.items[0]?.piNumber && (
-                                <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-bold">
+                                <span className="px-2 py-0.5 rounded-full bg-blue-50/50 text-[#1680f5] border border-blue-200 font-bold">
                                   PI: {formatBatchNumber(group.items[0].piNumber)}
                                 </span>
                               )}
                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
                                 Batch: {group.items[0]?.batchNo || group.items[0]?.sfoNo || group.sfoList.join(", ") || "—"}
                               </span>
-                              <span>SFO: <strong className="text-purple-700">{group.sfoList.join(", ")}</strong></span>
+                              <span>SFO: <strong className="text-[#1680f5]">{group.sfoList.join(", ")}</strong></span>
                               {group.obList.length > 0 && <span>(OB: {group.obList.join(", ")})</span>}
                               <span className="text-slate-300">•</span>
                               <span className="truncate max-w-[280px] sm:max-w-md text-slate-700 font-sans font-medium">
@@ -4099,11 +4297,16 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             e.stopPropagation();
                             handleAdvanceSheet(group.rows);
                           }}
-                          className="h-8 text-xs font-black bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl shadow-xs gap-1.5 cursor-pointer"
+                          className="h-8 text-xs font-black bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl shadow-[0_4px_14px_rgba(5,150,105,0.4)] gap-1.5 cursor-pointer transition-all hover:-translate-y-0.5 border border-emerald-400/50"
                         >
-                          <Sparkles className="w-3.5 h-3.5 text-purple-200" />
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-100" />
                           <span>Cut & Advance Sheet {group.rackNo} ({totalPieces} pcs)</span>
                         </Button>
+
+                        <div className="flex items-center gap-1 text-xs font-bold text-[#1680f5] bg-blue-50/50 backdrop-blur-sm border border-blue-200/60 px-3 py-1.5 rounded-xl shadow-sm hover:shadow-md cursor-pointer">
+                          <span>{isExpanded ? "Hide Data" : `Show All Data (${totalPieces})`}</span>
+                          <ChevronDown className={`w-4 h-4 text-[#1680f5] transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+                        </div>
 
                         <Button
                           type="button"
@@ -4119,20 +4322,15 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           <Trash2 className="w-3.5 h-3.5 text-red-600" />
                           <span>Delete Sheet {group.rackNo}</span>
                         </Button>
-
-                        <div className="flex items-center gap-1 text-xs font-bold text-purple-700 bg-white border border-purple-200 px-2.5 py-1.5 rounded-xl shadow-2xs">
-                          <span>{isExpanded ? "Hide Data" : `Show All Data (${totalPieces})`}</span>
-                          <ChevronDown className={`w-4 h-4 text-purple-600 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
-                        </div>
                       </div>
                     </div>
 
                     {/* Expanded Data Table (Shows all panels for this sheet) */}
                     {isExpanded && (
-                      <TableHorizontalScrollWrapper className="border-t border-slate-100 bg-white">
+                      <TableHorizontalScrollWrapper className="border-t border-slate-100/50 bg-white/50 backdrop-blur-sm rounded-b-3xl">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/70">
+                            <tr className="border-b border-slate-100/80 text-[10px] font-extrabold text-[#1680f5] uppercase tracking-widest bg-gradient-to-r from-blue-50/80 to-transparent">
                               <th className="py-2.5 px-3 w-8 text-center">
                                 <input
                                   type="checkbox"
@@ -4144,7 +4342,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       setSelectedRowIds((prev) => Array.from(new Set([...prev, ...allGroupRowIds])));
                                     }
                                   }}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                                  className="w-[18px] h-[18px] rounded-md border-slate-300 text-[#1680f5] focus:ring-[#1680f5] cursor-pointer"
                                 />
                               </th>
                               <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
@@ -4170,21 +4368,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               return (
                                 <tr
                                   key={row.id}
-                                  className={`hover:bg-purple-50/40 transition-colors ${
-                                    isSelected ? "bg-purple-50/70" : ""
-                                  }`}
+                                  className={`hover:bg-blue-50/40 transition-colors ${isSelected ? "bg-blue-50/70" : ""}`}
                                 >
                                   <td className="py-2.5 px-3 text-center align-middle">
                                     <input
                                       type="checkbox"
                                       checked={isSelected}
                                       onChange={() => toggleSelect(row.id)}
-                                      className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                                      className="w-3.5 h-3.5 rounded border-slate-300 text-[#1680f5] focus:ring-[#1680f5] cursor-pointer"
                                     />
                                   </td>
                                   {/* PI Number */}
                                   <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
-                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
+                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-blue-50/50 text-[#1680f5] border border-blue-200 shadow-2xs">
                                       {item.orderNo || item.piNumber || (row as any).piNumber || "—"}
                                     </span>
                                   </td>
@@ -4201,7 +4397,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     </span>
                                   </td>
                                   <td className="py-2.5 px-2 font-mono font-bold align-middle">
-                                    <span className="text-purple-700">{row.displaySerial}</span>
+                                    <span className="text-[#1680f5]">{row.displaySerial}</span>
                                   </td>
                                   <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
                                     {resolveValidBarcode(item, row.displayBarcode)}
@@ -4234,7 +4430,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       <span
                                         className={`px-1.5 py-0.2 rounded text-[9.5px] font-black border ${
                                           itemFinish === "Colour"
-                                            ? "bg-purple-100 text-purple-800 border-purple-200"
+                                            ? "bg-blue-100 text-blue-800 border-blue-200"
                                             : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                         }`}
                                       >
@@ -4252,7 +4448,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                             <span
                                               className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
                                                 isCurrent
-                                                  ? "bg-teal-600 text-white"
+                                                  ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white"
                                                   : isDone
                                                   ? "bg-emerald-100 text-emerald-700"
                                                   : "bg-slate-100 text-slate-400"
@@ -4274,7 +4470,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         type="button"
                                         size="sm"
                                         onClick={() => completeStage(row.allSerials)}
-                                        className="h-7 px-2.5 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white gap-1 rounded-lg"
+                                        className="h-7 px-2.5 text-xs font-bold bg-gradient-to-r from-teal-500 to-teal-700 hover:bg-teal-700 text-white gap-1 rounded-lg"
                                       >
                                         <Play className="w-3 h-3 fill-current" /> Scan
                                       </Button>
@@ -4342,7 +4538,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 <TableHorizontalScrollWrapper>
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/60">
+                      <tr className="border-b border-slate-100/80 text-[10px] font-extrabold text-[#1680f5] uppercase tracking-widest bg-gradient-to-r from-blue-50/80 to-transparent">
                         {stage !== "Finished" && (
                           <th className="py-2.5 px-3 w-8 text-center">
                             <input
@@ -4350,7 +4546,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               checked={allSelectableSelected}
                               disabled={selectableRows.length === 0}
                               onChange={handleToggleCustomerSelectAll}
-                              className="w-3.5 h-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              className="w-[18px] h-[18px] rounded-md border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                               title={
                                 stage === "DGU" && selectableRows.length === 0
                                   ? "Cannot select all: no DGU units have matching Clear glass cut yet"
@@ -4364,9 +4560,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
                         <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
                         <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
-                        <th className="py-2.5 px-2">
-                          {stage === "DGU" ? "Outer Panel Serial" : stage === "Finished" ? "Unit / Sticker Serial" : "Sticker Serial"}
-                        </th>
+
                         <th className="py-2.5 px-2">
                           {stage === "DGU" ? "Outer Panel Barcode" : "Barcode"}
                         </th>
@@ -4430,7 +4624,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           return (
                             <React.Fragment key={row.id}>
                             <tr
-                              className={`hover:bg-teal-50/30 transition-colors ${
+                              className={`hover:bg-teal-50/50 hover:shadow-inner transition-all duration-200 ${
                                 isSelected ? "bg-teal-50/60" : ""
                               } ${hasPartner && isPartnerExpanded ? "border-b-0 bg-teal-50/20" : ""}`}
                             >
@@ -4459,7 +4653,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
                               {/* PI Number */}
                               <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap font-mono">
-                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-purple-50 text-purple-700 border border-purple-200 shadow-2xs">
+                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded font-mono font-bold text-xs bg-blue-50/50 text-[#1680f5] border border-blue-200 shadow-2xs">
                                   {item.orderNo || item.piNumber || (row as any).piNumber || "—"}
                                 </span>
                               </td>
@@ -4478,59 +4672,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </span>
                               </td>
 
-                              {/* Sticker Serial */}
-                              <td className="py-2.5 px-2 font-mono font-bold align-middle whitespace-nowrap">
-                                <span className="text-purple-700">
-                                  {row.displaySerial}
-                                </span>
-                                {stage === "Lamination" && (
-                                  isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                      DLGU Sub-Assembly
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
-                                      Direct Lamination
-                                    </span>
-                                  )
-                                )}
-                                {stage === "DGU" && (
-                                  row.glassCategory === "DLGU" ? (
-                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                      DLGU Unit (Outer Lite)
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
-                                      DGU Unit (Outer Lite)
-                                    </span>
-                                  )
-                                )}
-                                {stage === "Finished" && (
-                                  row.glassCategory === "DLGU" ? (
-                                    <span className="text-[9.5px] text-purple-700 font-extrabold block whitespace-nowrap">
-                                      DLGU Unit (OP)
-                                    </span>
-                                  ) : row.glassCategory === "DGU" || row.isDguPair ? (
-                                    <span className="text-[9.5px] text-teal-700 font-extrabold block whitespace-nowrap">
-                                      DGU Unit (OP)
-                                    </span>
-                                  ) : row.glassCategory === "Laminated" ? (
-                                    <span className="text-[9.5px] text-amber-700 font-extrabold block whitespace-nowrap">
-                                      Laminated Unit
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9.5px] text-indigo-700 font-extrabold block whitespace-nowrap">
-                                      General Glass
-                                    </span>
-                                  )
-                                )}
-                              </td>
+
 
                               {/* Barcode */}
                               <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px] whitespace-nowrap">
                                 <div>{resolveValidBarcode(item, row.displayBarcode)}</div>
                                 {stage === "DGU" && (
-                                  <span className="text-[9.5px] text-purple-700 block font-mono font-bold">
+                                  <span className="text-[9.5px] text-[#1680f5] block font-mono font-bold">
                                     Scan Target (Colour)
                                   </span>
                                 )}
@@ -4561,7 +4709,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 {stage === "Lamination" && (
                                   isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
                                     <div className="text-[10px] font-semibold flex flex-col gap-0.5 mt-0.5">
-                                      <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold inline-block w-fit">
+                                      <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 font-bold inline-block w-fit">
                                         DLGU Inner Lam • Sub-Assembly Unit
                                       </span>
                                       <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded w-fit">
@@ -4580,8 +4728,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 {stage === "DGU" && (
                                   row.glassCategory === "DLGU" ? (
                                     <>
-                                      <div className="text-[10px] text-purple-800 font-extrabold flex items-center gap-1 mt-0.5">
-                                        <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 font-bold">
+                                      <div className="text-[10px] text-blue-800 font-extrabold flex items-center gap-1 mt-0.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 font-bold">
                                           DLGU Unit • Double Laminated IGU
                                         </span>
                                       </div>
@@ -4616,7 +4764,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 )}
                                 {stage === "Finished" && (
                                   row.glassCategory === "DLGU" ? (
-                                    <div className="text-[10px] text-purple-700 font-medium mt-0.5">
+                                    <div className="text-[10px] text-[#1680f5] font-medium mt-0.5">
                                       Double Laminated Unit (DLGU)
                                     </div>
                                   ) : row.glassCategory === "DGU" || row.isDguPair ? (
@@ -4639,7 +4787,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               <td className="py-2.5 px-2 align-middle whitespace-nowrap">
                                 {stage === "Lamination" ? (
                                   isDlguGlass(item) || (item as any).glassCategory === "DLGU" ? (
-                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                       DLGU (To DGU)
                                     </span>
                                   ) : (
@@ -4649,7 +4797,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   )
                                 ) : stage === "DGU" ? (
                                   row.glassCategory === "DLGU" ? (
-                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                       DLGU Unit
                                     </span>
                                   ) : (
@@ -4658,7 +4806,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     </span>
                                   )
                                 ) : stage === "Finished" && row.glassCategory === "DLGU" ? (
-                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                     DLGU Unit
                                   </span>
                                 ) : stage === "Finished" && (row.glassCategory === "DGU" || row.isDguPair) ? (
@@ -4669,7 +4817,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   <span
                                     className={`px-1.5 py-0.2 rounded text-[9.5px] font-black border ${
                                       itemFinish === "Colour"
-                                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                                        ? "bg-blue-100 text-blue-800 border-blue-200"
                                         : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                     }`}
                                   >
@@ -4689,7 +4837,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         <span
                                           className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
                                             isCurrent
-                                              ? "bg-teal-600 text-white"
+                                              ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white"
                                               : isDone
                                               ? "bg-emerald-100 text-emerald-700"
                                               : "bg-slate-100 text-slate-400"
@@ -4740,7 +4888,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       size="sm"
                                       disabled={loading}
                                       onClick={() => openDispatchModal([row])}
-                                      className="h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shrink-0"
+                                      className="h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white cursor-pointer shrink-0"
                                       title="Dispatch this glass unit to Dispatched History"
                                     >
                                       <Truck className="w-3.5 h-3.5" />
@@ -4754,7 +4902,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       className={`h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 ${
                                         (stage === "DGU" && !row.dguPairReady) || (stage === "Lamination" && !!row.isHolding)
                                           ? "bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 cursor-not-allowed font-extrabold"
-                                          : "bg-teal-600 hover:bg-teal-700 text-white"
+                                          : "bg-gradient-to-r from-teal-500 to-teal-700 hover:bg-teal-700 text-white"
                                       }`}
                                       title={
                                         stage === "DGU" && !row.dguPairReady
@@ -4835,7 +4983,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       {/* Header bar of the expanded IP pane */}
                                       <div className="px-4 py-3 bg-gradient-to-r from-teal-50 via-slate-50 to-indigo-50/40 border-b border-teal-200/80 flex items-center justify-between flex-wrap gap-2">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                          <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                                          <span className="w-7 h-7 rounded-lg bg-gradient-to-r from-teal-500 to-teal-700 text-white flex items-center justify-center shrink-0 shadow-2xs">
                                             <Link2 className="w-4 h-4" />
                                           </span>
                                           <div>
@@ -4856,7 +5004,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                           <span
                                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-black border ${
                                               row.glassCategory === "DLGU"
-                                                ? "bg-purple-100 text-purple-900 border-purple-300"
+                                                ? "bg-blue-100 text-purple-900 border-blue-300"
                                                 : row.glassCategory === "Laminated"
                                                 ? "bg-amber-100 text-amber-900 border-amber-300"
                                                 : "bg-teal-100 text-teal-900 border-teal-300"
@@ -4893,14 +5041,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                           return (
                                             <div
                                               key={p.id || p.serialNumber || pIdx}
-                                              className="bg-white rounded-xl border border-teal-200/90 p-3.5 shadow-2xs hover:border-teal-400 transition-all"
+                                              className="bg-gradient-to-br from-teal-50/80 to-white/60 backdrop-blur-sm rounded-2xl border border-teal-200 p-4 shadow-sm hover:shadow-md hover:border-teal-400 transition-all"
                                             >
                                               <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-slate-100 mb-3">
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                   <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 text-xs font-mono font-black border border-teal-200">
                                                     IP Pane #{pIdx + 1}
                                                   </span>
-                                                  <span className="text-xs font-mono font-black text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                                                  <span className="text-xs font-mono font-black text-[#1680f5] bg-blue-50/50 px-2 py-0.5 rounded border border-blue-200">
                                                     Serial: {p.serialNumber}
                                                   </span>
                                                   <span className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
@@ -4912,7 +5060,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                                   <span
                                                     className={`px-2 py-0.5 rounded text-[10px] font-black border ${
                                                       pFinish === "Colour"
-                                                        ? "bg-purple-100 text-purple-800 border-purple-200"
+                                                        ? "bg-blue-100 text-blue-800 border-blue-200"
                                                         : "bg-cyan-100 text-cyan-800 border-cyan-200"
                                                     }`}
                                                   >
@@ -4972,7 +5120,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                                         <span
                                                           className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold whitespace-nowrap shrink-0 ${
                                                             stg === p.currentStage
-                                                              ? "bg-teal-600 text-white"
+                                                              ? "bg-gradient-to-r from-teal-500 to-teal-700 text-white"
                                                               : p.completedStages?.includes(stg)
                                                               ? "bg-emerald-100 text-emerald-700"
                                                               : "bg-slate-200 text-slate-600"
@@ -5032,7 +5180,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     return (
                       <div
                         key={customer.customerName}
-                        className={`bg-white border border-slate-200/90 rounded-2xl shadow-2xs transition-all overflow-hidden ${
+                        className={`bg-white/80 backdrop-blur-xl border border-white/60 rounded-3xl shadow-[0_8px_30px_rgb(22,128,245,0.05)] hover:shadow-[0_12px_40px_rgb(22,128,245,0.1)] hover:border-[#1680f5]/30 transition-all duration-300 relative overflow-hidden group ${
                           stage === "DGU"
                             ? "hover:border-teal-300"
                             : stage === "Lamination"
@@ -5055,7 +5203,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             {/* Left: Customer Info */}
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <div
-                                className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs ${
+                                className={`w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-sm shrink-0 shadow-lg ${
                                   stage === "DGU"
                                     ? "bg-gradient-to-br from-teal-600 to-cyan-700"
                                     : stage === "Lamination"
@@ -5073,7 +5221,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   </h3>
 
                                   {customer.hasColour && (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                       Coloured
                                     </span>
                                   )}
@@ -5088,7 +5236,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       key={cat}
                                       className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black border ${
                                         cat === "DLGU"
-                                          ? "bg-purple-100 text-purple-900 border-purple-200"
+                                          ? "bg-blue-100 text-purple-900 border-blue-200"
                                           : cat === "DGU"
                                           ? "bg-teal-100 text-teal-900 border-teal-200"
                                           : cat === "Lamination" || cat === "Laminated"
@@ -5167,7 +5315,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     openDispatchModal(customer.rows);
                                   }}
                                   disabled={loading || customer.rows.length === 0}
-                                  className="h-8 px-3 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer shrink-0"
+                                  className="h-8 px-3 text-xs font-black bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer shrink-0"
                                   title={`Dispatch all ${customer.totalUnits} units for ${customer.customerName}`}
                                 >
                                   <Truck className="w-3.5 h-3.5" />
@@ -5197,7 +5345,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         {/* Collapsible Sub-Table for Customer (Rendered only when expanded) */}
                         {isExpanded && (
                           <div className="border-t border-slate-200 bg-slate-50/50 p-3.5">
-                            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                            <div className="ppb-panel p-0 overflow-hidden shadow-[0_4px_20px_rgb(22,128,245,0.04)] border-slate-100/60">
                               {renderStageRowsTable(customer.rows)}
                             </div>
                           </div>
@@ -5230,7 +5378,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           <DialogHeader className="p-5 pb-3 bg-gradient-to-r from-emerald-50 via-teal-50/60 to-emerald-50 border-b border-emerald-200">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-700 text-white flex items-center justify-center shadow-md">
                   <Truck className="w-5 h-5" />
                 </div>
                 <div>
@@ -5269,72 +5417,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </div>
             </div>
 
-            {/* Shipment Form Fields */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                  Delivery Note / Challan # <span className="text-red-500">*</span>
-                </label>
-                <Input
-                  type="text"
-                  value={dispatchDialog.dispatchNoteNo}
-                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, dispatchNoteNo: e.target.value }))}
-                  placeholder="e.g. DN-2026-001"
-                  className="h-9 text-xs font-mono font-bold bg-white border-slate-300"
-                />
-              </div>
 
-              <div>
-                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                  Dispatch Date & Time
-                </label>
-                <Input
-                  type="datetime-local"
-                  value={dispatchDialog.dispatchedAt}
-                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, dispatchedAt: e.target.value }))}
-                  className="h-9 text-xs font-medium bg-white border-slate-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                  Vehicle / Truck # (Optional)
-                </label>
-                <Input
-                  type="text"
-                  value={dispatchDialog.vehicleNo}
-                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, vehicleNo: e.target.value }))}
-                  placeholder="e.g. DXB-89412"
-                  className="h-9 text-xs font-medium bg-white border-slate-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                  Driver Name / Phone (Optional)
-                </label>
-                <Input
-                  type="text"
-                  value={dispatchDialog.driverName}
-                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, driverName: e.target.value }))}
-                  placeholder="e.g. John Doe / 050-1234567"
-                  className="h-9 text-xs font-medium bg-white border-slate-300"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider mb-1">
-                  Dispatch Remarks / Gate Pass (Optional)
-                </label>
-                <Input
-                  type="text"
-                  value={dispatchDialog.remarks}
-                  onChange={(e) => setDispatchDialog((prev) => ({ ...prev, remarks: e.target.value }))}
-                  placeholder="e.g. Loaded on Stillage A4, gate pass issued"
-                  className="h-9 text-xs font-medium bg-white border-slate-300"
-                />
-              </div>
-            </div>
 
             {/* Selected Units Preview List */}
             <div className="space-y-1.5 pt-1">
@@ -5347,7 +5430,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   <div key={row.id || idx} className="p-2.5 flex items-center justify-between text-xs hover:bg-white transition-colors">
                     <div className="flex items-center gap-2 truncate">
                       <span className="font-mono font-bold text-slate-800 shrink-0">#{idx + 1}</span>
-                      <span className="font-mono text-purple-700 font-extrabold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                      <span className="font-mono text-[#1680f5] font-extrabold bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-200">
                         {row.displaySerial || row.item.serialNumber}
                       </span>
                       <span className="font-medium text-slate-700 truncate">{row.item.orderNo || row.item.piNumber}</span>
@@ -5380,9 +5463,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             </Button>
             <Button
               type="button"
-              disabled={dispatchDialog.loading || !dispatchDialog.dispatchNoteNo.trim()}
+              disabled={dispatchDialog.loading}
               onClick={handleConfirmDispatch}
-              className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-5 h-9 rounded-xl shadow-xs cursor-pointer"
+              className="text-xs font-black bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white gap-2 px-5 h-9 rounded-xl shadow-lg cursor-pointer"
             >
               <Truck className="w-4 h-4" />
               <span>{dispatchDialog.loading ? "Dispatching..." : `Confirm & Dispatch (${dispatchDialog.rows.length} Units)`}</span>

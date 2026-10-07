@@ -9,15 +9,22 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     allowedHosts: true, // Allow all ngrok and tunnel hosts automatically
+    hmr: {
+      protocol: process.env.VITE_HMR_PROTOCOL || undefined,
+      host: process.env.VITE_HMR_HOST || undefined,
+    },
     fs: {
-      allow: ["./client", "./shared", "index.html"],
+      allow: ["./client", "./shared", "./public", "./node_modules", "index.html"],
       deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
     },
   },
   optimizeDeps: {
     include: [
       "react",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
       "react-dom",
+      "react-dom/client",
       "react-router-dom",
       "lucide-react",
       "recharts",
@@ -31,6 +38,7 @@ export default defineConfig(({ mode }) => ({
       "clsx",
       "tailwind-merge",
     ],
+    exclude: ["nodemailer"],
   },
   build: {
     outDir: "dist/spa",
@@ -43,7 +51,7 @@ export default defineConfig(({ mode }) => ({
             if (id.includes("xlsx")) return "vendor-xlsx";
             if (id.includes("recharts")) return "vendor-charts";
             if (id.includes("lucide-react")) return "vendor-icons";
-            if (id.includes("react/") || id.includes("react-dom/") || id.includes("react-router-dom/")) {
+            if (id.includes("react") || id.includes("react-dom") || id.includes("react-router-dom")) {
               return "vendor-react";
             }
           }
@@ -53,6 +61,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [react(), expressPlugin()],
   resolve: {
+    dedupe: ["react", "react-dom", "react-router-dom"],
     alias: {
       "@": path.resolve(__dirname, "./client"),
       "@shared": path.resolve(__dirname, "./shared"),

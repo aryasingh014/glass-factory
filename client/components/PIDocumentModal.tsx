@@ -115,13 +115,13 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
         {/* Header Bar */}
         <DialogHeader className="flex flex-row items-center justify-between px-6 py-3.5 bg-white border-b border-slate-200 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shadow-xs">
-              <FileSpreadsheet className="w-5 h-5 text-purple-700" />
+            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+              <FileSpreadsheet className="w-5 h-5 text-white" />
             </div>
             <div>
               <DialogTitle className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                 <span>Batch Production Glass Details</span>
-                <span className="font-mono text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-lg text-xs sm:text-sm">
+                <span className="font-mono text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg text-xs sm:text-sm">
                   Batch {batchNumberFormatted}
                 </span>
                 <span

@@ -306,7 +306,7 @@ export function loadDatabaseFromDisk(force = false): void {
             (i) => i.piId === pi.id || i.piNumber === pi.piNumber || i.piId === cleanId || i.piNumber === cleanPiNo
           );
           if (piItems.length > 0) {
-            const comp = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
+            const comp = piItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected").length;
             if (pi.completedItemsCount !== comp) {
               pi.completedItemsCount = comp;
               dataChanged = true;
@@ -531,9 +531,9 @@ export const handleGetPIs: RequestHandler = (req, res) => {
         (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
     );
     if (piItems.length > 0) {
-      const completedCount = piItems.filter((i) => i.currentStage === "Finished" && i.status !== "Rejected").length;
+      const completedCount = piItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected").length;
       pi.completedItemsCount = completedCount;
-      const newStatus = completedCount >= piItems.length ? "Completed" : (completedCount > 0 || piItems.some((i) => i.currentStage !== "Cutting" || i.completedStages?.length) ? "In Production" : (pi.status || "Pending"));
+      const newStatus = completedCount >= piItems.length && piItems.length > 0 ? "Completed" : (completedCount > 0 || piItems.some((i) => i.currentStage !== "Cutting" || i.completedStages?.length) ? "In Production" : (pi.status || "Pending"));
       if (pi.status !== newStatus) {
         pi.status = newStatus;
         statusChanged = true;
