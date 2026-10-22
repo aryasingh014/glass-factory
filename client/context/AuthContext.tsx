@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { UserRole, RolePermissions } from "@shared/api";
+import { UserRole, RolePermissions, ProductionStage } from "@shared/api";
 import { toast } from "sonner";
 
 export interface UserProfile {
@@ -8,6 +8,7 @@ export interface UserProfile {
   email: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
 }
 
 interface AuthContextType {
@@ -298,10 +299,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return tab !== "settings";
     }
     if (isOperator) {
-      return ["cutting", "pairing", "dgu", "lamination", "finished"].includes(tab);
+      if (user?.assignedStages && user.assignedStages.length > 0) {
+        const allowedTabs = user.assignedStages.map((s) => s.toLowerCase());
+        return allowedTabs.includes(tab.toLowerCase()) || tab === "finished";
+      }
+      return ["cutting", "polishing", "pairing", "dgu", "lamination", "finished"].includes(tab);
     }
     return false;
-  }, [isAdmin, isSupervisor, isOperator]);
+  }, [isAdmin, isSupervisor, isOperator, user]);
 
   const canPerformAction = useCallback((action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb"): boolean => {
     if (isAdmin) return true;

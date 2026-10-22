@@ -1,5 +1,5 @@
-export type ProductionStage = "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished" | "Dispatched";
-export type ProcessRoute = "Route A (Cut -> Finish)" | "Route B (Cut -> Pairing -> DGU -> Finish)" | "Route C (Cut -> Lam -> Finish)" | "Route D (Cut -> Pairing -> Lam -> Pairing -> DGU -> Finish)";
+export type ProductionStage = "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished" | "Dispatched";
+export type ProcessRoute = "Route A (Cut -> Finish)" | "Route B (Cut -> Pairing -> DGU -> Finish)" | "Route C (Cut -> Lam -> Finish)" | "Route D (Cut -> Pairing -> Lam -> Pairing -> DGU -> Finish)" | "Route E (Cut -> Polish -> Pairing -> DGU -> Finish)";
 export type GlassStatus = "Pending" | "In Production" | "Completed" | "Rejected" | "Reworking";
 export type UserRole = "Admin" | "Operator" | "Supervisor";
 
@@ -42,6 +42,8 @@ export interface GlassItem {
   delLocation: string;  // FACTORY / SITE
   sketch?: string;      // SKETCH-01
   remarks?: string;     // Ground & 1st Floor-Sliding Glass...
+  stickerRoute?: string;// e.g. CUT/POLISH ALL SIDES/HOLE/TMP/HST or CUT/EDGE/TMP
+  hasPolish?: boolean;  // true if route requires Polishing workstation
   processRoute: ProductionStage[]; // array of stages e.g. ["Cutting", "Pairing", "DGU", "Finished"]
   currentStage: ProductionStage;
   status: GlassStatus;
@@ -158,6 +160,7 @@ export interface DashboardStats {
   pendingPI: number;
   completedPI: number;
   pendingCutting: number;
+  pendingPolishing?: number;
   pendingPairing?: number;
   pendingLamination: number;
   pendingDGU: number;
@@ -165,6 +168,7 @@ export interface DashboardStats {
   dispatchedItems?: number;
   rejectItems: number;
   reworkItems: number;
+  userThroughputByStage?: Record<string, Record<string, { stickers: number; sqm: number; name?: string; username?: string }>>;
 }
 
 export interface ReportsResponse {
@@ -195,12 +199,25 @@ export interface DefectAnalytics {
   stage: ProductionStage | "General";
 }
 
+export interface OperatorStageMetric {
+  completedCount: number;
+  completedSqm: number;
+  rejectCount: number;
+  qualityRate: number;
+}
+
 export interface OperatorAnalytics {
   operator: string;
+  name?: string;
+  username?: string;
+  role?: string;
+  assignedStages?: string[];
   operationsCount: number;
   completedCount: number;
+  completedSqm?: number;
   rejectCount: number;
   qualityRate: number; // percentage 0-100
+  stageBreakdown?: Record<string, OperatorStageMetric>;
 }
 
 export interface ProductionTrendPoint {
@@ -293,6 +310,7 @@ export interface UserRecord {
   email: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
   isActive: boolean;
   createdAt: string;
   lastLoginAt?: string;
@@ -304,6 +322,7 @@ export interface UserSession {
   username: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
   ip: string;
   userAgent?: string;
   loginTime: string;
@@ -325,5 +344,38 @@ export interface RolePermissions {
   canManageSettings: boolean;
   canClearData: boolean;
 }
+
+// ==========================================
+// Barcode Configuration & Prefix Management
+// ==========================================
+
+export const BARCODE_PREFIX: string =
+  (typeof process !== "undefined" && process?.env?.BARCODE_PREFIX) || "10126270";
+
+export const KNOWN_BARCODE_PREFIXES: string[] = Array.from(
+  new Set([
+    BARCODE_PREFIX,
+    "10126270",
+    "10126",
+    "101",
+    ...(typeof process !== "undefined" && process?.env?.EXTRA_BARCODE_PREFIXES
+      ? String(process.env.EXTRA_BARCODE_PREFIXES).split(",").map((p) => p.trim())
+      : []),
+  ].filter(Boolean))
+);
+
+export function formatGenericBarcode(
+  sfoNo?: string,
+  seqNo?: number | string,
+  prefix: string = BARCODE_PREFIX
+): string {
+  const cleanSfo = String(sfoNo || "1344").replace(/[^0-9]/g, "");
+  const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
+  const seqPad = String(seqNo || "16").padStart(4, "0").slice(-4);
+  return `${prefix}${sfoPad}${seqPad}`;
+}
+
+export const formatSejalBarcode = formatGenericBarcode;
+
 
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, useLocation, Link } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,6 @@ import {
   EyeOff,
   ArrowRight,
   AlertCircle,
-  Home,
   Settings,
   LayoutGrid,
   TrendingUp,
@@ -34,7 +33,7 @@ const FEATURE_CARDS = [
 ];
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -163,6 +162,13 @@ export default function LoginPage() {
 
   const from = (location.state as any)?.from?.pathname || "/app";
 
+  // Automatically navigate to app if session is already active
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      navigate(from, { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate, from]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!identifier.trim() || !password) {
@@ -226,17 +232,11 @@ export default function LoginPage() {
           />
         </div>
 
-        {/* Return to Homepage */}
-        <Link
-          to="/"
-          className="inline-flex items-center gap-2 text-[11.5px] font-bold text-white hover:text-blue-200 transition-all duration-200 bg-black/20 hover:bg-black/35 backdrop-blur-md px-4 py-2 rounded-full border border-white/20 hover:border-white/35 shadow-lg"
-        >
-          <div className="w-5 h-5 rounded-full border border-white/40 flex items-center justify-center">
-            <Home className="w-3 h-3 text-white" />
-          </div>
-          <span>Return to Homepage</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </Link>
+        {/* System Online Status Badge */}
+        <div className="inline-flex items-center gap-2 text-[11.5px] font-semibold text-slate-200 bg-black/30 backdrop-blur-md px-4 py-2 rounded-full border border-white/15 shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Operations System Online</span>
+        </div>
       </header>
 
       {/* ─── Main Stage ─── */}
@@ -459,9 +459,28 @@ export default function LoginPage() {
                 </Button>
               </form>
 
+              {/* ── Quick Admin Login ── */}
+              <div className="pt-3 mt-1 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdentifier("admin");
+                    setPassword("Admin@123");
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs font-bold text-slate-700 hover:text-blue-700 transition-colors flex items-center justify-between cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                    <span>Fill Administrator Credentials</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">admin • Admin@123</span>
+                </button>
+              </div>
+
               {/* ── Card Footer ── */}
-              <div className="pt-3 mt-3 border-t border-slate-100 text-[10.5px] text-slate-400 flex items-center justify-center font-medium">
+              <div className="pt-3 mt-3 border-t border-slate-100 text-[10.5px] text-slate-400 flex items-center justify-between font-medium">
                 <span>Sejal Glass Operations ERP</span>
+                <span className="text-slate-400 font-medium">Production Terminal</span>
               </div>
             </div>
           </div>

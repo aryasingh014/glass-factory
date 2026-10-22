@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
 import fs from "fs";
 import path from "path";
-import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification } from "@shared/api";
+import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification, BARCODE_PREFIX, formatGenericBarcode } from "../../shared/api";
 import { broadcastUpdate } from "./production";
 import { logger } from "../lib/logger";
 
@@ -58,6 +58,40 @@ export function loadDatabaseFromDisk(force = false): void {
           }
         });
 
+        // Auto-heal unpaired DGU/Lamination items that jumped to DGU or Finished without a partner pane
+        glassItemsDatabase.forEach((item) => {
+          if (!Array.isArray(item.processRoute) || !item.processRoute.includes("Pairing")) return;
+          if (item.currentStage === "Cutting") return;
+
+          if (item.currentStage === "DGU" || item.currentStage === "Finished" || item.status === "Completed") {
+            const isDgu = item.glassCategory === "DGU" || item.processRoute.includes("DGU");
+            const isCol = item.colorOrClear === "Colour" || String(item.category || "").toLowerCase().includes("colour");
+
+            const hasPartner = glassItemsDatabase.some((other) => {
+              if (other.id === item.id) return false;
+              if (other.status === "Rejected") return false;
+              if ((item as any).dguPairId && (other as any).dguPairId === (item as any).dguPairId) return true;
+              const isOtherCol = other.colorOrClear === "Colour" || String(other.category || "").toLowerCase().includes("colour");
+              if (isDgu && isOtherCol === isCol) return false;
+              if (other.posNo && item.posNo && String(other.posNo).trim() !== String(item.posNo).trim()) return false;
+              if (Math.abs((other.width || 0) - (item.width || 0)) >= 2) return false;
+              if (Math.abs((other.height || 0) - (item.height || 0)) >= 2) return false;
+              return other.currentStage === "DGU" || other.currentStage === "Finished" || other.status === "Completed";
+            });
+
+            if (!hasPartner) {
+              logger.warn(`[Auto-Heal] Resetting unpaired glass pane ${item.serialNumber} (${item.barcode}) from ${item.currentStage} back to Pairing Buffer.`);
+              item.currentStage = "Pairing";
+              item.status = "Pending";
+              item.completedStages = ["Cutting"];
+              delete (item as any).isDguReduced;
+              delete (item as any).dguPairId;
+              delete (item as any).lamPairId;
+              dataChanged = true;
+            }
+          }
+        });
+
         // Normalize batches: 1 PDF is strictly 100% Colour or 100% Clear (never Mixed)
         const colourRegex = /emicool|colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
         let dataChanged = false;
@@ -68,10 +102,9 @@ export function loadDatabaseFromDisk(force = false): void {
           const b = String(item.barcode || "").trim();
           if (!b || /width|height|order|customer|project|batch|glass/i.test(b) || /^[A-Z]+$/i.test(b) || !/\d/.test(b)) {
             const cleanSfo = String(item.sfoNo || item.piNumber || "1344").replace(/[^0-9]/g, "");
-            const sfoPad = (cleanSfo || "1344").padStart(5, "0").slice(-5);
             const numPart = item.serialNumber ? String(item.serialNumber).replace(/\D/g, "") : "";
             const seqPad = (numPart || String(idx + 1)).padStart(4, "0").slice(-4);
-            const fixedBarcode = `10126270${sfoPad}${seqPad}`;
+            const fixedBarcode = formatGenericBarcode(cleanSfo, seqPad, BARCODE_PREFIX);
             item.barcode = fixedBarcode;
             item.qrId = `QR-${fixedBarcode}`;
             if (item.serialNumber) {
@@ -165,7 +198,7 @@ export function loadDatabaseFromDisk(force = false): void {
 
           batchItems.forEach((item) => {
             // Preserve explicit category if set; otherwise use batch category
-            const itemText = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
+            const itemText = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""} ${item.makeup || ""} ${(item as any).stickerRoute || ""}`.toLowerCase();
             const isItemDlgu = item.glassCategory === "DLGU" || batchCat === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText));
             const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
             const isItemDgu = !isItemDlgu && (item.glassCategory === "DGU" || /spacer|dgu|igu/i.test(itemText));
@@ -176,31 +209,51 @@ export function loadDatabaseFromDisk(force = false): void {
               dataChanged = true;
             }
 
+            const hasPolish = (item as any).hasPolish === true || /\bpolish\b/i.test(itemText) || /\bpolished\b/i.test(itemText) || (item.currentStage === "Polishing");
+
             let expectedRoute: ProductionStage[];
             if (resolvedCat === "DLGU") {
               const isLamPane = item.colorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(itemText);
               expectedRoute = isLamPane
-                ? ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
-                : ["Cutting", "Pairing", "DGU", "Finished"];
+                ? (hasPolish
+                    ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
+                    : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
+                : (hasPolish
+                    ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                    : ["Cutting", "Pairing", "DGU", "Finished"]);
               if (!item.dlguPhase) {
                 item.dlguPhase = isLamPane ? "LamPairing" : "DguPairing";
                 dataChanged = true;
               }
             } else if (resolvedCat === "Lamination") {
-              expectedRoute = ["Cutting", "Pairing", "Lamination", "Finished"];
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"]
+                : ["Cutting", "Pairing", "Lamination", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
+            } else if (resolvedCat === "DGU") {
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                : ["Cutting", "Pairing", "DGU", "Finished"];
               if (item.dlguPhase) {
                 delete item.dlguPhase;
                 dataChanged = true;
               }
             } else {
-              expectedRoute = ["Cutting", "Pairing", "DGU", "Finished"];
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Finished"]
+                : ["Cutting", "Finished"];
               if (item.dlguPhase) {
                 delete item.dlguPhase;
                 dataChanged = true;
               }
             }
 
-            if (JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
+            // Only update route if item is at Cutting or already has Polishing, to avoid disrupting downstream items
+            const isAdvancedNonPolish = item.currentStage && item.currentStage !== "Cutting" && item.currentStage !== "Polishing";
+            if (!isAdvancedNonPolish && JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
               item.processRoute = expectedRoute;
               dataChanged = true;
             }
@@ -235,7 +288,7 @@ export function loadDatabaseFromDisk(force = false): void {
               dataChanged = true;
             }
 
-            const itemText = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
+            const itemText = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""} ${item.makeup || ""} ${(item as any).stickerRoute || ""}`.toLowerCase();
             const isItemDlgu = item.glassCategory === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText));
             const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
             const isItemDgu = !isItemDlgu && (item.glassCategory === "DGU" || /spacer|dgu|igu/i.test(itemText));
@@ -246,31 +299,51 @@ export function loadDatabaseFromDisk(force = false): void {
               dataChanged = true;
             }
 
+            const hasPolish = (item as any).hasPolish === true || /\bpolish\b/i.test(itemText) || /\bpolished\b/i.test(itemText) || (item.currentStage === "Polishing");
+
             let expectedRoute: ProductionStage[];
             if (resolvedCat === "DLGU") {
               const isLamPane = item.colorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(itemText);
               expectedRoute = isLamPane
-                ? ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
-                : ["Cutting", "Pairing", "DGU", "Finished"];
+                ? (hasPolish
+                    ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
+                    : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
+                : (hasPolish
+                    ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                    : ["Cutting", "Pairing", "DGU", "Finished"]);
               if (!item.dlguPhase) {
                 item.dlguPhase = isLamPane ? "LamPairing" : "DguPairing";
                 dataChanged = true;
               }
             } else if (resolvedCat === "Lamination") {
-              expectedRoute = ["Cutting", "Pairing", "Lamination", "Finished"];
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"]
+                : ["Cutting", "Pairing", "Lamination", "Finished"];
+              if (item.dlguPhase) {
+                delete item.dlguPhase;
+                dataChanged = true;
+              }
+            } else if (resolvedCat === "DGU") {
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                : ["Cutting", "Pairing", "DGU", "Finished"];
               if (item.dlguPhase) {
                 delete item.dlguPhase;
                 dataChanged = true;
               }
             } else {
-              expectedRoute = ["Cutting", "Pairing", "DGU", "Finished"];
+              expectedRoute = hasPolish
+                ? ["Cutting", "Polishing", "Finished"]
+                : ["Cutting", "Finished"];
               if (item.dlguPhase) {
                 delete item.dlguPhase;
                 dataChanged = true;
               }
             }
 
-            if (JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
+            // Only update route if item is at Cutting or already has Polishing, to avoid disrupting downstream items
+            const isAdvancedNonPolish = item.currentStage && item.currentStage !== "Cutting" && item.currentStage !== "Polishing";
+            if (!isAdvancedNonPolish && JSON.stringify(item.processRoute) !== JSON.stringify(expectedRoute)) {
               item.processRoute = expectedRoute;
               dataChanged = true;
             }

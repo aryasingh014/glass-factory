@@ -37,6 +37,7 @@ import {
   ArrowDown,
   Truck,
   Building2,
+  Briefcase,
   Users,
   ClipboardList,
 } from "lucide-react";
@@ -536,38 +537,43 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   // Customer Grouped View State (Default Closed)
   const [expandedBufferCustomers, setExpandedBufferCustomers] = useState<Record<string, boolean>>({});
 
-  const toggleBufferCustomerExpanded = (customerName: string) => {
+  const toggleBufferCustomerExpanded = (key: string) => {
     setExpandedBufferCustomers((prev) => ({
       ...prev,
-      [customerName]: !prev[customerName],
+      [key]: !prev[key],
     }));
   };
 
-  const isBufferCustomerExpanded = (customerName: string) => {
-    return Boolean(expandedBufferCustomers[customerName]); // Closed by default!
+  const isBufferCustomerExpanded = (key: string) => {
+    return Boolean(expandedBufferCustomers[key]); // Closed by default!
   };
 
   const setAllBufferCustomersExpanded = (expand: boolean) => {
     const newState: Record<string, boolean> = {};
     groupedCustomerRows.forEach((g) => {
-      newState[g.customerName] = expand;
+      newState[g.groupKey] = expand;
     });
     setExpandedBufferCustomers(newState);
   };
 
   const groupedCustomerRows = useMemo(() => {
-    const map = new Map<string, typeof filteredRows>();
+    const map = new Map<string, { customerName: string; projectName: string; rows: typeof filteredRows }>();
 
     filteredRows.forEach((row) => {
       const cust = (row.customerName || (row as any).clientName || "Customer").trim();
-      if (!map.has(cust)) {
-        map.set(cust, []);
+      const proj = (row.projectName || "").trim();
+      const groupKey = proj ? `${cust}:::${proj}` : `${cust}:::(No Project)`;
+
+      if (!map.has(groupKey)) {
+        map.set(groupKey, { customerName: cust, projectName: proj, rows: [] });
       }
-      map.get(cust)!.push(row);
+      map.get(groupKey)!.rows.push(row);
     });
 
     const groups: Array<{
+      groupKey: string;
       customerName: string;
+      projectName: string;
       rows: typeof filteredRows;
       totalPositions: number;
       totalPieces: number;
@@ -579,13 +585,14 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       cutSqm: number;
       remainingSqm: number;
       projects: string[];
+      pdfFiles: string[];
       hasColour: boolean;
       hasClear: boolean;
       isFullyCut: boolean;
       progressPct: number;
     }> = [];
 
-    map.forEach((rows, customerName) => {
+    map.forEach(({ customerName, projectName, rows }, groupKey) => {
       let totalPieces = 0;
       let cutPieces = 0;
       let remainingPieces = 0;
@@ -596,6 +603,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       let hasColour = false;
       let hasClear = false;
       const projectsSet = new Set<string>();
+      const pdfFilesSet = new Set<string>();
+      if (projectName) projectsSet.add(projectName);
 
       rows.forEach((r) => {
         totalPieces += r.totalQty;
@@ -608,6 +617,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         if (r.finish === "Colour") hasColour = true;
         else hasClear = true;
         if (r.projectName) projectsSet.add(r.projectName);
+
+        const parentPI = pis.find((p) => p.id === r.piId || p.piNumber === r.piNumber);
+        if (parentPI?.fileName) pdfFilesSet.add(parentPI.fileName);
+        r.rawItems.forEach((it) => {
+          if ((it as any).fileName) pdfFilesSet.add((it as any).fileName);
+        });
       });
 
       const readyPairs = Math.floor(
@@ -620,7 +635,9 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       const progressPct = totalPieces > 0 ? Math.round((cutPieces / totalPieces) * 100) : 0;
 
       groups.push({
+        groupKey,
         customerName,
+        projectName,
         rows,
         totalPositions: rows.length,
         totalPieces,
@@ -632,6 +649,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         cutSqm,
         remainingSqm,
         projects: Array.from(projectsSet),
+        pdfFiles: Array.from(pdfFilesSet),
         hasColour,
         hasClear,
         isFullyCut,
@@ -640,7 +658,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     });
 
     return groups;
-  }, [filteredRows]);
+  }, [filteredRows, pis]);
 
   // Total counts across categories
   const dguStickerCount = consolidatedRows
@@ -772,6 +790,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serialNumbers,
+          stage: "Pairing",
+          currentStage: "Pairing",
           advanceQty: advanceQty ?? 1,
           advanceAll: advanceAll ?? true,
           operator: operator || "Operator",
@@ -1514,12 +1534,12 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         <div className="space-y-3">
             {groupedCustomerRows.length > 0 ? (
               groupedCustomerRows.map((customer) => {
-                const isExpanded = isBufferCustomerExpanded(customer.customerName);
+                const isExpanded = isBufferCustomerExpanded(customer.groupKey);
                 const isCompleted = customer.isFullyCut || (customer.totalPieces > 0 && customer.cutPieces >= customer.totalPieces);
 
                 return (
                   <div
-                    key={customer.customerName}
+                    key={customer.groupKey}
                     className={`ppb-panel p-0 overflow-hidden transition-all duration-300 ${
                       isCompleted
                         ? "border-2 border-emerald-500 shadow-[0_8px_30px_rgb(16,185,129,0.12)]"
@@ -1528,7 +1548,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                   >
                     {/* Customer Summary Card Header */}
                     <div
-                      onClick={() => toggleBufferCustomerExpanded(customer.customerName)}
+                      onClick={() => toggleBufferCustomerExpanded(customer.groupKey)}
                       className={`w-full m-0 p-4 sm:p-5 cursor-pointer select-none transition-all duration-300 border-b-0 relative overflow-hidden group flex items-start md:items-center justify-between gap-4 flex-col md:flex-row ${
                         isCompleted
                           ? "bg-gradient-to-r from-emerald-50/80 to-teal-50/40 hover:from-emerald-100/60"
@@ -1553,12 +1573,24 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h3
-                              className={`text-[17px] font-black tracking-tight truncate ${
-                                isCompleted ? "text-emerald-950" : "text-slate-900"
-                              }`}
+                              className="text-[17px] font-black tracking-tight truncate text-rose-700 flex items-center gap-1.5"
+                              title={customer.pdfFiles && customer.pdfFiles.length > 0 ? customer.pdfFiles.join(', ') : customer.customerName}
                             >
-                              {customer.customerName}
+                              <FileText className="w-4.5 h-4.5 text-rose-500 shrink-0" />
+                              <span className="truncate">
+                                {customer.pdfFiles && customer.pdfFiles.length > 0
+                                  ? customer.pdfFiles.join(', ')
+                                  : customer.customerName}
+                              </span>
                             </h3>
+
+                            {customer.projectName && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
+                                <Briefcase className="w-3 h-3 text-blue-600" />
+                                {customer.projectName}
+                              </span>
+                            )}
+
                             {customer.hasColour && (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                 Coloured
@@ -1585,8 +1617,21 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                            {customer.projects.length > 0 ? customer.projects.join(" • ") : "Standard Shop Floor Order"}
+
+                          <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span>{customer.customerName}</span>
+                            </span>
+                            {customer.projectName && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <span className="flex items-center gap-1">
+                                  <span className="text-slate-400 font-semibold">Project:</span>
+                                  <span className="font-bold text-slate-700">{customer.projectName}</span>
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1594,11 +1639,16 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                       {/* Right: Quantities, Progress & Accordion Trigger */}
                       <div className="flex items-center gap-5 shrink-0 justify-between md:justify-end w-full md:w-auto mt-2 md:mt-0">
                         <div className="text-left md:text-right">
-                          <div className="font-mono text-xs font-black text-slate-900">
-                            <span className={isCompleted ? "text-emerald-700 font-extrabold" : "text-indigo-700"}>
-                              {customer.totalPositions} Positions
-                            </span>
-                            <span className="text-slate-400 mx-1.5">•</span>
+                          <div className="font-mono text-xs font-black text-slate-900 flex items-center justify-end gap-1.5 flex-wrap">
+                            {customer.pdfFiles && customer.pdfFiles.length > 0 && (
+                              <>
+                                <span className="text-rose-700 font-bold inline-flex items-center gap-0.5" title={`Source: ${customer.pdfFiles.join(', ')}`}>
+                                  <FileText className="w-3 h-3 text-rose-500" />
+                                  {customer.pdfFiles.length} {customer.pdfFiles.length === 1 ? 'PDF' : 'PDFs'}
+                                </span>
+                                <span className="text-slate-400">•</span>
+                              </>
+                            )}
                             <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
                               {customer.cutPieces}/{customer.totalPieces} Cut
                             </span>

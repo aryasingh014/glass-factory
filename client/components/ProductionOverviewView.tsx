@@ -50,7 +50,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
   onNavigateTab,
   onOpenPIDetails,
 }) => {
-  const [stageFilter, setStageFilter] = useState<"ALL" | "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
+  const [stageFilter, setStageFilter] = useState<"ALL" | "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
   const [stationMenuOpen, setStationMenuOpen] = useState(false);
   const stationMenuRef = useRef<HTMLDivElement>(null);
@@ -81,6 +81,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
     // Stage counts (Individual Glass Panes - exclude dispatched items which belong only in Dispatched History)
     const cuttingItemsList = items.filter((i) => !isDispatchedItem(i) && (i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
+    const polishingItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Polishing" && i.status !== "Rejected");
     const pairingItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Pairing" && i.status !== "Rejected");
     const dguItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "DGU" && i.status !== "Rejected");
     const laminationItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Lamination" && i.status !== "Rejected");
@@ -89,6 +90,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const reworkItemsList = items.filter((i) => i.status === "Reworking" || ((i as any).reworkCount && (i as any).reworkCount > 0));
 
     const cuttingCount = cuttingItemsList.length;
+    const polishingCount = polishingItemsList.length;
     const pairingCount = pairingItemsList.length;
     const dguCount = dguItemsList.length;
     const laminationCount = laminationItemsList.length;
@@ -98,14 +100,15 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
     // SQMs
     const cuttingSqm = parseFloat(cuttingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const polishingSqm = parseFloat(polishingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const pairingSqm = parseFloat(pairingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const dguSqm = parseFloat(dguItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const laminationSqm = parseFloat(laminationItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const finishedSqm = parseFloat(finishedItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
-    // In Progress Quantity (Active panes in Cutting, Pairing, DGU, Lamination)
-    const inProgressCount = cuttingCount + pairingCount + dguCount + laminationCount;
-    const inProgressSqm = parseFloat((cuttingSqm + pairingSqm + dguSqm + laminationSqm).toFixed(2));
+    // In Progress Quantity (Active panes in Cutting, Polishing, Pairing, DGU, Lamination)
+    const inProgressCount = cuttingCount + polishingCount + pairingCount + dguCount + laminationCount;
+    const inProgressSqm = parseFloat((cuttingSqm + polishingSqm + pairingSqm + dguSqm + laminationSqm).toFixed(2));
 
     // Pending Cutting / Unprocessed Panes
     const pendingCuttingCount = cuttingItemsList.filter((i) => !i.completedStages || i.completedStages.length === 0).length;
@@ -181,6 +184,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       cuttingColour,
       cuttingClear,
       distinctCuttingSheets,
+      polishingCount,
+      polishingSqm,
       pairingCount,
       pairingSqm,
       pairingColour,
@@ -232,6 +237,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       sfoNo: string;
       items: GlassItem[];
       cuttingCount: number;
+      polishingCount: number;
       pairingCount: number;
       dguCount: number;
       laminationCount: number;
@@ -241,7 +247,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       totalSqm: number;
       finish: "Clear" | "Colour";
       glassTypes: Set<string>;
-      primaryStage: "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished";
+      primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished";
       progress: number;
       createdAt: string | Date;
       fileName?: string;
@@ -262,6 +268,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           fileName: parentPI?.fileName || (item as any).fileName || "",
           items: [],
           cuttingCount: 0,
+          polishingCount: 0,
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
@@ -289,6 +296,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       if (isDispatchedItem(item)) {
         // Dispatched items belong only in Dispatched History
       } else if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
+      else if (st === "polishing") b.polishingCount += itemPieces;
       else if (st === "pairing") b.pairingCount += itemPieces;
       else if (st === "dgu") b.dguCount += itemPieces;
       else if (st === "lamination") b.laminationCount += itemPieces;
@@ -308,6 +316,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           fileName: p.fileName || "",
           items: [],
           cuttingCount: p.totalQty || p.itemsCount || 0,
+          polishingCount: 0,
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
@@ -337,8 +346,9 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
       const finish: "Clear" | "Colour" = isColourBatch ? "Colour" : "Clear";
 
-      let primaryStage: "Cutting" | "Pairing" | "DGU" | "Lamination" | "Finished" = "Cutting";
+      let primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished" = "Cutting";
       if (b.cuttingCount > 0) primaryStage = "Cutting";
+      else if (b.polishingCount > 0) primaryStage = "Polishing";
       else if (b.pairingCount > 0) primaryStage = "Pairing";
       else if (b.dguCount > 0) primaryStage = "DGU";
       else if (b.laminationCount > 0) primaryStage = "Lamination";
@@ -370,6 +380,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     return batchRows.filter((b) => {
       if (stageFilter !== "ALL" && b.primaryStage !== stageFilter) {
         if (stageFilter === "Cutting" && b.cuttingCount === 0) return false;
+        if (stageFilter === "Polishing" && b.polishingCount === 0) return false;
         if (stageFilter === "Pairing" && b.pairingCount === 0) return false;
         if (stageFilter === "DGU" && b.dguCount === 0) return false;
         if (stageFilter === "Lamination" && b.laminationCount === 0) return false;
@@ -398,8 +409,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <Factory className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl font-black text-slate-900 tracking-tight">Production Pipeline Overview</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight whitespace-nowrap">Production Pipeline Overview</h2>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                 Dubai Plant Facility
               </span>
@@ -524,6 +535,28 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
                     {metrics.cuttingCount} Panes
+                  </span>
+                </button>
+
+                {/* Polishing Workstation */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("polishing");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-cyan-50 text-slate-800 hover:text-cyan-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Polishing Workstation</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Edge Grinding & Polishing</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-cyan-100 text-cyan-800 border border-cyan-200">
+                    {metrics.polishingCount} Panes
                   </span>
                 </button>
 
@@ -670,24 +703,28 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         <section className="ppb-panel">
           <div className="ppb-panel-heading">
             <div><Activity className="ppb-heading-icon" size={20} /><h3>Stage-Wise Workflows</h3></div>
-            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Cutting ➔ Assembly ➔ Dispatch</div>
+            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Cutting ➔ Polishing ➔ Assembly ➔ Dispatch</div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
               <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={18} /></span>
               <div><strong style={{fontSize:'11px'}}>1. Cutting</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.cuttingCount}</b> Panes</span></div>
             </div>
+            <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => onNavigateTab("polishing")} style={{cursor: 'pointer'}}>
+              <span className="ppb-queue-icon ppb-queue-icon-cyan text-cyan-600 bg-cyan-50"><Sparkles size={18} /></span>
+              <div><strong style={{fontSize:'11px'}}>2. Polishing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.polishingCount}</b> Panes</span></div>
+            </div>
             <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
               <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>2. Pairing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.pairingCount}</b> Panes</span></div>
+              <div><strong style={{fontSize:'11px'}}>3. Pairing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.pairingCount}</b> Panes</span></div>
             </div>
             <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
               <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>3. Assembly</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
+              <div><strong style={{fontSize:'11px'}}>4. Assembly</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
             </div>
             <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
               <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>4. Dispatch</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.finishedCount}</b> Ready</span></div>
+              <div><strong style={{fontSize:'11px'}}>5. Dispatch</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.finishedCount}</b> Ready</span></div>
             </div>
           </div>
         </section>
@@ -756,7 +793,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             {/* Stage Filters */}
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-              {(["ALL", "Cutting", "Pairing", "DGU", "Lamination", "Finished"] as const).map((st) => (
+              {(["ALL", "Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"] as const).map((st) => (
                 <button
                   key={st}
                   onClick={() => setStageFilter(st)}
@@ -871,6 +908,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                         </span>
                         <span
                           className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
+                            b.polishingCount > 0 ? "bg-cyan-100 text-cyan-800 border border-cyan-200" : "bg-slate-100 text-slate-400"
+                          }`}
+                          title="Polishing Workstation Panes"
+                        >
+                          Polish: {b.polishingCount}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
                             b.pairingCount > 0 ? "bg-indigo-100 text-indigo-800 border border-indigo-200" : "bg-slate-100 text-slate-400"
                           }`}
                           title="Pairing Buffer Panes"
@@ -923,6 +968,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (b.primaryStage === "Cutting") onNavigateTab("cutting");
+                          else if (b.primaryStage === "Polishing") onNavigateTab("polishing");
                           else if (b.primaryStage === "Pairing") onNavigateTab("pairing");
                           else if (b.primaryStage === "DGU") onNavigateTab("dgu");
                           else if (b.primaryStage === "Lamination") onNavigateTab("lamination");

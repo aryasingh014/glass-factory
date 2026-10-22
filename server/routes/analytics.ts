@@ -19,6 +19,7 @@ import {
   reworkDatabase,
 } from "./pi";
 import { logger } from "../lib/logger";
+import { getAllUserRecords } from "../lib/users";
 
 function isDlguGlass(item: any): boolean {
   if (item.glassCategory === "DLGU") return true;
@@ -78,7 +79,7 @@ function getDguEffectiveQtyAndSqm(item: GlassItem) {
   };
 }
 
-const ALL_STAGES: ProductionStage[] = ["Cutting", "Pairing", "DGU", "Lamination", "Finished"];
+const ALL_STAGES: ProductionStage[] = ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"];
 
 export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
   try {
@@ -435,40 +436,162 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
       }))
       .sort((a, b) => b.count - a.count);
 
-    // 9. Operator Performance Leaderboard
-    const opMap: Record<string, { operationsCount: number; completedCount: number; rejectCount: number }> = {};
+    // 9. Operator Performance Leaderboard with Workstation Stage Attribution & SQM
+    const itemSqmLookup = new Map<string, number>();
+    glassItemsDatabase.forEach((g) => {
+      if (g.serialNumber) itemSqmLookup.set(g.serialNumber, g.sqm || 0);
+      if (g.barcode) itemSqmLookup.set(g.barcode, g.sqm || 0);
+    });
+
+    const userRecords = getAllUserRecords();
+    const userLookup = new Map<string, { name: string; username: string; role?: string; assignedStages?: string[] }>();
+    userRecords.forEach((u) => {
+      const uData = { name: u.name, username: u.username, role: u.role, assignedStages: u.assignedStages };
+      userLookup.set(u.username.toLowerCase(), uData);
+      userLookup.set(u.name.toLowerCase(), uData);
+    });
+
+    const opMap: Record<
+      string,
+      {
+        name: string;
+        username?: string;
+        role?: string;
+        assignedStages?: string[];
+        operationsCount: number;
+        completedCount: number;
+        completedSqm: number;
+        rejectCount: number;
+        stageBreakdown: Record<string, { completedCount: number; completedSqm: number; rejectCount: number; qualityRate: number }>;
+      }
+    > = {};
+
+    // Pre-seed all registered active floor operators so they always show in the leaderboard and stage filters even with 0 scans
+    userRecords.forEach((u) => {
+      if (u.isActive && u.role === "Operator") {
+        opMap[u.name] = {
+          name: u.name,
+          username: u.username,
+          role: u.role,
+          assignedStages: u.assignedStages || [],
+          operationsCount: 0,
+          completedCount: 0,
+          completedSqm: 0,
+          rejectCount: 0,
+          stageBreakdown: {},
+        };
+        (u.assignedStages || []).forEach((stg) => {
+          const normStg = stg === "Finished" ? "Dispatched" : stg;
+          opMap[u.name].stageBreakdown[normStg] = { completedCount: 0, completedSqm: 0, rejectCount: 0, qualityRate: 100 };
+        });
+      }
+    });
 
     filteredHistory.forEach((h) => {
-      const op = h.user || h.operator || "Production Line";
-      if (!opMap[op]) {
-        opMap[op] = { operationsCount: 0, completedCount: 0, rejectCount: 0 };
+      const rawOp = h.user || h.operator || "Production Line";
+      const matchedUser = userLookup.get(rawOp.toLowerCase());
+      const resolvedName = matchedUser?.name || rawOp;
+      const resolvedUsername = matchedUser?.username;
+      const opKey = resolvedName;
+      const rawStage = String(h.stage || "General");
+      // Normalize stage name if needed
+      const stg = rawStage === "Finished" ? "Dispatched" : rawStage;
+
+      if (!opMap[opKey]) {
+        opMap[opKey] = {
+          name: resolvedName,
+          username: resolvedUsername,
+          role: matchedUser?.role,
+          assignedStages: matchedUser?.assignedStages,
+          operationsCount: 0,
+          completedCount: 0,
+          completedSqm: 0,
+          rejectCount: 0,
+          stageBreakdown: {},
+        };
       }
-      opMap[op].operationsCount += 1;
-      if (h.status === "Completed") opMap[op].completedCount += 1;
-      if (h.status === "Rejected") opMap[op].rejectCount += 1;
+      if (!opMap[opKey].stageBreakdown[stg]) {
+        opMap[opKey].stageBreakdown[stg] = { completedCount: 0, completedSqm: 0, rejectCount: 0, qualityRate: 100 };
+      }
+
+      opMap[opKey].operationsCount += 1;
+
+      const itemSqm = itemSqmLookup.get(h.serialNumber) || (h.barcode ? itemSqmLookup.get(h.barcode) : 0) || 0;
+
+      if (h.status === "Completed") {
+        opMap[opKey].completedCount += 1;
+        opMap[opKey].completedSqm += itemSqm;
+        opMap[opKey].stageBreakdown[stg].completedCount += 1;
+        opMap[opKey].stageBreakdown[stg].completedSqm += itemSqm;
+      }
+      if (h.status === "Rejected") {
+        opMap[opKey].rejectCount += 1;
+        opMap[opKey].stageBreakdown[stg].rejectCount += 1;
+      }
     });
 
     filteredRejects.forEach((r) => {
-      const op = r.operator || "Production Line";
-      if (!opMap[op]) {
-        opMap[op] = { operationsCount: 0, completedCount: 0, rejectCount: 0 };
+      const rawOp = r.operator || "Production Line";
+      const matchedUser = userLookup.get(rawOp.toLowerCase());
+      const resolvedName = matchedUser?.name || rawOp;
+      const resolvedUsername = matchedUser?.username;
+      const opKey = resolvedName;
+      const rawStage = String(r.stage || "General");
+      const stg = rawStage === "Finished" ? "Dispatched" : rawStage;
+
+      if (!opMap[opKey]) {
+        opMap[opKey] = {
+          name: resolvedName,
+          username: resolvedUsername,
+          role: matchedUser?.role,
+          assignedStages: matchedUser?.assignedStages,
+          operationsCount: 0,
+          completedCount: 0,
+          completedSqm: 0,
+          rejectCount: 0,
+          stageBreakdown: {},
+        };
       }
-      opMap[op].rejectCount += 1;
+      if (!opMap[opKey].stageBreakdown[stg]) {
+        opMap[opKey].stageBreakdown[stg] = { completedCount: 0, completedSqm: 0, rejectCount: 0, qualityRate: 100 };
+      }
+      opMap[opKey].rejectCount += 1;
+      opMap[opKey].stageBreakdown[stg].rejectCount += 1;
     });
 
     const operatorList: OperatorAnalytics[] = Object.entries(opMap)
       .map(([operator, data]) => {
         const total = data.operationsCount + data.rejectCount;
         const opQualityRate = total > 0 ? parseFloat(((data.completedCount / total) * 100).toFixed(1)) : 100;
+
+        // Calculate quality rate for each stage in the breakdown
+        const formattedStageBreakdown: Record<string, { completedCount: number; completedSqm: number; rejectCount: number; qualityRate: number }> = {};
+        Object.entries(data.stageBreakdown).forEach(([stageName, sData]) => {
+          const sTotal = sData.completedCount + sData.rejectCount;
+          const sYield = sTotal > 0 ? parseFloat(((sData.completedCount / sTotal) * 100).toFixed(1)) : 100;
+          formattedStageBreakdown[stageName] = {
+            completedCount: sData.completedCount,
+            completedSqm: parseFloat(sData.completedSqm.toFixed(2)),
+            rejectCount: sData.rejectCount,
+            qualityRate: sYield,
+          };
+        });
+
         return {
           operator,
+          name: data.name,
+          username: data.username,
+          role: data.role,
+          assignedStages: data.assignedStages,
           operationsCount: data.operationsCount,
           completedCount: data.completedCount,
+          completedSqm: parseFloat(data.completedSqm.toFixed(2)),
           rejectCount: data.rejectCount,
           qualityRate: opQualityRate,
+          stageBreakdown: formattedStageBreakdown,
         };
       })
-      .sort((a, b) => b.completedCount - a.completedCount);
+      .sort((a, b) => b.completedCount - a.completedCount || a.operator.localeCompare(b.operator));
 
     // 10. Daily / Timeline Production Trends
     const daysToShow = range === "today" ? 1 : range === "7days" ? 7 : range === "30days" ? 30 : 14;

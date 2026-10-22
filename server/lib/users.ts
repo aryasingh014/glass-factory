@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { UserRole, UserRecord, UserSession, RolePermissions } from "@shared/api";
+import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage } from "@shared/api";
 import { logger } from "./logger";
 
 export interface User {
@@ -10,6 +10,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
   passwordHash: string;
   salt: string;
   isActive: boolean;
@@ -23,6 +24,7 @@ export interface UserProfile {
   email: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), "server/data");
@@ -49,7 +51,7 @@ export function validatePassword(user: User, passwordAttempt: string): boolean {
   }
 }
 
-// Initial pre-seeded admin user (Admin can create all other roles)
+// Initial pre-seeded credentials
 const adminCreds = hashPassword("Admin@123");
 
 const DEFAULT_USERS: User[] = [
@@ -59,6 +61,7 @@ const DEFAULT_USERS: User[] = [
     email: "gauravraj77820@gmail.com",
     name: "Gaurav Kumar (Administrator)",
     role: "Admin",
+    assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
     passwordHash: adminCreds.hash,
     salt: adminCreds.salt,
     isActive: true,
@@ -79,7 +82,29 @@ export function loadUsersFromDisk(): void {
       if (content.trim()) {
         const loaded: User[] = JSON.parse(content);
         if (Array.isArray(loaded) && loaded.length > 0) {
-          usersDatabase.splice(0, usersDatabase.length, ...loaded);
+          // Filter out legacy dummy hardcoded operator accounts
+          const REMOVED_USERNAMES = new Set([
+            "operator_cutting",
+            "operator_polishing",
+            "operator_dgu",
+            "operator_lamination",
+            "operator_dispatch",
+          ]);
+          const cleaned = loaded.filter((u) => !REMOVED_USERNAMES.has(u.username.toLowerCase()));
+
+          // Ensure default Admin user exists and has assigned stages
+          for (const def of DEFAULT_USERS) {
+            const exists = cleaned.find(
+              (u) => u.username.toLowerCase() === def.username.toLowerCase() || u.id === def.id
+            );
+            if (!exists) {
+              cleaned.push(def);
+            } else if (def.assignedStages && (!exists.assignedStages || exists.assignedStages.length === 0)) {
+              exists.assignedStages = def.assignedStages;
+            }
+          }
+          usersDatabase.splice(0, usersDatabase.length, ...cleaned);
+          saveUsersToDisk();
           logger.info(`Loaded ${usersDatabase.length} users from disk.`);
           return;
         }
@@ -97,7 +122,9 @@ export function saveUsersToDisk(): void {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(USERS_FILE, JSON.stringify(usersDatabase, null, 2), "utf-8");
+    const tempFile = `${USERS_FILE}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(usersDatabase, null, 2), "utf-8");
+    fs.renameSync(tempFile, USERS_FILE);
   } catch (err) {
     logger.error("Error saving users to disk", { err });
   }
@@ -121,6 +148,7 @@ export function createSession(user: UserProfile, ip: string, userAgent?: string)
     username: user.username,
     name: user.name,
     role: user.role,
+    assignedStages: user.assignedStages,
     ip: ip || "127.0.0.1",
     userAgent: userAgent || "Browser Client",
     loginTime: now,
@@ -192,6 +220,7 @@ export function getUserProfile(user: User): UserProfile {
     email: user.email,
     name: user.name,
     role: user.role,
+    assignedStages: user.assignedStages,
   };
 }
 
@@ -202,6 +231,7 @@ export function getAllUserRecords(): UserRecord[] {
     email: u.email,
     name: u.name,
     role: u.role,
+    assignedStages: u.assignedStages,
     isActive: u.isActive !== false,
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt,
@@ -213,6 +243,7 @@ export function createUser(data: {
   email: string;
   name: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
   password: string;
 }): UserRecord {
   const existing = findUserByUsernameOrEmail(data.username) || findUserByUsernameOrEmail(data.email);
@@ -227,6 +258,7 @@ export function createUser(data: {
     email: data.email.trim().toLowerCase(),
     name: data.name.trim(),
     role: data.role,
+    assignedStages: data.assignedStages,
     passwordHash: hash,
     salt,
     isActive: true,
@@ -242,6 +274,7 @@ export function createUser(data: {
     email: newUser.email,
     name: newUser.name,
     role: newUser.role,
+    assignedStages: newUser.assignedStages,
     isActive: newUser.isActive,
     createdAt: newUser.createdAt,
   };
@@ -254,6 +287,7 @@ export function updateUser(
     email: string;
     name: string;
     role: UserRole;
+    assignedStages?: ProductionStage[];
     password?: string;
     isActive?: boolean;
   }>
@@ -281,6 +315,7 @@ export function updateUser(
 
   if (updates.name) user.name = updates.name.trim();
   if (updates.role) user.role = updates.role;
+  if (updates.assignedStages) user.assignedStages = updates.assignedStages;
   if (typeof updates.isActive === "boolean") user.isActive = updates.isActive;
 
   if (updates.password && updates.password.trim().length > 0) {
@@ -297,6 +332,7 @@ export function updateUser(
     email: user.email,
     name: user.name,
     role: user.role,
+    assignedStages: user.assignedStages,
     isActive: user.isActive,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
@@ -339,6 +375,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       "dispatched-history",
       "pis",
       "cutting",
+      "polishing",
       "pairing",
       "dgu",
       "lamination",
@@ -366,6 +403,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       "dispatched-history",
       "pis",
       "cutting",
+      "polishing",
       "pairing",
       "dgu",
       "lamination",
@@ -385,9 +423,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
   },
   Operator: {
     role: "Operator",
-    description: "Workstation scan-and-advance access for factory floor lines (Cutting, Pairing, DGU, Lamination, Finished Warehouse).",
+    description: "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
     allowedModules: [
       "cutting",
+      "polishing",
       "pairing",
       "dgu",
       "lamination",

@@ -10,6 +10,7 @@ import {
   CheckCircle,
   History,
   Boxes,
+  Sparkles,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -44,6 +45,7 @@ interface NavItem {
 
 interface AppSidebarProps {
   sidebarOpen: boolean;
+  setSidebarOpen?: (open: boolean) => void;
   activeTab: string;
   setActiveTab?: (tab: string) => void;
   stats?: DashboardStats | null;
@@ -51,6 +53,7 @@ interface AppSidebarProps {
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
   sidebarOpen,
+  setSidebarOpen,
   activeTab,
   setActiveTab,
   stats,
@@ -103,6 +106,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             { id: "pairing", label: "Glass Pairing", icon: Layers, badge: stats?.pendingPairing ?? 0 },
           ],
         },
+        { id: "polishing", label: "Polishing Workstation", icon: Sparkles, badge: stats?.pendingPolishing ?? 0 },
         { id: "dgu", label: "DGU/IGU Assembly", icon: PackageCheck, badge: stats?.pendingDGU ?? 0 },
         { id: "lamination", label: "Lamination Line", icon: Layers, badge: stats?.pendingLamination ?? 0 },
         { id: "finished", label: "Finished Warehouse", icon: CheckCircle, badge: stats?.finishedItems ?? 0 },
@@ -149,11 +153,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     if (typeof item === "string") {
       if (setActiveTab) setActiveTab(item);
       else navigate(`/?tab=${item}`);
-      return;
+    } else if (item.isRoute && item.href) {
+      navigate(item.href);
+    } else if (setActiveTab) {
+      setActiveTab(item.id);
+    } else {
+      navigate(`/?tab=${item.id}`);
     }
-    if (item.isRoute && item.href) navigate(item.href);
-    else if (setActiveTab) setActiveTab(item.id);
-    else navigate(`/?tab=${item.id}`);
+    // Auto-close drawer on mobile after clicking
+    if (typeof window !== "undefined" && window.innerWidth < 768 && setSidebarOpen) {
+      setSidebarOpen(false);
+    }
   };
 
   return (

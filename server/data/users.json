@@ -5,10 +5,51 @@
     "email": "gauravraj77820@gmail.com",
     "name": "Gaurav Kumar (Administrator)",
     "role": "Admin",
-    "passwordHash": "5faf0309f17bbc77dceb953ae0332a7d1a175f57d1c37c372cdb10acd8ddb8267987bf15fcecb04af73022c7f7fdee2f45428c1958fa9a93b6c6a78dcd51fd0c",
-    "salt": "af0823e281905764cc7e936e7a0ee9e7",
+    "passwordHash": "f785d7e65f9df2d659191ac66e762b474378be2929c6b4b057d16f50882d661ff9b1181a00e44d5d708d6e8fd58e3203088cd52d57267fd8ae19798ac1617782",
+    "salt": "6e500b2ee0698c0248c8306cddfcab47",
     "isActive": true,
     "createdAt": "2026-10-02T10:24:53.039Z",
-    "lastLoginAt": "2026-10-07T12:57:16.316Z"
+    "lastLoginAt": "2026-10-21T18:22:47.270Z",
+    "assignedStages": [
+      "Cutting",
+      "Polishing",
+      "Pairing",
+      "DGU",
+      "Lamination",
+      "Finished",
+      "Dispatched"
+    ]
+  },
+  {
+    "id": "usr-operator-mvieyxel",
+    "username": "cutting1",
+    "email": "gauravkumar77820@gmail.com",
+    "name": "Deepa K",
+    "role": "Operator",
+    "assignedStages": [
+      "Cutting",
+      "Pairing"
+    ],
+    "passwordHash": "85d00a0042722891d5f3b5e994e8aea7e6d25d5615c2d2911c57c0c028e9c07d838f42fe6a24d3464832cfdc2dd15d649aee325cd745d1cb3d8abeab9c221a43",
+    "salt": "a61671aa6933426b85160444458d440a",
+    "isActive": true,
+    "createdAt": "2026-10-21T17:56:37.917Z",
+    "lastLoginAt": "2026-10-21T18:26:53.159Z"
+  },
+  {
+    "id": "usr-operator-mvifyuyk",
+    "username": "cutting2",
+    "email": "aryasingh14600@gmail.com",
+    "name": "Arya Singh",
+    "role": "Operator",
+    "assignedStages": [
+      "Cutting",
+      "Pairing"
+    ],
+    "passwordHash": "5f8b369ad578ceb4ed7567dc35d4f9b5829d42b191d4593adfabbf79c3f9a42f083fba8565e77c9c1194179094ee1b0896c992dd967f6f8de01317c4cb37b23d",
+    "salt": "83172e9f0f2167a89157f9e5d6296d55",
+    "isActive": true,
+    "createdAt": "2026-10-21T18:24:34.364Z",
+    "lastLoginAt": "2026-10-21T18:48:54.639Z"
   }
 ]

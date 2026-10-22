@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
 import ReactDOM from "react-dom";
+import { useSearchParams } from "react-router-dom";
 import { GlassItem, ProductionStage, PIMaster } from "@shared/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,13 +15,18 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { getDguEffectiveQtyAndSqm, formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
-import { formatSejalBarcode } from "@/lib/barcode";
+import { formatSejalBarcode, isItemMatchingCode } from "@/lib/barcode";
+import { scannerAudio } from "@/lib/audioBeep";
+import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { CameraScannerModal } from "@/components/CameraScannerModal";
+import { useAuth } from "@/context/AuthContext";
 import {
   Trash2,
   CheckCircle,
   AlertOctagon,
   AlertCircle,
   RefreshCw,
+  Camera,
   RotateCcw,
   Search,
   Tag,
@@ -88,6 +94,7 @@ interface ProductionStageViewProps {
 // Stage color map
 const STAGE_COLORS: Record<string, string> = {
   Cutting:    "bg-blue-100 text-[#1680f5]",
+  Polishing:  "bg-cyan-100 text-cyan-700",
   Pairing:    "bg-indigo-100 text-indigo-700",
   DGU:        "bg-teal-100 text-teal-700",
   Lamination: "bg-amber-100 text-amber-700",
@@ -129,7 +136,7 @@ export function resolveValidBarcode(item?: any, fallback?: string): string {
   }
   const sfo = item?.sfoNo || item?.orderNo || item?.piNumber || "1344";
   const numPart = item?.serialNumber ? String(item.serialNumber).replace(/\D/g, "") : "";
-  const seq = numPart || item?.posNo || "1";
+  const seq = item?.posNo || item?.srNo || numPart || "1";
   return formatSejalBarcode(sfo, seq);
 }
 
@@ -146,8 +153,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   onPrintSticker,
   onNavigateTab,
 }) => {
-  // Batch selection state (for Cutting stage drill-down)
-  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const { user: authUser, getAuthHeaders } = useAuth();
+  const effectiveOperator = operator && operator !== "Operator" ? operator : (authUser?.name || authUser?.username || "Operator");
+
+  // Batch selection state (for Cutting stage drill-down synced with browser history)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedBatchId = stage === "Cutting" ? (searchParams.get("batch") || null) : null;
+
+  const setSelectedBatchId = useCallback((newBatchId: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (newBatchId) {
+        next.set("batch", newBatchId);
+      } else {
+        next.delete("batch");
+      }
+      return next;
+    });
+  }, [setSearchParams]);
 
   // Batch table filters & sorting (Cutting stage)
   const [batchSearchTerm, setBatchSearchTerm] = useState("");
@@ -211,6 +234,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   // Scan verification: row being scanned and verified at this stage
   const [scanRow, setScanRow] = useState<StageRowItem | null>(null);
   const [scanInput, setScanInput] = useState("");
+  const [stageCameraOpen, setStageCameraOpen] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
   const isFinished = stage === "Finished";
@@ -493,11 +517,43 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       });
   }, [batchSummaries, batchCategoryFilter, batchFinishFilter, selectedPdfFilter, batchSearchTerm, externalSearchTerm, batchSortField, batchSortAsc]);
 
-  const batchDlguCount = batchSummaries.filter((b) => b.glassCategory === "DLGU").length;
-  const batchDguCount = batchSummaries.filter((b) => b.glassCategory === "DGU").length;
-  const batchLamCount = batchSummaries.filter((b) => b.glassCategory === "Lamination").length;
-  const batchClearCount = batchSummaries.filter((b) => b.finish !== "Colour").length;
-  const batchColourCount = batchSummaries.filter((b) => b.finish === "Colour").length;
+  // Batches filtered by current PDF filter (base pool for cutting)
+  const pdfFilteredBatches = useMemo(() => {
+    if (stage !== "Cutting") return [];
+    if (selectedPdfFilter === "ALL") return batchSummaries;
+    return batchSummaries.filter((b) => {
+      const bFileName = (((b as any).fileName || (b.jobOrderNumber ? `${b.jobOrderNumber}.pdf` : `${b.piNumber}.pdf`)) || "").trim().toLowerCase();
+      return bFileName === selectedPdfFilter.trim().toLowerCase();
+    });
+  }, [batchSummaries, selectedPdfFilter, stage]);
+
+  // Queue counts (DGU, Lamination, DLGU, All) filtered by PDF & active Finish filter
+  const queueFilteredBatches = useMemo(() => {
+    return pdfFilteredBatches.filter((b) => {
+      if (batchFinishFilter === "CLEAR" && b.finish === "Colour") return false;
+      if (batchFinishFilter === "COLOUR" && b.finish !== "Colour") return false;
+      return true;
+    });
+  }, [pdfFilteredBatches, batchFinishFilter]);
+
+  const batchDlguCount = queueFilteredBatches.filter((b) => b.glassCategory === "DLGU").length;
+  const batchDguCount = queueFilteredBatches.filter((b) => b.glassCategory === "DGU").length;
+  const batchLamCount = queueFilteredBatches.filter((b) => b.glassCategory === "Lamination").length;
+  const batchAllQueueCount = queueFilteredBatches.length;
+
+  // Finish counts (All, Clear, Coloured) filtered by PDF & active Category / Queue filter
+  const categoryFilteredBatches = useMemo(() => {
+    return pdfFilteredBatches.filter((b) => {
+      if (batchCategoryFilter === "DLGU" && b.glassCategory !== "DLGU") return false;
+      if (batchCategoryFilter === "DGU" && b.glassCategory !== "DGU") return false;
+      if (batchCategoryFilter === "LAMINATION" && b.glassCategory !== "Lamination") return false;
+      return true;
+    });
+  }, [pdfFilteredBatches, batchCategoryFilter]);
+
+  const batchClearCount = categoryFilteredBatches.filter((b) => b.finish !== "Colour").length;
+  const batchColourCount = categoryFilteredBatches.filter((b) => b.finish === "Colour").length;
+  const batchAllFinishCount = categoryFilteredBatches.length;
 
   const handleBatchSort = (field: string) => {
     if (batchSortField === field) {
@@ -546,21 +602,21 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   // Non-Cutting Stages (DGU, Lamination, Finished) Customer Grouped View State (Default Closed)
   const [expandedStageCustomers, setExpandedStageCustomers] = useState<Record<string, boolean>>({});
 
-  const toggleStageCustomerExpanded = (customerName: string) => {
+  const toggleStageCustomerExpanded = (key: string) => {
     setExpandedStageCustomers((prev) => ({
       ...prev,
-      [customerName]: !prev[customerName],
+      [key]: !prev[key],
     }));
   };
 
-  const isStageCustomerExpanded = (customerName: string) => {
-    return Boolean(expandedStageCustomers[customerName]); // Closed by default!
+  const isStageCustomerExpanded = (key: string) => {
+    return Boolean(expandedStageCustomers[key]); // Closed by default!
   };
 
   const setAllStageCustomersExpanded = (expand: boolean) => {
     const newState: Record<string, boolean> = {};
     groupedStageCustomerRows.forEach((g) => {
-      newState[g.customerName] = expand;
+      newState[g.groupKey] = expand;
     });
     setExpandedStageCustomers(newState);
   };
@@ -1657,7 +1713,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   // Non-Cutting Customer Grouping (DGU, Lamination, Finished)
   const groupedStageCustomerRows = useMemo(() => {
-    const map = new Map<string, StageRowItem[]>();
+    const map = new Map<string, { customerName: string; projectName: string; rows: StageRowItem[] }>();
 
     filteredRows.forEach((row) => {
       const parentPI = pis.find(
@@ -1673,18 +1729,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         (row.item as any).clientName ||
         "Customer"
       ).trim();
-      if (!map.has(cust)) {
-        map.set(cust, []);
+      const proj = (parentPI?.projectName || (row.item as any).projectName || row.item.sectionName || "").trim();
+      const groupKey = proj ? `${cust}:::${proj}` : `${cust}:::(No Project)`;
+
+      if (!map.has(groupKey)) {
+        map.set(groupKey, { customerName: cust, projectName: proj, rows: [] });
       }
-      map.get(cust)!.push(row);
+      map.get(groupKey)!.rows.push(row);
     });
 
     const groups: Array<{
+      groupKey: string;
       customerName: string;
+      projectName: string;
       rows: StageRowItem[];
       totalUnits: number;
       totalSqm: number;
       projects: string[];
+      pdfFiles: string[];
       hasColour: boolean;
       hasClear: boolean;
       categories: Set<string>;
@@ -1695,7 +1757,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       isSomeSelected: boolean;
     }> = [];
 
-    map.forEach((cRows, customerName) => {
+    map.forEach(({ customerName, projectName, rows: cRows }, groupKey) => {
       let totalUnits = 0;
       let totalSqm = 0;
       let hasColour = false;
@@ -1703,8 +1765,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       let dguReadyUnits = 0;
       let holdingUnits = 0;
       const projectsSet = new Set<string>();
+      const pdfFilesSet = new Set<string>();
       const categories = new Set<string>();
       const allRowIds = cRows.map((r) => r.id);
+      if (projectName) projectsSet.add(projectName);
 
       cRows.forEach((r) => {
         const qty = r.item.qty || 1;
@@ -1721,8 +1785,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         else if (isLaminatedGlass(r.item)) categories.add("Lamination");
 
         const parentPI = pis.find((p) => p.id === r.item.piId || p.piNumber === r.item.piNumber);
-        const proj = parentPI?.projectName || r.item.sectionName;
+        const proj = parentPI?.projectName || (r.item as any).projectName || r.item.sectionName;
         if (proj) projectsSet.add(proj);
+        if (parentPI?.fileName) pdfFilesSet.add(parentPI.fileName);
+        if ((r.item as any).fileName) pdfFilesSet.add((r.item as any).fileName);
 
         if (r.dguPairReady) dguReadyUnits += 1;
         if (r.isHolding) holdingUnits += 1;
@@ -1732,11 +1798,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const isSomeSelected = !isAllSelected && allRowIds.some((id) => selectedRowIds.includes(id));
 
       groups.push({
+        groupKey,
         customerName,
+        projectName,
         rows: cRows,
         totalUnits,
         totalSqm,
         projects: Array.from(projectsSet),
+        pdfFiles: Array.from(pdfFilesSet),
         hasColour,
         hasClear,
         categories,
@@ -2050,73 +2119,48 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     setTimeout(() => scanInputRef.current?.focus(), 100);
   };
 
-  const handleScanVerify = async () => {
+  const handleScanVerify = async (manualCode?: string) => {
     if (!scanRow) return;
-    const val = scanInput.trim();
+    const val = (typeof manualCode === "string" ? manualCode : scanInput).trim();
+    if (!val) return;
+
+    const cleanVal = val.replace(/^QR-/i, "").trim().toLowerCase();
     const targetItem = scanRow.item;
     const partnerItem = scanRow.partnerItem;
     const nextStage = getNextStageLabel(targetItem, stage);
 
     // Accept primary barcode/serial (Colour Glass in DGU) or partner barcode/serial
+    const validCodes = [
+      scanRow.displayBarcode,
+      resolveValidBarcode(targetItem, scanRow.displayBarcode),
+      formatSejalBarcode(targetItem.sfoNo || targetItem.piNumber, targetItem.posNo || targetItem.srNo || 1),
+      targetItem.barcode,
+      targetItem.qrId,
+      targetItem.serialNumber,
+      scanRow.displaySerial,
+      partnerItem?.barcode,
+      partnerItem?.serialNumber,
+      partnerItem ? resolveValidBarcode(partnerItem) : undefined,
+      partnerItem ? formatSejalBarcode(partnerItem.sfoNo || partnerItem.piNumber, partnerItem.posNo || partnerItem.srNo || 1) : undefined,
+    ]
+      .filter(Boolean)
+      .map((s) => String(s).trim().toLowerCase());
+
     const isMatch =
-      val === scanRow.displayBarcode ||
-      val === scanRow.displaySerial ||
-      val === targetItem.barcode ||
-      val === targetItem.serialNumber ||
-      (partnerItem && (val === partnerItem.barcode || val === partnerItem.serialNumber));
+      isItemMatchingCode(targetItem, val) ||
+      (partnerItem ? isItemMatchingCode(partnerItem, val) : false) ||
+      validCodes.includes(cleanVal) ||
+      validCodes.includes(val.toLowerCase()) ||
+      validCodes.some((b) => b.replace(/^qr-/i, "") === cleanVal);
 
     if (isMatch) {
       setScanRow(null);
       setScanInput("");
 
-      /* ── CUTTING WORKSTATION AUTO-SCAN RULES ── */
-      if (stage === "Cutting") {
-        if (activeRackNo !== "ALL" && currentGroup) {
-          const sheetSerials = currentGroup.rows.flatMap((r) => r.allSerials);
-          toast.success(
-            `Sheet Auto-Scan: Scanned sticker (${targetItem.serialNumber}). Auto-advancing all ${sheetSerials.length} panel(s) on Sheet ${activeRackNo} to ${nextStage}.`
-          );
-          await completeStage(sheetSerials, undefined, true);
-          return;
-        }
-
-        const piBatchItems = items
-          .filter(
-            (i) =>
-              (i.piId === targetItem.piId || i.piNumber === targetItem.piNumber) &&
-              i.currentStage === "Cutting" &&
-              i.status !== "Rejected"
-          )
-          .sort((a, b) => (a.srNo || 0) - (b.srNo || 0));
-
-        if (piBatchItems.length > 0) {
-          const firstItem = piBatchItems[0];
-          const lastItem = piBatchItems[piBatchItems.length - 1];
-
-          const isFirst =
-            targetItem.serialNumber === firstItem.serialNumber ||
-            targetItem.barcode === firstItem.barcode ||
-            targetItem.srNo === 1;
-
-          const isLast =
-            targetItem.serialNumber === lastItem.serialNumber ||
-            targetItem.barcode === lastItem.barcode ||
-            targetItem.srNo === piBatchItems.length;
-
-          if (isFirst || isLast) {
-            const batchSerials = piBatchItems.map((i) => i.serialNumber);
-            toast.success(
-              `Entire Batch Auto-Scan: Scanned ${isFirst ? "First" : "Last"} sticker (${targetItem.serialNumber}). Auto-advancing all ${piBatchItems.length} stickers in entire batch to ${nextStage}.`
-            );
-            await completeStage(batchSerials, undefined, true);
-            return;
-          }
-        }
-      }
-
       /* ── DGU 1 COLOUR + 1 CLEAR COMBINED UNIT ADVANCEMENT ── */
       if (stage === "DGU") {
         if (!scanRow.dguPairReady || !partnerItem) {
+          scannerAudio.playWarning();
           toast.error(
             `Cannot assemble DGU: The matching ${scanRow.dguWaitingFinish || "Clear"} glass pane has NOT been cut yet.`
           );
@@ -2124,6 +2168,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           return;
         }
 
+        scannerAudio.playPairSuccess();
         toast.success(
           `DGU Unit Assembled & Verified (${targetItem.serialNumber} + ${partnerItem.serialNumber}). Advancing to ${nextStage}...`
         );
@@ -2131,19 +2176,32 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         return;
       }
 
-      // Single item advance with QTY decrement (each scan advances 1 piece)
+      scannerAudio.playSuccess();
+      // Single piece advance: each valid sticker scan advances 1 piece individually
       const remainingPieces = (targetItem.qty || 1) - 1;
       toast.success(
         remainingPieces > 0
           ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo}). Count reduced by 1 (${remainingPieces} pcs remaining in ${stage}).`
-          : `Scanned & Completed final piece of ${targetItem.serialNumber}. Advancing to ${nextStage}...`
+          : `Scanned & Completed piece ${targetItem.serialNumber}. Advancing to ${nextStage}...`
       );
       await completeStage(scanRow.allSerials, 1, false);
     } else {
-      toast.error("Barcode mismatch — please scan the correct sticker barcode.");
+      scannerAudio.playError();
+      toast.error(`Barcode mismatch: scanned "${val}". Expected: ${scanRow.displayBarcode} or #${scanRow.displaySerial}`);
       setScanInput("");
     }
   };
+
+  // Hardware barcode scanner gun listener for verification modal
+  useBarcodeScanner({
+    enabled: Boolean(scanRow),
+    onScan: (scanned) => {
+      setScanInput(scanned);
+      setTimeout(() => {
+        handleScanVerify(scanned);
+      }, 50);
+    },
+  });
 
   const completeStage = async (serialNumbers: string[], advanceQty?: number, advanceAll?: boolean) => {
     // 1. Instant optimistic local UI transition (0 ms)
@@ -2154,13 +2212,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     try {
       const res = await fetch("/api/production/stage-complete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({
           serialNumbers,
           advanceQty: advanceQty ?? 1,
-          advanceAll: advanceAll ?? false,
-          operator: operator || "Operator",
-          remarks: `Completed ${stage} stage`,
+          stage,
+          currentStage: stage,
+          operator: effectiveOperator,
+          remarks: `Completed ${stage} stage by ${effectiveOperator}`,
         }),
       });
       if (!res.ok) throw new Error("Failed to advance stage");
@@ -2282,7 +2344,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       batchCategoryFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200 text-slate-700"
                     }`}
                   >
-                    {batchSummaries.length}
+                    {batchAllQueueCount}
                   </span>
                 </button>
 
@@ -2366,7 +2428,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       batchFinishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
                     }`}
                   >
-                    {batchSummaries.length}
+                    {batchAllFinishCount}
                   </span>
                 </button>
 
@@ -2988,178 +3050,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         </div>
       )}
 
-      {/* ── Scan Verification Modal ── */}
-      {scanRow && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
-                    <ScanLine className="w-4 h-4" />
-                  </div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">
-                    {stage === "DGU" ? "Scan Colour Glass Sticker (DGU Unit)" : `Scan to Confirm — ${stage} Stage`}
-                  </h3>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1 ml-10">
-                  Scan barcode to advance to{" "}
-                  <span className="font-bold text-emerald-700">
-                    {getNextStageLabel(scanRow.item, stage)}
-                  </span>
-                </p>
-              </div>
-              <button
-                onClick={() => setScanRow(null)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Process route progress */}
-            <div className="flex items-center gap-1 flex-wrap">
-              {scanRow.item.processRoute.map((s, idx) => {
-                const isCurrent = s === stage;
-                const isDone = scanRow.item.completedStages?.includes(s);
-                return (
-                  <React.Fragment key={s}>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition-all
-                        ${STAGE_COLORS[s] || "bg-slate-100 text-slate-700"}
-                        ${isCurrent ? "ring-2 ring-offset-1 ring-current scale-110" : ""}
-                        ${isDone && !isCurrent ? "opacity-40 line-through" : ""}
-                      `}
-                    >
-                      {s}
-                    </span>
-                    {idx < scanRow.item.processRoute.length - 1 && (
-                      <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
-
-            {/* Item details */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">
-                  {stage === "DGU" ? "Colour Lite Serial (Primary)" : "Serial Number"}
-                </span>
-                <span className="font-mono font-bold text-blue-700">{scanRow.displaySerial}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">
-                  {stage === "DGU" ? "Colour Lite Barcode" : "Barcode"}
-                </span>
-                <span className="font-mono font-bold text-slate-900">{resolveValidBarcode(scanRow.item, scanRow.displayBarcode)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">Dimensions</span>
-                <span className="font-bold text-emerald-700">
-                  {scanRow.item.width} × {scanRow.item.height} mm
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">Glass Type / Description</span>
-                <span className="font-semibold text-slate-800 text-right max-w-[200px] truncate">
-                  {scanRow.item.glassType || scanRow.item.itemCode}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">Remaining Quantity to Scan</span>
-                <span className="font-bold text-[#1680f5] bg-blue-100 px-2 py-0.5 rounded-lg font-mono text-xs border border-blue-200">
-                  {scanRow.item.qty || 1} {scanRow.item.qty === 1 ? "pc" : "pcs"} remaining
-                </span>
-              </div>
-
-              {stage === "DGU" && scanRow.partnerItem && (
-                <div className="border-t border-teal-200 pt-2 mt-2 bg-teal-50/70 -mx-3 -mb-3 p-3 rounded-b-xl space-y-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-teal-900 font-bold flex items-center gap-1">
-                      <Link2 className="w-3.5 h-3.5 text-teal-600" /> Paired Clear Inner Lite:
-                    </span>
-                    <span className="font-mono font-extrabold text-teal-800">
-                      {scanRow.partnerItem.serialNumber}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-teal-700">
-                    <span>Clear Barcode:</span>
-                    <span className="font-mono">{scanRow.partnerItem.barcode}</span>
-                  </div>
-                  <div className="text-[10px] text-emerald-800 font-extrabold flex items-center gap-1 pt-0.5">
-                    <Check className="w-3 h-3 text-emerald-600" /> Ready to assemble into 1 DGU Unit. Scanning Colour barcode advances both panes.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Warning / Instruction */}
-            <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5">
-              <AlertTriangle className="w-4 h-4 text-blue-600 shrink-0" />
-              <span className="text-[11px] text-blue-800 font-semibold">
-                {(scanRow.item.qty || 1) > 1
-                  ? `This line has ${scanRow.item.qty} pieces remaining. Each scan will advance 1 piece (${scanRow.item.qty} scans to finish line).`
-                  : stage === "DGU"
-                  ? "Scan the Colour Glass sticker barcode to confirm & advance this assembled DGU Unit."
-                  : `Scan the barcode on the glass sticker to confirm this item is at the ${stage} workstation.`}
-              </span>
-            </div>
-
-            {/* Scan input */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700">
-                {stage === "DGU" ? "Scan Colour Glass Barcode" : "Scan or Enter Barcode / Serial"}
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  ref={scanInputRef}
-                  value={scanInput}
-                  onChange={(e) => setScanInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleScanVerify()}
-                  placeholder={stage === "DGU" ? `Scan Colour Barcode (${resolveValidBarcode(scanRow.item, scanRow.displayBarcode)})...` : "Scan barcode here..."}
-                  className="font-mono text-sm border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
-                  autoFocus
-                />
-                <Button
-                  onClick={handleScanVerify}
-                  disabled={!scanInput.trim()}
-                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-bold px-4 shrink-0"
-                >
-                  <ScanLine className="w-4 h-4" />
-                </Button>
-              </div>
-              <p className="text-[10px] text-slate-400">Press Enter or click scan icon to verify and complete.</p>
-            </div>
-
-            {/* Quick Action Footer */}
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setScanRow(null)}
-                className="text-xs font-bold text-slate-600"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={async () => {
-                  const targetRow = scanRow;
-                  setScanRow(null);
-                  await completeStage(targetRow.allSerials, undefined, true);
-                }}
-                className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs gap-1.5 shadow-lg"
-              >
-                <Zap className="w-3.5 h-3.5" /> 1-Click Complete & Advance
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Unified Header Controls: Finish Tabs + Action Buttons + Search & Filters (For Non-Cutting Workstations or General Stage View) ── */}
       {stage !== "Cutting" && (
         <div className="ppb-panel bg-gradient-to-br from-white/90 to-white/50 backdrop-blur-2xl border-white p-6 rounded-3xl shadow-[0_10px_40px_rgb(22,128,245,0.08)] space-y-4 mb-5 relative overflow-visible ring-1 ring-slate-900/5">
@@ -3430,6 +3320,22 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
             {/* Right: Primary Action Buttons */}
             <div className="flex items-center gap-2 flex-wrap">
+              {stage === "Polishing" && selectedRowIds.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleBatchComplete}
+                  disabled={loading || stageRows.filter((r) => selectedRowIds.includes(r.id)).length === 0}
+                  className="bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl border border-cyan-400/50 shadow-[0_4px_14px_rgba(6,182,212,0.4)] hover:shadow-lg active:scale-95 shrink-0 animate-in fade-in transition-all cursor-pointer"
+                  title="Advance selected polished glass pieces to Pairing workstation"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>
+                    Polish & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+                  </span>
+                </Button>
+              )}
+
               {stage === "DGU" && selectedRowIds.length > 0 && (
                 <Button
                   size="sm"
@@ -4120,6 +4026,18 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </Button>
             )}
 
+            {stage === "Polishing" && selectedRowIds.length > 0 && (
+              <Button
+                size="sm"
+                onClick={handleBatchComplete}
+                disabled={loading}
+                className="bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white font-black text-xs h-7 px-3.5 gap-1.5 rounded-xl shadow-[0_4px_14px_rgba(6,182,212,0.4)] border border-cyan-400/50 hover:shadow-lg active:scale-95 transition-all animate-in fade-in cursor-pointer"
+                title="Advance selected polished glass pieces to Pairing"
+              >
+                <CheckCircle className="w-3.5 h-3.5 text-white" /> Polish & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+              </Button>
+            )}
+
 
 
 
@@ -4208,7 +4126,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </div>
               </div>
             ) : (
-              displayedSheetGroups.map((group) => {
+              displayedSheetGroups.map((group, groupIndex) => {
                 const isExpanded = isSingleSheet || !!expandedSheets[group.rackNo];
                 const allGroupRowIds = group.rows.map((r) => r.id);
                 const isGroupAllSelected = allGroupRowIds.every((id) => selectedRowIds.includes(id));
@@ -4249,8 +4167,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         )}
 
                         <div className="flex items-center gap-2">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#1680f5] to-[#1470e0] text-white flex items-center justify-center font-black text-sm shadow-md hover:scale-105 transition-transform duration-300">
-                            {group.rackNo}
+                          <div 
+                            className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#1680f5] to-[#1470e0] text-white flex items-center justify-center font-black text-sm shadow-md hover:scale-105 transition-transform duration-300"
+                            title={`Sheet Serial #${groupIndex + 1}`}
+                          >
+                            {groupIndex + 1}
                           </div>
                           <div>
                             <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2 flex-wrap">
@@ -4297,9 +4218,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             e.stopPropagation();
                             handleAdvanceSheet(group.rows);
                           }}
-                          className="h-8 text-xs font-black bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl shadow-[0_4px_14px_rgba(5,150,105,0.4)] gap-1.5 cursor-pointer transition-all hover:-translate-y-0.5 border border-emerald-400/50"
+                          className="h-8 text-xs font-black bg-orange-600 hover:bg-orange-700 active:bg-orange-800 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl shadow-[0_4px_14px_rgba(234,88,12,0.4)] gap-1.5 cursor-pointer transition-all hover:-translate-y-0.5 border border-orange-400/50"
                         >
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-100" />
+                          <Sparkles className="w-3.5 h-3.5 text-orange-100" />
                           <span>Cut & Advance Sheet {group.rackNo} ({totalPieces} pcs)</span>
                         </Button>
 
@@ -4571,7 +4492,27 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <th className="py-2.5 px-2">{stage === "Finished" ? "Product Type & Finish" : "Finish"}</th>
                         <th className="py-2.5 px-2">Route Flow</th>
                         {stage === "Finished" && <th className="py-2.5 px-2 text-center whitespace-nowrap">IP Glass</th>}
-                        <th className="py-2.5 px-3 text-right">Actions</th>
+                        <th className="py-2.5 px-3 text-right">
+                          {stage === "Polishing" && rows.some((r) => selectedRowIds.includes(r.id)) ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                const currentTableSelected = rows.filter((r) => selectedRowIds.includes(r.id));
+                                const serialsToAdvance = Array.from(new Set(currentTableSelected.flatMap((r) => r.allSerials)));
+                                setSelectedRowIds((prev) => prev.filter((id) => !currentTableSelected.some((r) => r.id === id)));
+                                completeStage(serialsToAdvance, undefined, true);
+                              }}
+                              disabled={loading}
+                              className="h-7 px-3 text-[11px] font-black bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg shadow-sm gap-1 transition-all cursor-pointer inline-flex items-center"
+                              title="Advance all selected items in this table"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" /> Advance Selected ({rows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+                            </Button>
+                          ) : (
+                            "Actions"
+                          )}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -5175,11 +5116,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <div className="space-y-3">
                 {groupedStageCustomerRows.length > 0 ? (
                   groupedStageCustomerRows.map((customer) => {
-                    const isExpanded = isStageCustomerExpanded(customer.customerName);
+                    const isExpanded = isStageCustomerExpanded(customer.groupKey);
 
                     return (
                       <div
-                        key={customer.customerName}
+                        key={customer.groupKey}
                         className={`bg-white/80 backdrop-blur-xl border border-white/60 rounded-3xl shadow-[0_8px_30px_rgb(22,128,245,0.05)] hover:shadow-[0_12px_40px_rgb(22,128,245,0.1)] hover:border-[#1680f5]/30 transition-all duration-300 relative overflow-hidden group ${
                           stage === "DGU"
                             ? "hover:border-teal-300"
@@ -5190,7 +5131,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       >
                         {/* Customer Summary Card Header (Click to Toggle - Closed by default) */}
                         <div
-                          onClick={() => toggleStageCustomerExpanded(customer.customerName)}
+                          onClick={() => toggleStageCustomerExpanded(customer.groupKey)}
                           className={`p-4 cursor-pointer select-none transition-colors ${
                             stage === "DGU"
                               ? "bg-gradient-to-r from-slate-50/70 via-white to-teal-50/20 hover:from-teal-50/30"
@@ -5216,9 +5157,24 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="text-base font-extrabold text-slate-900 truncate">
-                                    {customer.customerName}
+                                  <h3
+                                    className="text-base font-extrabold text-rose-700 truncate flex items-center gap-1.5"
+                                    title={customer.pdfFiles && customer.pdfFiles.length > 0 ? customer.pdfFiles.join(', ') : customer.customerName}
+                                  >
+                                    <FileText className="w-4 h-4 text-rose-500 shrink-0" />
+                                    <span className="truncate">
+                                      {customer.pdfFiles && customer.pdfFiles.length > 0
+                                        ? customer.pdfFiles.join(', ')
+                                        : customer.customerName}
+                                    </span>
                                   </h3>
+
+                                  {customer.projectName && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
+                                      <Briefcase className="w-3 h-3 text-blue-600" />
+                                      {customer.projectName}
+                                    </span>
+                                  )}
 
                                   {customer.hasColour && (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
@@ -5263,10 +5219,20 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                   )}
                                 </div>
 
-                                <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                                  {customer.projects.length > 0
-                                    ? customer.projects.join(" • ")
-                                    : "Standard Shop Floor Order"}
+                                <div className="text-xs text-slate-500 font-medium truncate mt-0.5 flex items-center gap-2 flex-wrap">
+                                  <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                                    <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                    <span>{customer.customerName}</span>
+                                  </span>
+                                  {customer.projectName && (
+                                    <>
+                                      <span className="text-slate-300">•</span>
+                                      <span className="flex items-center gap-1">
+                                        <span className="text-slate-400 font-semibold">Project:</span>
+                                        <span className="font-bold text-slate-700">{customer.projectName}</span>
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -5274,7 +5240,16 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                             {/* Right: Quantities & Chevron */}
                             <div className="flex items-center gap-4 shrink-0 justify-between w-full md:w-auto">
                               <div className="text-right">
-                                <div className="font-mono text-xs font-black text-slate-900">
+                                <div className="font-mono text-xs font-black text-slate-900 flex items-center justify-end gap-1.5 flex-wrap">
+                                  {customer.pdfFiles && customer.pdfFiles.length > 0 && (
+                                    <>
+                                      <span className="text-rose-700 font-bold inline-flex items-center gap-0.5" title={`Source: ${customer.pdfFiles.join(', ')}`}>
+                                        <FileText className="w-3 h-3 text-rose-500" />
+                                        {customer.pdfFiles.length} {customer.pdfFiles.length === 1 ? 'PDF' : 'PDFs'}
+                                      </span>
+                                      <span className="text-slate-400">•</span>
+                                    </>
+                                  )}
                                   <span
                                     className={
                                       stage === "DGU"
@@ -5302,10 +5277,31 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       ? "Piece"
                                       : "Pieces"}
                                   </span>
-                                  <span className="text-slate-400 mx-1.5">•</span>
+                                  <span className="text-slate-400">•</span>
                                   <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
                                 </div>
                               </div>
+
+                              {stage === "Polishing" && customer.rows.some((r) => selectedRowIds.includes(r.id)) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const custSelected = customer.rows.filter((r) => selectedRowIds.includes(r.id));
+                                    const serialsToAdvance = Array.from(new Set(custSelected.flatMap((r) => r.allSerials)));
+                                    setSelectedRowIds((prev) => prev.filter((id) => !custSelected.some((r) => r.id === id)));
+                                    completeStage(serialsToAdvance, undefined, true);
+                                  }}
+                                  disabled={loading}
+                                  className="h-8 px-3 text-xs font-black bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 animate-in fade-in"
+                                  title={`Polish & Advance ${customer.rows.filter((r) => selectedRowIds.includes(r.id)).length} selected items for ${customer.customerName}`}
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5 text-white" />
+                                  <span>
+                                    Polish & Advance ({customer.rows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
+                                  </span>
+                                </button>
+                              )}
 
                               {stage === "Finished" && (
                                 <button
@@ -5526,6 +5522,250 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Barcode / QR Scanner Verification Dialog */}
+      <Dialog
+        open={Boolean(scanRow)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setScanRow(null);
+            setScanInput("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg bg-white text-slate-900 border-slate-200 shadow-2xl rounded-2xl">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="text-base font-extrabold flex items-center gap-2 text-slate-900">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                  <ScanLine className="w-4 h-4" />
+                </div>
+                <span>Scan Verification ({stage})</span>
+              </DialogTitle>
+              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                Ready for Gun
+              </span>
+            </div>
+            <DialogDescription className="text-xs text-slate-500 mt-1">
+              Aim your barcode scanner gun at the glass sticker or use the camera / input below.
+            </DialogDescription>
+          </DialogHeader>
+
+          {scanRow && (
+            <div className="space-y-4 my-2">
+              {/* Process route progress */}
+              <div className="flex items-center gap-1 flex-wrap">
+                {scanRow.item.processRoute.map((s, idx) => {
+                  const isCurrent = s === stage;
+                  const isDone = scanRow.item.completedStages?.includes(s);
+                  return (
+                    <React.Fragment key={s}>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition-all
+                          ${STAGE_COLORS[s] || "bg-slate-100 text-slate-700"}
+                          ${isCurrent ? "ring-2 ring-offset-1 ring-current scale-110" : ""}
+                          ${isDone && !isCurrent ? "opacity-40 line-through" : ""}
+                        `}
+                      >
+                        {s}
+                      </span>
+                      {idx < scanRow.item.processRoute.length - 1 && (
+                        <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              {/* Specification Card */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">
+                    {stage === "DGU" ? "Colour Lite Serial (Primary):" : "Item Serial:"}
+                  </span>
+                  <span className="font-mono font-bold text-blue-700">{scanRow.displaySerial}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Expected Barcode:</span>
+                  <span className="font-mono font-bold text-slate-900">{resolveValidBarcode(scanRow.item, scanRow.displayBarcode)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Glass Spec:</span>
+                  <span className="font-semibold text-slate-800 truncate max-w-[220px]">
+                    {scanRow.item.glassType || scanRow.item.itemCode}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Dimensions:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {scanRow.item.width} × {scanRow.item.height} mm
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-slate-200">
+                  <span className="text-slate-500">Remaining to Scan:</span>
+                  <span className="font-bold text-[#1680f5] bg-blue-100 px-2 py-0.5 rounded-lg font-mono text-xs border border-blue-200">
+                    {scanRow.item.qty || 1} {scanRow.item.qty === 1 ? "pc" : "pcs"} remaining
+                  </span>
+                </div>
+
+                {stage === "DGU" && scanRow.partnerItem && (
+                  <div className="border-t border-teal-200 pt-2 mt-2 bg-teal-50/70 -mx-3 -mb-3 p-3 rounded-b-xl space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-teal-900 font-bold flex items-center gap-1">
+                        <Link2 className="w-3.5 h-3.5 text-teal-600" /> Paired Clear Inner Lite:
+                      </span>
+                      <span className="font-mono font-extrabold text-teal-800">
+                        {scanRow.partnerItem.serialNumber}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-teal-700">
+                      <span>Clear Barcode:</span>
+                      <span className="font-mono">{scanRow.partnerItem.barcode}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Barcode Gun Input */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  Scan Barcode Gun Input
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    ref={scanInputRef}
+                    autoFocus
+                    value={scanInput}
+                    onChange={(e) => setScanInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleScanVerify();
+                      }
+                    }}
+                    placeholder={stage === "DGU" ? `Scan Colour Barcode (${resolveValidBarcode(scanRow.item, scanRow.displayBarcode)})...` : "Scan sticker barcode..."}
+                    className="font-mono text-sm bg-slate-50 border-slate-300 text-slate-900 focus:bg-white"
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => setStageCameraOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 gap-1"
+                    title="Scan with phone/device camera"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Camera</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => handleScanVerify()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4"
+                  >
+                    Verify
+                  </Button>
+                </div>
+              </div>
+
+              {/* Quick Preset Button */}
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                <span>Quick Test:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const expected = resolveValidBarcode(scanRow.item, scanRow.displayBarcode);
+                    setScanInput(expected);
+                  }}
+                  className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-mono font-bold hover:bg-emerald-100 cursor-pointer"
+                >
+                  Use Expected Barcode
+                </button>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex items-center justify-between pt-2 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setScanRow(null);
+                setScanInput("");
+              }}
+              className="text-xs font-bold"
+            >
+              Cancel
+            </Button>
+            {scanRow && (
+              <Button
+                type="button"
+                onClick={async () => {
+                  const targetRow = scanRow;
+                  setScanRow(null);
+                  await completeStage(targetRow.allSerials, 1, false);
+                }}
+                className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs gap-1.5 shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5" /> 1-Click Advance (1 pc)
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Camera Scanner for Stage Verification */}
+      {stageCameraOpen && (
+        <CameraScannerModal
+          open={stageCameraOpen}
+          onOpenChange={setStageCameraOpen}
+          onScan={(code) => {
+            setScanInput(code);
+            setTimeout(() => {
+              handleScanVerify();
+            }, 100);
+          }}
+          title={`Scan with Camera (${stage})`}
+        />
+      )}
+
+      {/* Floating Sticky Bulk Advance Bar when rows are selected in Polishing Workstation */}
+      {stage === "Polishing" && selectedRowIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-3 rounded-2xl shadow-2xl border border-cyan-500/50 flex items-center gap-4 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-xs font-bold text-slate-200">
+              <strong className="text-cyan-300 font-mono text-sm">
+                {displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)}
+              </strong>{" "}
+              pieces selected for Polishing
+            </span>
+          </div>
+
+          <div className="h-4 w-px bg-slate-700" />
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleBatchComplete}
+              disabled={loading}
+              className="bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white font-black text-xs h-8 px-4 gap-1.5 rounded-xl shadow-md active:scale-95 cursor-pointer"
+            >
+              <CheckCircle className="w-3.5 h-3.5 text-white" />
+              <span>Polish & Advance Selected</span>
+            </Button>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedRowIds([])}
+              className="text-slate-400 hover:text-white hover:bg-slate-800 text-xs h-8 px-2.5 rounded-xl cursor-pointer"
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

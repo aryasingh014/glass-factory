@@ -1809,3 +1809,561 @@ describe("Dispatch Stage & Dispatched History Storage", () => {
   });
 });
 
+describe("Barcode Scanner Sticker Matching & Stage Advancement Workflow", () => {
+  it("should match items across various sticker barcode formats and prioritize active stage", async () => {
+    const { findBestMatchingItem, isItemMatchingCode, cleanScannedBarcode } = await import("../../client/lib/barcode");
+
+    const item1: any = {
+      id: "item-cut-01",
+      serialNumber: "S423",
+      barcode: "1012627015230001",
+      sfoNo: "9000",
+      posNo: "1",
+      currentStage: "Pairing",
+      status: "In Production",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+    };
+
+    const item2: any = {
+      id: "item-cut-02",
+      serialNumber: "S424",
+      barcode: "1012627015230001",
+      sfoNo: "9000",
+      posNo: "1",
+      currentStage: "Cutting",
+      status: "In Production",
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+    };
+
+    const items = [item1, item2];
+
+    // Clean barcode stripping AIM identifiers and QR prefixes
+    expect(cleanScannedBarcode("]C11012627015230001")).toBe("1012627015230001");
+    expect(cleanScannedBarcode("QR-1012627015230001")).toBe("1012627015230001");
+    expect(cleanScannedBarcode("#S423")).toBe("S423");
+
+    // Both items match the barcode
+    expect(isItemMatchingCode(item1, "1012627015230001")).toBe(true);
+    expect(isItemMatchingCode(item2, "1012627015230001")).toBe(true);
+
+    // When operator is at Cutting workstation, it MUST prioritize item2 (currently in Cutting)
+    const cuttingMatch = findBestMatchingItem(items, "1012627015230001", "Cutting");
+    expect(cuttingMatch).toBeDefined();
+    expect(cuttingMatch.id).toBe("item-cut-02");
+    expect(cuttingMatch.currentStage).toBe("Cutting");
+
+    // When operator is at Pairing buffer, it MUST prioritize item1 (currently in Pairing)
+    const pairingMatch = findBestMatchingItem(items, "1012627015230001", "Pairing");
+    expect(pairingMatch).toBeDefined();
+    expect(pairingMatch.id).toBe("item-cut-01");
+    expect(pairingMatch.currentStage).toBe("Pairing");
+
+    // If no preferred stage provided, prioritize the earliest incomplete stage in route (Cutting before Pairing)
+    const earliestMatch = findBestMatchingItem(items, "1012627015230001");
+    expect(earliestMatch.id).toBe("item-cut-02");
+  });
+
+  it("should advance scanned item to next respective stage via handleAdvanceStage", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const testId = `test-scan-${Date.now()}`;
+    const testItem: any = {
+      id: testId,
+      serialNumber: "S999",
+      barcode: "1012627099990001",
+      posNo: "1",
+      currentStage: "Cutting",
+      status: "In Production",
+      completedStages: [],
+      processRoute: ["Cutting", "Pairing", "Lamination", "Finished"],
+      qty: 1,
+    };
+    glassItemsDatabase.push(testItem);
+
+    let jsonResponse: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: ["S999"],
+        itemIds: [testId],
+        currentStage: "Cutting",
+        advanceQty: 1,
+        advanceAll: false,
+        operator: "test-operator",
+      },
+    };
+    const res: any = {
+      status: () => res,
+      json: (data: any) => {
+        jsonResponse = data;
+        return res;
+      },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+    expect(jsonResponse).toBeDefined();
+    expect(jsonResponse.items).toBeDefined();
+    expect(jsonResponse.items.length).toBeGreaterThan(0);
+
+    const advanced = glassItemsDatabase.find((g) => g.id === testId);
+    expect(advanced).toBeDefined();
+    expect(advanced?.currentStage).toBe("Pairing");
+    expect(advanced?.completedStages).toContain("Cutting");
+  });
+
+  it("should allow multi-sticker position (Glass1.pdf POS 17) to be scanned twice at Cutting and reject 3rd scan", async () => {
+    const { glassItemsDatabase } = await import("./pi");
+    const { handleAdvanceStage, handleScanLookup } = await import("./production");
+
+    const barcode17 = "1012627099990033";
+    const piece1Id = "test-piece17-1";
+    const piece2Id = "test-piece17-2";
+
+    // Setup 2 stickers sharing the same barcode in Cutting
+    const piece1: any = {
+      id: piece1Id,
+      serialNumber: "S717",
+      barcode: barcode17,
+      posNo: "17",
+      orderNo: "901765",
+      batchNo: "9442",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    };
+    const piece2: any = {
+      id: piece2Id,
+      serialNumber: "S718",
+      barcode: barcode17,
+      posNo: "17",
+      orderNo: "901765",
+      batchNo: "9442",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    };
+    glassItemsDatabase.push(piece1, piece2);
+
+    // Scan 1: Piece 1 advances to Pairing
+    let res1Data: any = null;
+    const req1: any = {
+      body: {
+        serialNumbers: [barcode17],
+        currentStage: "Cutting",
+        stage: "Cutting",
+        advanceQty: 1,
+      },
+    };
+    const res1: any = {
+      status: () => res1,
+      json: (d: any) => { res1Data = d; return res1; },
+    };
+    handleAdvanceStage(req1, res1, () => {});
+    expect(res1Data.items).toHaveLength(1);
+    expect(res1Data.items[0].id).toBe(piece1Id);
+    expect(piece1.currentStage).toBe("Pairing");
+    expect(piece2.currentStage).toBe("Cutting");
+
+    // Scan 2: Piece 2 advances to Pairing
+    let res2Data: any = null;
+    const req2: any = {
+      body: {
+        serialNumbers: [barcode17],
+        currentStage: "Cutting",
+        stage: "Cutting",
+        advanceQty: 1,
+      },
+    };
+    const res2: any = {
+      status: () => res2,
+      json: (d: any) => { res2Data = d; return res2; },
+    };
+    handleAdvanceStage(req2, res2, () => {});
+    expect(res2Data.items).toHaveLength(1);
+    expect(res2Data.items[0].id).toBe(piece2Id);
+    expect(piece2.currentStage).toBe("Pairing");
+
+    // Scan 3: Both pieces have completed Cutting! Must reject with 400 and Already scanned message
+    let res3Status = 200;
+    let res3Data: any = null;
+    const req3: any = {
+      body: {
+        serialNumbers: [barcode17],
+        currentStage: "Cutting",
+        stage: "Cutting",
+        advanceQty: 1,
+      },
+    };
+    const res3: any = {
+      status: (code: number) => { res3Status = code; return res3; },
+      json: (d: any) => { res3Data = d; return res3; },
+    };
+    handleAdvanceStage(req3, res3, () => {});
+    expect(res3Status).toBe(400);
+    expect(res3Data.error).toBe("Already scanned in this stage");
+    expect(res3Data.message).toContain("already completed stage");
+
+    // Check handleScanLookup also reports already_scanned
+    let lookupData: any = null;
+    const reqLookup: any = {
+      body: { code: barcode17, stage: "Cutting" },
+    };
+    const resLookup: any = {
+      status: () => resLookup,
+      json: (d: any) => { lookupData = d; return resLookup; },
+    };
+    handleScanLookup(reqLookup, resLookup, () => {});
+    expect(lookupData.status).toBe("already_scanned");
+    expect(lookupData.message).toContain("already scanned");
+
+    // Clean up
+    const idx1 = glassItemsDatabase.findIndex((g) => g.id === piece1Id);
+    if (idx1 !== -1) glassItemsDatabase.splice(idx1, 1);
+    const idx2 = glassItemsDatabase.findIndex((g) => g.id === piece2Id);
+    if (idx2 !== -1) glassItemsDatabase.splice(idx2, 1);
+  });
+
+  it("should reject advancing an upstream item if scanned from a downstream workstation stage", async () => {
+    const { glassItemsDatabase } = await import("./pi");
+    const { handleAdvanceStage } = await import("./production");
+
+    const testSn = "SN-UPSTREAM-TEST-01";
+    const testId = "item-upstream-test-01";
+    glassItemsDatabase.push({
+      id: testId,
+      serialNumber: testSn,
+      barcode: "1012627099990001",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+      width: 1000,
+      height: 1000,
+      sqm: 1.0,
+      piNumber: "PI-TEST-UPSTREAM",
+      posNo: "1",
+    } as any);
+
+    let resStatus = 200;
+    let resData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [testSn],
+        stage: "DGU",
+        currentStage: "DGU",
+      },
+    };
+    const res: any = {
+      status: (code: number) => { resStatus = code; return res; },
+      json: (d: any) => { resData = d; return res; },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+    expect(resStatus).toBe(400);
+    expect(resData.error).toBe("Wrong workstation stage");
+    expect(resData.skippedItems[0].reason).toContain("cannot be scanned at \"DGU\"");
+
+    // Clean up
+    const idx = glassItemsDatabase.findIndex((g) => g.id === testId);
+    if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+  });
+
+  it("should REJECT advancing a single DGU glass pane from Pairing if its Colour partner is not in buffer", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const clearId = `item-pair-guard-clear-${Date.now()}`;
+    const clearSn = `SN-CLR-GUARD-${Date.now()}`;
+
+    // Add only Clear pane into Pairing (Colour pane has NOT been cut yet)
+    glassItemsDatabase.push({
+      id: clearId,
+      serialNumber: clearSn,
+      barcode: `1012627099990001`,
+      glassCategory: "DGU",
+      colorOrClear: "Clear",
+      currentStage: "Pairing",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      completedStages: ["Cutting"],
+      status: "In Production",
+      qty: 1,
+      width: 1200,
+      height: 800,
+      sqm: 0.96,
+      piNumber: "PI-TEST-PAIR-GUARD",
+      posNo: "42",
+    } as any);
+
+    let resStatus = 200;
+    let resData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [clearSn],
+        stage: "Pairing",
+        currentStage: "Pairing",
+      },
+    };
+    const res: any = {
+      status: (code: number) => { resStatus = code; return res; },
+      json: (d: any) => { resData = d; return res; },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+    expect(resStatus).toBe(400);
+    expect(resData.error).toBe("Pairing Required");
+    expect(resData.skippedItems[0].reason).toContain("cannot advance to DGU without pairing");
+
+    // Clean up
+    const idx = glassItemsDatabase.findIndex((g) => g.id === clearId);
+    if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+  });
+
+  it("should successfully pair and advance BOTH panes when partner pane arrives in Pairing buffer", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const ts = Date.now();
+    const clearId = `item-pair-clear-${ts}`;
+    const clearSn = `SN-CLR-PAIR-${ts}`;
+    const colId = `item-pair-col-${ts}`;
+    const colSn = `SN-COL-PAIR-${ts}`;
+
+    // Add Clear pane in Pairing
+    glassItemsDatabase.push({
+      id: clearId,
+      serialNumber: clearSn,
+      barcode: `1012627088880001`,
+      glassCategory: "DGU",
+      colorOrClear: "Clear",
+      currentStage: "Pairing",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      completedStages: ["Cutting"],
+      status: "In Production",
+      qty: 1,
+      width: 1200,
+      height: 800,
+      sqm: 0.96,
+      piNumber: "PI-TEST-PAIR-SUCCESS",
+      orderNo: "ORD-999",
+      posNo: "55",
+    } as any);
+
+    // Add Colour pane also in Pairing
+    glassItemsDatabase.push({
+      id: colId,
+      serialNumber: colSn,
+      barcode: `1012627088880002`,
+      glassCategory: "DGU",
+      colorOrClear: "Colour",
+      category: "Coloured Glass",
+      currentStage: "Pairing",
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      completedStages: ["Cutting"],
+      status: "In Production",
+      qty: 1,
+      width: 1200,
+      height: 800,
+      sqm: 0.96,
+      piNumber: "PI-TEST-PAIR-SUCCESS",
+      orderNo: "ORD-999",
+      posNo: "55",
+    } as any);
+
+    let resStatus = 200;
+    let resData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [clearSn],
+        stage: "Pairing",
+        currentStage: "Pairing",
+      },
+    };
+    const res: any = {
+      status: (code: number) => { resStatus = code; return res; },
+      json: (d: any) => { resData = d; return res; },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+    expect(resStatus).toBe(200);
+    expect(resData.items.length).toBe(2);
+
+    const clrItem = glassItemsDatabase.find((g) => g.id === clearId);
+    const colItem = glassItemsDatabase.find((g) => g.id === colId);
+    expect(clrItem?.currentStage).toBe("DGU");
+    expect(colItem?.currentStage).toBe("DGU");
+    expect((clrItem as any)?.dguPairId).toBeDefined();
+    expect((colItem as any)?.dguPairId).toBe((clrItem as any)?.dguPairId);
+
+    // Clean up
+    glassItemsDatabase.splice(glassItemsDatabase.findIndex((g) => g.id === clearId), 1);
+    glassItemsDatabase.splice(glassItemsDatabase.findIndex((g) => g.id === colId), 1);
+  });
+
+  it("should find and return item for A1.pdf barcode, POS, SFO, and glass code in handleScanLookup", async () => {
+    const { handleScanLookup } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const a1Item = {
+      id: "test-a1-spec-1",
+      serialNumber: "SN-A1-001",
+      barcode: "1012627007010008",
+      posNo: "3",
+      sfoNo: "20070",
+      orderNo: "00821",
+      obNo: "01361",
+      batchNo: "1023",
+      itemCode: "1233 V17 W03A GL SK",
+      glassCode: "1233 V17 W03A GL SK",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    } as any;
+
+    glassItemsDatabase.unshift(a1Item);
+
+    const checkCode = (code: string) => {
+      let status = 200;
+      let body: any = null;
+      const req: any = { body: { code, stage: "Cutting" } };
+      const res: any = {
+        status: (c: number) => { status = c; return res; },
+        json: (b: any) => { body = b; return res; },
+      };
+      handleScanLookup(req, res, () => {});
+      return { status, body };
+    };
+
+    // 1. Direct 16-digit barcode from A1.pdf
+    expect(checkCode("1012627007010008").body.item?.barcode).toBe("1012627007010008");
+
+    // 2. Pure POS number '3' and 'POS 3'
+    expect(checkCode("3").body.item?.posNo).toBe("3");
+    expect(checkCode("POS 3").body.item?.posNo).toBe("3");
+
+    // 3. SFO number '20070'
+    expect(checkCode("20070").body.item?.sfoNo).toBe("20070");
+
+    // 4. Glass Code '1233 V17 W03A GL SK'
+    expect(checkCode("1233 V17 W03A GL SK").body.item?.itemCode).toContain("1233 V17 W03A GL SK");
+
+    // Clean up
+    const idx = glassItemsDatabase.findIndex((g) => g.id === "test-a1-spec-1");
+    if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+  });
+
+  it("should support scanning arbitrary generic non-Sejal stickers in handleScanLookup", async () => {
+    const { handleScanLookup } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const genericItem = {
+      id: "test-generic-spec-99",
+      serialNumber: "SN-GEN-99",
+      barcode: "GENERIC-BARCODE-9999",
+      posNo: "88",
+      sfoNo: "7766",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    } as any;
+
+    glassItemsDatabase.push(genericItem);
+
+    let body: any = null;
+    const req: any = { body: { code: "]C1GENERIC-BARCODE-9999", stage: "Cutting" } };
+    const res: any = {
+      status: () => res,
+      json: (b: any) => { body = b; return res; },
+    };
+    handleScanLookup(req, res, () => {});
+    expect(body.item?.serialNumber).toBe("SN-GEN-99");
+
+    // Clean up
+    const idx = glassItemsDatabase.findIndex((g) => g.id === "test-generic-spec-99");
+    if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+  });
+
+  it("should conditionally route stickers with POLISH to Polishing, and standard stickers to default flow", async () => {
+    const { handleStickerUpload } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // 1. Upload a batch with CUT/POLISH route (like polish1.pdf)
+    let bodyPolish: any = null;
+    const reqPolish: any = {
+      body: {
+        batchNo: "TEST-POLISH-01",
+        sfoNo: "9001",
+        items: [
+          {
+            stickerNo: 1,
+            glassType: "10MM CLEAR",
+            makeup: "10MM CLEAR\n1.52MM CLEAR PVB\n10MM CLEAR",
+            stickerRoute: "CUT/POLISH ALL SIDES/HOLE/TMP/HST",
+            hasPolish: true,
+            glassCategory: "Lamination",
+            width: 1923,
+            height: 2368,
+            qty: 1,
+            barcode: "1012627090010001",
+          },
+        ],
+      },
+    };
+    const resPolish: any = {
+      status: () => resPolish,
+      json: (b: any) => { bodyPolish = b; return resPolish; },
+    };
+    handleStickerUpload(reqPolish, resPolish, () => {});
+    const polishItem = bodyPolish.items?.[0];
+    expect(polishItem.processRoute).toEqual(["Cutting", "Polishing", "Pairing", "Lamination", "Finished"]);
+
+    // 2. Upload a standard batch with CUT/EDGE (like Glass1.pdf) - should NOT include Polishing
+    let bodyStandard: any = null;
+    const reqStandard: any = {
+      body: {
+        batchNo: "TEST-STANDARD-01",
+        sfoNo: "9002",
+        items: [
+          {
+            stickerNo: 1,
+            glassType: "6MM CLEAR",
+            makeup: "6MM CLEAR\n12MM AIR\n6MM CLEAR",
+            stickerRoute: "CUT/EDGE/TMP/U-INSERT",
+            hasPolish: false,
+            glassCategory: "DGU",
+            width: 1000,
+            height: 1000,
+            qty: 1,
+            barcode: "1012627090020001",
+          },
+        ],
+      },
+    };
+    const resStandard: any = {
+      status: () => resStandard,
+      json: (b: any) => { bodyStandard = b; return resStandard; },
+    };
+    handleStickerUpload(reqStandard, resStandard, () => {});
+    const standardItem = bodyStandard.items?.[0];
+    expect(standardItem.processRoute).toEqual(["Cutting", "Pairing", "DGU", "Finished"]);
+    expect(standardItem.processRoute).not.toContain("Polishing");
+
+    // Clean up
+    const removeIds = [polishItem?.id, standardItem?.id].filter(Boolean);
+    removeIds.forEach((id) => {
+      const idx = glassItemsDatabase.findIndex((g) => g.id === id);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+});
+
+
+

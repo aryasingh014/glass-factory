@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { UserRole } from "@shared/api";
+import { UserRole, ProductionStage } from "@shared/api";
 import { env } from "./env";
 import { UserProfile } from "./users";
 
@@ -11,6 +11,7 @@ export interface AuthPayload {
   email?: string;
   name?: string;
   role: UserRole;
+  assignedStages?: ProductionStage[];
   sessionId?: string;
   exp: number;
 }
@@ -42,6 +43,7 @@ export function generateUserToken(user: UserProfile, sessionId?: string): string
     email: user.email,
     name: user.name,
     role: user.role,
+    assignedStages: user.assignedStages,
     sessionId: sessionId || `ses-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     exp: Math.floor(Date.now() / 1000) + 86400 * 7, // 7 days expiration
   };

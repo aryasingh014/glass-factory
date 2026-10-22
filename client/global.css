@@ -308,15 +308,37 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
 
   /* 6. Support sticker printing */
   #printable-glass-sticker {
-    position: absolute !important;
+    position: relative !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
+    max-width: 120mm !important;
+    margin: 0 auto !important;
+    padding: 8px !important;
     background: white !important;
     color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
     transform: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  #printable-glass-sticker * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #printable-glass-sticker svg {
+    max-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    overflow: visible !important;
+    shape-rendering: crispEdges !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Page break rules for layout cards */

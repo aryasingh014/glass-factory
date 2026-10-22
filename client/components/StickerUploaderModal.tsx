@@ -36,7 +36,7 @@ import {
 import { toast } from "sonner";
 import { formatPlatformDateTime, formatBatchNumber } from "@/lib/utils";
 import * as pdfjsLib from "pdfjs-dist";
-import { formatSejalBarcode } from "@/lib/barcode";
+import { formatGenericBarcode, formatSejalBarcode, KNOWN_BARCODE_PREFIXES, BARCODE_PREFIX } from "@/lib/barcode";
 import { useAuth } from "@/context/AuthContext";
 
 // Configure pdf.js worker URL served cleanly from /pdf.worker.min.js (public folder)
@@ -72,6 +72,9 @@ export interface ParsedStickerItem {
   glassColor: string;
   glassCategory?: "DGU" | "Lamination" | "DLGU";
   makeup?: string;
+  stickerRoute?: string;
+  hasPolish?: boolean;
+  remarks?: string;
   optDate: string;
   delDate: string;
 }
@@ -309,8 +312,19 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         // Factory barcode stickers have a pure numeric barcode (typically 12-20 digits, starting with 10126 or 101) printed directly under the barcode bars.
         let detectedBarcode = "";
 
-        // Priority 1: Direct match in fullPageText for Sejal standard barcode (10126... or 101...)
-        const sejalCodeMatch = fullPageText.match(/\b(10126\d{7,15})\b/) || fullPageText.match(/\b(101\d{9,17})\b/);
+        // Priority 1: Direct match in fullPageText for ERP standard barcode (using configured/known prefixes or generic)
+        let sejalCodeMatch: RegExpMatchArray | null = null;
+        for (const pfx of KNOWN_BARCODE_PREFIXES) {
+          const reg = new RegExp(`\\b(${pfx}\\d{6,16})\\b`);
+          const m = fullPageText.match(reg);
+          if (m) {
+            sejalCodeMatch = m;
+            break;
+          }
+        }
+        if (!sejalCodeMatch) {
+          sejalCodeMatch = fullPageText.match(/\b(10126\d{7,15})\b/) || fullPageText.match(/\b(101\d{9,17})\b/);
+        }
         if (sejalCodeMatch) {
           detectedBarcode = sejalCodeMatch[1];
         }
@@ -418,7 +432,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         if (!heightVal) heightVal = 1000;
 
         // Barcode extracted directly from sticker, with deterministic fallback if unavailable
-        const finalBarcode = detectedBarcode || formatSejalBarcode(sfoNoVal || detectedSFO || orderNo || `SFO${pageNum}`, posNoVal || pageNum);
+        const finalBarcode = detectedBarcode || formatGenericBarcode(sfoNoVal || detectedSFO || orderNo || `SFO${pageNum}`, posNoVal || pageNum, BARCODE_PREFIX);
 
         // 3. Dynamic Customer Name Extraction
         const custCandidates = textBlocks.filter((b) => {
@@ -482,7 +496,22 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           glassCode = `GL ${posNoVal || pageNum}`;
         }
 
-        // 6. Dynamic Glass Specification / Description Extraction
+        // 6. Dynamic Glass Specification / Description & Route Extraction
+        const routeBlock = textBlocks.find(
+          (b) => /(?:^|\/|\s)(?:CUT|POLISH|EDGE)(?:\/|\s|$)/i.test(b.text) || /CUT\//i.test(b.text) || /POLISH/i.test(b.text)
+        );
+        let extractedRouteText = routeBlock ? routeBlock.text.trim() : "";
+        if (!extractedRouteText) {
+          const m = fullPageText.match(/(?:L\/)?CUT\/[A-Za-z0-9_\-\s\/]+/i);
+          if (m) extractedRouteText = m[0].trim();
+        }
+
+        const itemHasPolish =
+          /\bPOLISH\b/i.test(extractedRouteText) ||
+          /\bPOLISHED\b/i.test(extractedRouteText) ||
+          /\bPOLISH\b/i.test(fullPageText) ||
+          /\bPOLISHED\b/i.test(fullPageText);
+
         const cutBlock = textBlocks.find((b) => /CUT\//i.test(b.text));
         let primaryPane = "";
         if (cutBlock) {
@@ -563,6 +592,19 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           rackNoVal = rackBlock.text;
         }
 
+        // 9. Dynamic Makeup Lines Extraction from PDF page (sitting below glass code line, above OPT.DATE, left side)
+        const codeBlock = textBlocks.find((b) => /glass\s*code/i.test(b.text));
+        const codeY = codeBlock ? codeBlock.y : 68;
+        const makeupBlocks = textBlocks
+          .filter((b) => {
+            const isBelowCode = b.y < codeY - 4 && b.y > 14;
+            const isLeftSide = b.x < 180;
+            const isExcluded = /opt\.?\s*date|made\s+in\s+uae|del\.?\s*date|project|glass\s*code|cut\//i.test(b.text);
+            return isBelowCode && isLeftSide && !isExcluded;
+          })
+          .sort((a, b) => b.y - a.y);
+        const extractedMakeup = makeupBlocks.map((b) => b.text).join("\n");
+
         if (!detectedSFO && sfoNoVal) detectedSFO = sfoNoVal;
         if (!detectedOB && obNoVal) detectedOB = obNoVal;
         if (!detectedBatch && batchNoVal) detectedBatch = batchNoVal;
@@ -590,8 +632,12 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           glassType,
           colorOrClear: itemColorType,
           glassColor: itemColorName,
+          makeup: extractedMakeup,
           optDate: optDateVal,
           delDate: delDateVal,
+          stickerRoute: extractedRouteText,
+          hasPolish: itemHasPolish,
+          remarks: extractedRouteText ? `Route: ${extractedRouteText}` : undefined,
         });
 
         // Free PDF page memory immediately to avoid high RAM usage and browser freeze
@@ -623,6 +669,10 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           existing.qty = newQty;
           existing.lineQty = newQty;
           existing.sqm = parseFloat(((existing.width * existing.height * newQty) / 1000000).toFixed(2));
+          if (!existing.makeup && item.makeup) existing.makeup = item.makeup;
+          if (!existing.stickerRoute && item.stickerRoute) existing.stickerRoute = item.stickerRoute;
+          if (item.hasPolish) existing.hasPolish = true;
+          if (!existing.remarks && item.remarks) existing.remarks = item.remarks;
         } else {
           const initialQty = item.qty || 1;
           combinedMap.set(groupKey, {
@@ -663,13 +713,14 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
       setProductCategory(detectedCategory);
 
+      const hasAnyPolish = extractedItems.some((i) => i.hasPolish);
       const autoMsg = `${autoFinish === "Colour" ? "Auto-detected: Coloured Glass" : "Auto-detected: Clear Glass"} • ${
         detectedCategory === "DLGU"
           ? "DLGU (Double Laminated Glazed Unit)"
           : detectedCategory === "Lamination"
           ? "Laminated Glass"
           : "DGU / IGU (Double Glazing)"
-      }`;
+      }${hasAnyPolish ? " • Polishing Required" : " • Standard Flow (No Polish)"}`;
       setGlassCategory(autoFinish);
       setAutoDetectedMessage(autoMsg);
 
@@ -904,6 +955,9 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
             projectName: i.projectName || (projectName.startsWith("Multiple") ? undefined : projectName),
             glassCategory: productCategory,
             finish: glassCategory,
+            stickerRoute: i.stickerRoute,
+            hasPolish: i.hasPolish,
+            remarks: i.remarks || (i.stickerRoute ? `Route: ${i.stickerRoute}` : undefined),
           })),
         }),
       });
@@ -2497,6 +2551,22 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
                                   onChange={(e) => handleItemChange(realIndex, "glassType", e.target.value)}
                                   className="h-9 text-xs sm:text-sm font-medium text-slate-800 bg-white border-slate-300 focus:border-purple-500 w-full min-w-[190px] px-2"
                                 />
+                                {row.stickerRoute && (
+                                  <div className="text-[10px] font-mono mt-1 flex items-center gap-1.5 truncate max-w-[220px]">
+                                    <span className="text-slate-500 truncate" title={row.stickerRoute}>
+                                      {row.stickerRoute}
+                                    </span>
+                                    {row.hasPolish ? (
+                                      <span className="px-1.5 py-0.2 rounded bg-cyan-100 text-cyan-800 font-extrabold text-[9px] uppercase shrink-0 border border-cyan-200">
+                                        Polish
+                                      </span>
+                                    ) : (
+                                      <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-bold text-[9px] uppercase shrink-0">
+                                        Standard
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
 
                               {/* OB # */}

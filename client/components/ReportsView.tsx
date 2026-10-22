@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -271,21 +272,28 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onRework,
 }) => {
   const [reportData, setReportData] = useState<ReportsResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"pis" | "items" | "history" | "rejects" | "reworks">(
-    initialTab || "pis"
-  );
-
-  useEffect(() => {
-    if (initialTab) {
-      setActiveTab(initialTab);
-    }
-  }, [initialTab]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validReportTabs = ["pis", "items", "history", "rejects", "reworks"] as const;
+  type ReportTabType = typeof validReportTabs[number];
+  
+  const urlReportTab = searchParams.get("report_tab") as ReportTabType | null;
+  const activeTab: ReportTabType = (urlReportTab && validReportTabs.includes(urlReportTab))
+    ? urlReportTab
+    : (initialTab || "pis");
 
   const handleTabSelect = (tab: "pis" | "items" | "history" | "rejects" | "reworks") => {
-    setActiveTab(tab);
     try {
       localStorage.setItem("sejal_reports_active_tab", tab);
     } catch {}
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === "pis") {
+        next.delete("report_tab");
+      } else {
+        next.set("report_tab", tab);
+      }
+      return next;
+    });
     onTabChange?.(tab);
   };
 
@@ -1122,11 +1130,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         toast.error("No batch data to export in the current filtered view");
         return;
       }
-      const data = filteredPis.map((p, idx) => ({
-        "Sr No": idx + 1,
-        "Batch Number": formatBatchNumber(p.piNumber) || p.piNumber,
-        "PI Number": p.proformaInvNo || p.piNumber || p.jobOrderNumber || "—",
-        "Job Order No": p.jobOrderNumber || "—",
+      const data = filteredPis.map((p, idx) => {
+        const batchFmt = formatBatchNumber(p.batchNo || p.piNumber) || p.piNumber;
+        const distinctPi = p.proformaInvNo &&
+          formatBatchNumber(p.proformaInvNo) !== batchFmt &&
+          p.proformaInvNo !== p.piNumber &&
+          p.proformaInvNo !== p.jobOrderNumber
+            ? p.proformaInvNo
+            : "—";
+
+        return {
+          "Sr No": idx + 1,
+          "Batch Number": batchFmt,
+          "PI Number": distinctPi,
+          "Job Order No": p.jobOrderNumber || "—",
         "Customer Name": p.customerName || "—",
         "Project Name": p.projectName || "—",
         "Glass Finish": getItemFinish(p as any) || p.finish || p.colorOrClear || "Clear",
@@ -1134,7 +1151,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         "Total SQM": p.totalSqm,
         "Status": p.status,
         "Uploaded Date": formatPlatformDate(p.createdAt),
-      }));
+      };
+    });
       const ws = XLSX.utils.json_to_sheet(data);
       ws["!cols"] = [
         { wch: 6 },
@@ -1447,7 +1465,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h2 className="text-xl font-black text-slate-900 tracking-tight">
+              <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight whitespace-nowrap">
                 Live Production &amp; Quality Reports
               </h2>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
@@ -1499,7 +1517,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 h-8 rounded-xl shadow-md"
           >
             <FileSpreadsheet className="w-4 h-4" />
-            <span>Export Filtered ({activeTab.toUpperCase()})</span>
+            <span>Export Filtered</span>
           </Button>
         </div>
       </div>
@@ -1970,7 +1988,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[11px] font-extrabold tracking-wider">
                   <th className="p-3">Batch No</th>
-                  <th className="p-3">PI Number</th>
                   <th className="p-3">Customer</th>
                   <th className="p-3">Project / Job Order</th>
                   <th className="p-3 text-center whitespace-nowrap min-w-[90px]">Finish</th>
@@ -1983,26 +2000,37 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <tbody className="divide-y divide-slate-100 text-slate-800">
                 {filteredPis.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-slate-500 font-medium">
-                      No proforma invoice / batch records matched your filter.
+                    <td colSpan={8} className="p-8 text-center text-slate-500 font-medium">
+                      No batch records matched your filter.
                     </td>
                   </tr>
                 ) : (
                   filteredPis.map((pi: PIMaster) => {
+                    const formattedBatch = formatBatchNumber(pi.batchNo || pi.piNumber);
+                    const distinctPi = pi.proformaInvNo &&
+                      pi.proformaInvNo !== formattedBatch &&
+                      pi.proformaInvNo !== pi.piNumber &&
+                      pi.proformaInvNo !== pi.jobOrderNumber &&
+                      formatBatchNumber(pi.proformaInvNo) !== formattedBatch
+                        ? pi.proformaInvNo
+                        : null;
+
                     return (
                       <tr key={pi.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                          {formatBatchNumber(pi.piNumber)}
-                        </td>
-                        <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                          {pi.proformaInvNo || pi.piNumber || pi.jobOrderNumber || "—"}
+                          {formattedBatch}
                         </td>
                         <td className="p-3 font-bold text-slate-900">{pi.customerName || "—"}</td>
                         <td className="p-3 text-slate-600">
                           <div className="font-semibold text-slate-800">{pi.projectName || "Standard Project"}</div>
-                          {pi.jobOrderNumber && (
-                            <div className="text-[10px] font-mono text-slate-400">Job: {pi.jobOrderNumber}</div>
-                          )}
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {pi.jobOrderNumber && (
+                              <div className="text-[10px] font-mono text-slate-400">Job: {pi.jobOrderNumber}</div>
+                            )}
+                            {distinctPi && (
+                              <div className="text-[10px] font-mono text-blue-600 font-semibold">PI: {distinctPi}</div>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3 text-center whitespace-nowrap">
                           {(() => {
@@ -2806,8 +2834,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             <table className="w-full text-left text-xs border-collapse min-w-[900px]">
                               <thead>
                                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
-                                  <th className="p-3">Batch No</th>
-                                  <th className="p-3">PI Number</th>
+                                   <th className="p-3">Batch No</th>
                                   <th className="p-3">Customer</th>
                                   <th className="p-3">Project / Job Order</th>
                                   <th className="p-3 text-center whitespace-nowrap min-w-[90px]">Finish</th>
@@ -2834,9 +2861,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                         >
                                           <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
                                             {formatBatchNumber(batchGroup.batchNo)}
-                                          </td>
-                                          <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                            {batchGroup.piNumber}
                                           </td>
                                           <td className="p-3 font-bold text-slate-900">
                                             {batchGroup.customerName}
@@ -3002,7 +3026,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                 <th className="p-3 w-12 text-center">SL</th>
                                                                 <th className="p-3">SERIAL NUMBER</th>
                                                                 <th className="p-3">BATCH NO</th>
-                                                                <th className="p-3">PI NUMBER</th>
+                                                                <th className="p-3">ORDER NO</th>
                                                                 <th className="p-3 text-center">POS NO</th>
                                                                 <th className="p-3 text-center">FINISH</th>
                                                                 <th className="p-3 text-center">WIDTH x HEIGHT</th>
@@ -3521,7 +3545,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                               <thead>
                                 <tr className="bg-slate-50/90 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
                                   <th className="p-3">Batch No</th>
-                                  <th className="p-3">PI Number</th>
                                   <th className="p-3">Customer</th>
                                   <th className="p-3">Project / Job Order</th>
                                   <th className="p-3 text-center whitespace-nowrap min-w-[90px]">Finish</th>
@@ -3548,9 +3571,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                         >
                                           <td className="p-3 font-mono font-bold text-amber-800 whitespace-nowrap">
                                             {formatBatchNumber(batchGroup.batchNo)}
-                                          </td>
-                                          <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                            {batchGroup.piNumber}
                                           </td>
                                           <td className="p-3 font-bold text-slate-900">
                                             {batchGroup.customerName}
@@ -3716,7 +3736,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                 <th className="p-3 w-12 text-center">SL</th>
                                                                 <th className="p-3">SERIAL NUMBER</th>
                                                                 <th className="p-3">BATCH NO</th>
-                                                                <th className="p-3">PI NUMBER</th>
+                                                                <th className="p-3">ORDER NO</th>
                                                                 <th className="p-3 text-center">POS NO</th>
                                                                 <th className="p-3 text-center">FINISH</th>
                                                                 <th className="p-3 text-center">WIDTH x HEIGHT</th>

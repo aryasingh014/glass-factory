@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import {
@@ -7,30 +7,63 @@ import {
   exportSelectedItemsToExcel,
   exportPartialDispatchNoteToExcel,
   exportBatchProgressMatrixToExcel,
+  excelSaver,
 } from "./excelExport";
 import { ProductionStage } from "@shared/api";
 
 describe("Stage Export Functionality & Sticker Fields Verification", () => {
   const db = JSON.parse(fs.readFileSync("./server/data/db.json", "utf8"));
-  const items = db.glassItemsDatabase;
-  const pis = db.piDatabase;
-  const history = db.productionHistoryDatabase;
+  const fallbackItems = Array.from({ length: 5 }, (_, i) => ({
+    id: `item-test-0${i + 1}`,
+    serialNumber: `S00${i + 1}`,
+    barcode: `101262701349000${i + 1}`,
+    qrId: `S00${i + 1}`,
+    piId: "pi-01",
+    piNumber: "1349",
+    customerName: "ALUTEC FACADE",
+    projectName: "DUBAI CREEK TOWER",
+    orderNo: "ORD-101",
+    obNo: "OB-202",
+    sfoNo: "1349",
+    posNo: String(i + 1),
+    srNo: i + 1,
+    glassType: "8MM SYP YBE 0140N #2 + 16MM BLACK SPACER + 8MM CLEAR",
+    glassCode: "SACW-01",
+    colorOrClear: i % 2 === 0 ? "Colour" : "Clear",
+    width: 1200,
+    height: 2400,
+    qty: 2,
+    sqm: 5.76,
+    rackNo: "1",
+    currentStage: "Cutting",
+    completedStages: [],
+    processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    glassCategory: "DGU",
+    status: "In Production",
+  }));
+  const items = Array.isArray(db.glassItemsDatabase) && db.glassItemsDatabase.length >= 5 ? db.glassItemsDatabase : fallbackItems;
+  const pis = Array.isArray(db.piDatabase) && db.piDatabase.length > 0 ? db.piDatabase : [{ id: "pi-01", piNumber: "1349", customerName: "ALUTEC FACADE", projectName: "DUBAI CREEK TOWER" }];
+  const history = Array.isArray(db.productionHistoryDatabase) && db.productionHistoryDatabase.length > 0 ? db.productionHistoryDatabase : [{
+    id: "hist-01",
+    serialNumber: "S001",
+    barcode: "1012627013490001",
+    piNumber: "1349",
+    stage: "Cutting",
+    status: "Completed",
+    operator: "Tester",
+    timestamp: new Date().toISOString(),
+    remarks: "Tested",
+  }];
 
-const { capturedFiles } = vi.hoisted(() => ({
-  capturedFiles: {} as Record<string, any>,
-}));
+  const capturedFiles: Record<string, any> = {};
 
-vi.mock("xlsx", async (importOriginal) => {
-  const actual: any = await importOriginal();
-  return {
-    ...actual,
-    writeFile: (wb: any, filename: string) => {
+  beforeEach(() => {
+    vi.spyOn(excelSaver, "save").mockImplementation((wb: any, filename: string) => {
       capturedFiles[filename] = wb;
-    },
-  };
-});
+    });
+  });
 
-  const stages: ProductionStage[] = ["Cutting", "Pairing", "DGU", "Lamination", "Finished"];
+  const stages: ProductionStage[] = ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"];
 
   it("should export Stage WIP for all stages with all sticker and ERP details", () => {
     stages.forEach((st) => {
@@ -215,7 +248,7 @@ vi.mock("xlsx", async (importOriginal) => {
   });
 
   it("should accurately resolve 3-layer glass buildup: Outer Glass, Spacer, and Inner Glass", () => {
-    const colourItem = items.find((i: any) => (i.glassType || "").includes("EMICOOL") || i.serialNumber === "S077" || i.serialNumber === "S286") || {
+    const colourItem = {
       id: "test-col-1",
       piId: "batch-test",
       serialNumber: "S077",
@@ -230,8 +263,9 @@ vi.mock("xlsx", async (importOriginal) => {
       batchNo: "5826",
       customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
       projectName: "DISTRICT_O",
+      makeup: "8MM EMICOOL DSR III ON CLEAR + 16MM BLACK SPACER + 8MM CLEAR",
     };
-    const clearItem = items.find((i: any) => i.batchNo === "5846" || i.serialNumber === "S257" || i.serialNumber === "S060") || {
+    const clearItem = {
       id: "test-clr-1",
       piId: "batch-test",
       serialNumber: "S257",
@@ -246,9 +280,10 @@ vi.mock("xlsx", async (importOriginal) => {
       batchNo: "5846",
       customerName: "ASHBILIA ALUMINIUM & GLASS L.L.C",
       projectName: "DISTRICT_O",
+      makeup: "8MM EMICOOL DSR III ON CLEAR + 16MM BLACK SPACER + 8MM CLEAR",
     };
 
-    exportStageWipToExcel("DGU", [colourItem, clearItem], "Emicool_DGU_WIP", pis);
+    exportStageWipToExcel("DGU", [colourItem as any, clearItem as any], "Emicool_DGU_WIP", pis);
 
     const foundFilename = Object.keys(capturedFiles).find((f) => f.includes("Emicool_DGU_WIP"));
     expect(foundFilename).toBeDefined();

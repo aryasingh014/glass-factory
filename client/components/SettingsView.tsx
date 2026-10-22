@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { 
   Settings, Users, Shield, Bell, Plus, Edit2, Trash2, Save, X, Key, KeyRound,
   Mail, Lock, CheckCircle2, AlertCircle, RefreshCw, Check, Minus,
@@ -6,13 +7,35 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { UserRole, UserRecord, UserSession, RolePermissions } from "@shared/api";
+import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage } from "@shared/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
+export const WORKSTATION_STAGES: { stage: ProductionStage; label: string; description: string; badgeClass: string }[] = [
+  { stage: "Cutting", label: "Cutting", description: "Glass Cutting & Breaking Tables", badgeClass: "bg-blue-50 text-blue-700 border-blue-200" },
+  { stage: "Polishing", label: "Polishing", description: "Edge Grinding & Polishing Line", badgeClass: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  { stage: "Pairing", label: "Pairing", description: "Assembly & Buffer Pairing", badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  { stage: "DGU", label: "IGU / DGU", description: "Insulated Double Glazing Line", badgeClass: "bg-teal-50 text-teal-700 border-teal-200" },
+  { stage: "Lamination", label: "Lamination", description: "PVB / EVA Autoclave Line", badgeClass: "bg-amber-50 text-amber-700 border-amber-200" },
+  { stage: "Dispatched", label: "Dispatch", description: "Finished Warehouse & Dispatch Gate", badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+];
+
 export function SettingsView() {
   const { user: currentUser, role: currentRole, getAuthHeaders, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState("users");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("settings_tab") || "users";
+
+  const setActiveTab = useCallback((tab: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === "users") {
+        next.delete("settings_tab");
+      } else {
+        next.set("settings_tab", tab);
+      }
+      return next;
+    });
+  }, [setSearchParams]);
 
   // User management states
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -26,13 +49,22 @@ export function SettingsView() {
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
 
   // Add/Edit Form fields
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    username: string;
+    name: string;
+    email: string;
+    role: UserRole;
+    password: string;
+    isActive: boolean;
+    assignedStages: ProductionStage[];
+  }>({
     username: "",
     name: "",
     email: "",
     role: "Operator" as UserRole,
     password: "",
     isActive: true,
+    assignedStages: ["Cutting"],
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -99,6 +131,7 @@ export function SettingsView() {
   // System modules configuration for interactive permission matrix
   const SYSTEM_MODULES = [
     { id: "mod-cutting", name: "Cutting Workstation (Scan & Barcode Execution)", category: "Shop Floor Workstations", key: "module:cutting" },
+    { id: "mod-polishing", name: "Polishing & Edging Line (Edge Grinding & Polishing)", category: "Shop Floor Workstations", key: "module:polishing" },
     { id: "mod-pairing", name: "Pairing & Assembly Workstation", category: "Shop Floor Workstations", key: "module:pairing" },
     { id: "mod-dgu", name: "DGU Insulating Glass Assembly Line", category: "Shop Floor Workstations", key: "module:dgu" },
     { id: "mod-lamination", name: "Lamination & Autoclave Processing Line", category: "Shop Floor Workstations", key: "module:lamination" },
@@ -234,7 +267,7 @@ export function SettingsView() {
         toast.info(data.emailStatus.message, { duration: 5000 });
       }
       setIsAddUserOpen(false);
-      setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true });
+      setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true, assignedStages: ["Cutting"] });
       fetchUsers();
     } catch (err: any) {
       setFormError(err.message || "Failed to create user.");
@@ -259,6 +292,7 @@ export function SettingsView() {
         email: formData.email,
         role: formData.role,
         isActive: formData.isActive,
+        assignedStages: formData.assignedStages,
       };
       if (formData.password.trim()) {
         payload.password = formData.password.trim();
@@ -344,6 +378,7 @@ export function SettingsView() {
       role: u.role,
       password: "",
       isActive: u.isActive,
+      assignedStages: u.assignedStages && u.assignedStages.length > 0 ? u.assignedStages : ["Cutting"],
     });
     setFormError(null);
     setIsEditUserOpen(true);
@@ -386,7 +421,7 @@ export function SettingsView() {
         {activeTab === "users" && (
           <Button 
             onClick={() => {
-              setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true });
+              setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true, assignedStages: ["Cutting"] });
               setFormError(null);
               setIsAddUserOpen(true);
             }}
@@ -471,17 +506,18 @@ export function SettingsView() {
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50/80">
-                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[220px]">User / Identifier</th>
-                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[110px]">Role</th>
-                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[100px]">Status</th>
-                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[150px]">Last Login</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[200px]">User / Identifier</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[100px]">Role</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[170px]">Assigned Stage(s)</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[90px]">Status</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">Last Login</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] text-right whitespace-nowrap min-w-[80px]">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-400 text-xs font-medium">
+                          <td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-xs font-medium">
                             No users match the search criteria.
                           </td>
                         </tr>
@@ -518,6 +554,27 @@ export function SettingsView() {
                                 }`}>
                                   {u.role}
                                 </span>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                <div className="flex flex-wrap gap-1 items-center max-w-[220px]">
+                                  {u.assignedStages && u.assignedStages.length > 0 ? (
+                                    u.assignedStages.map((stg) => {
+                                      const stgDef = WORKSTATION_STAGES.find((ws) => ws.stage === stg);
+                                      const badgeClass = stgDef ? stgDef.badgeClass : "bg-slate-100 text-slate-700 border-slate-200";
+                                      const label = stgDef ? stgDef.label : stg;
+                                      return (
+                                        <span
+                                          key={stg}
+                                          className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold border inline-flex items-center gap-1 ${badgeClass}`}
+                                        >
+                                          {label}
+                                        </span>
+                                      );
+                                    })
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 font-medium italic">All Stages</span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-3 py-2 whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1 text-[10.5px] font-bold text-slate-700 whitespace-nowrap">
@@ -815,124 +872,177 @@ export function SettingsView() {
 
       {/* ═══ MODAL: ADD USER ═══ */}
       {isAddUserOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-white space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[calc(100vh-2rem)] overflow-hidden my-auto animate-in zoom-in-95 duration-200">
+            {/* Pinned Header */}
+            <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100 shrink-0 bg-white">
               <div>
-                <h3 className="text-xl font-black text-slate-900">Add New User</h3>
+                <h3 className="text-lg font-black text-slate-900">Add New User</h3>
                 <p className="text-xs text-slate-500 font-medium">Provision user credentials and select role permissions.</p>
               </div>
               <button
+                type="button"
                 onClick={() => setIsAddUserOpen(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {formError && (
-              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                <span>{formError}</span>
-              </div>
-            )}
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleCreateUser} className="flex flex-col min-h-0 flex-1">
+              <div className="p-5 sm:px-6 sm:py-5 overflow-y-auto space-y-3.5 flex-1 min-h-0">
+                {formError && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
-            <form onSubmit={handleCreateUser} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Full Name</label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g. John Doe"
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700 block">Full Name</label>
+                    <Input
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="e.g. John Doe"
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Username</label>
-                <Input
-                  value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  placeholder="e.g. jdoe"
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700 block">Username</label>
+                    <Input
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                      placeholder="e.g. jdoe"
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Email Address</label>
-                <Input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="e.g. jdoe@sejalglass.com"
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 block">Email Address</label>
+                  <Input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="e.g. jdoe@sejalglass.com"
+                    className="h-10 rounded-xl"
+                    required
+                  />
+                </div>
 
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 block">User Role</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, role: r })}
+                        className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          formData.role === r
+                            ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 shadow-sm"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">User Role</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, role: r })}
-                      className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                        formData.role === r
-                          ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 shadow-sm"
-                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
+                {/* Workstation / Stage Selection */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Assigned Workstation / Stage
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium">Select stage(s) this ID operates</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {WORKSTATION_STAGES.map((ws) => {
+                      const isSelected = formData.assignedStages?.includes(ws.stage);
+                      return (
+                        <button
+                          key={ws.stage}
+                          type="button"
+                          onClick={() => {
+                            const current = formData.assignedStages || [];
+                            const next = isSelected
+                              ? current.filter((s) => s !== ws.stage)
+                              : [...current, ws.stage];
+                            setFormData({ ...formData, assignedStages: next });
+                          }}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                            isSelected
+                              ? "bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/20 text-blue-900 shadow-xs"
+                              : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold">{ws.label}</span>
+                            {isSelected ? (
+                              <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />
+                            ) : (
+                              <span className="w-3.5 h-3.5 rounded-full border border-slate-300" />
+                            )}
+                          </div>
+                          <p className="text-[9.5px] text-slate-500 font-medium mt-0.5 truncate">{ws.description}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(!formData.assignedStages || formData.assignedStages.length === 0) && (
+                    <p className="text-[10.5px] text-amber-600 font-semibold">⚠️ No stage selected (User will have access to all stages).</p>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 block">Initial Password</label>
+                  <Input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="••••••••"
+                    className="h-10 rounded-xl"
+                    required
+                  />
+                </div>
+
+                {/* SMTP Welcome Email Checkbox */}
+                <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200/80 flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    id="sendWelcomeEmail"
+                    checked={sendWelcomeEmail}
+                    onChange={(e) => setSendWelcomeEmail(e.target.checked)}
+                    className="mt-0.5 rounded border-blue-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <label htmlFor="sendWelcomeEmail" className="text-xs font-medium text-slate-700 cursor-pointer leading-tight">
+                    <span className="font-bold text-blue-900 block">Send Credentials via SMTP Email</span>
+                    <span className="text-[11px] text-slate-500">Automatically deliver role credentials and login instructions to user's inbox via Gmail SMTP.</span>
+                  </label>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Initial Password</label>
-                <Input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="••••••••"
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
-
-              {/* SMTP Welcome Email Checkbox */}
-              <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200/80 flex items-start gap-2.5">
-                <input
-                  type="checkbox"
-                  id="sendWelcomeEmail"
-                  checked={sendWelcomeEmail}
-                  onChange={(e) => setSendWelcomeEmail(e.target.checked)}
-                  className="mt-0.5 rounded border-blue-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <label htmlFor="sendWelcomeEmail" className="text-xs font-medium text-slate-700 cursor-pointer leading-tight">
-                  <span className="font-bold text-blue-900 block">Send Credentials via SMTP Email</span>
-                  <span className="text-[11px] text-slate-500">Automatically deliver role credentials and login instructions to user's inbox via Gmail SMTP.</span>
-                </label>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
+              {/* Pinned Sticky Footer */}
+              <div className="px-5 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setIsAddUserOpen(false)}
-                  className="h-10 rounded-xl font-bold cursor-pointer"
+                  className="h-10 rounded-xl font-bold cursor-pointer px-4"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   disabled={formSubmitting}
-                  className="h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer"
+                  className="h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer px-5 shadow-sm shadow-blue-500/20"
                 >
                   {formSubmitting ? "Creating User..." : "Create Account"}
                 </Button>
@@ -944,109 +1054,163 @@ export function SettingsView() {
 
       {/* ═══ MODAL: EDIT USER ═══ */}
       {isEditUserOpen && selectedUser && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-white space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[calc(100vh-2rem)] overflow-hidden my-auto animate-in zoom-in-95 duration-200">
+            {/* Pinned Header */}
+            <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100 shrink-0 bg-white">
               <div>
-                <h3 className="text-xl font-black text-slate-900">Edit User: {selectedUser.name}</h3>
+                <h3 className="text-lg font-black text-slate-900">Edit User: {selectedUser.name}</h3>
                 <p className="text-xs text-slate-500 font-medium">Update profile details, role, or reset password.</p>
               </div>
               <button
+                type="button"
                 onClick={() => setIsEditUserOpen(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {formError && (
-              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                <span>{formError}</span>
-              </div>
-            )}
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleUpdateUser} className="flex flex-col min-h-0 flex-1">
+              <div className="p-5 sm:px-6 sm:py-5 overflow-y-auto space-y-3.5 flex-1 min-h-0">
+                {formError && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
-            <form onSubmit={handleUpdateUser} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Full Name</label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700 block">Full Name</label>
+                    <Input
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">Email Address</label>
-                <Input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="h-10 rounded-xl"
-                  required
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700 block">Email Address</label>
+                    <Input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">User Role</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, role: r })}
-                      className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                        formData.role === r
-                          ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 shadow-sm"
-                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 block">User Role</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["Admin", "Supervisor", "Operator"] as UserRole[]).map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, role: r })}
+                        className={`p-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          formData.role === r
+                            ? "bg-blue-50 border-blue-500 text-blue-700 ring-2 ring-blue-500/20 shadow-sm"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Workstation / Stage Selection (Edit) */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Assigned Workstation / Stage
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium">Select stage(s) this ID operates</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {WORKSTATION_STAGES.map((ws) => {
+                      const isSelected = formData.assignedStages?.includes(ws.stage);
+                      return (
+                        <button
+                          key={ws.stage}
+                          type="button"
+                          onClick={() => {
+                            const current = formData.assignedStages || [];
+                            const next = isSelected
+                              ? current.filter((s) => s !== ws.stage)
+                              : [...current, ws.stage];
+                            setFormData({ ...formData, assignedStages: next });
+                          }}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                            isSelected
+                              ? "bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/20 text-blue-900 shadow-xs"
+                              : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold">{ws.label}</span>
+                            {isSelected ? (
+                              <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3]" />
+                            ) : (
+                              <span className="w-3.5 h-3.5 rounded-full border border-slate-300" />
+                            )}
+                          </div>
+                          <p className="text-[9.5px] text-slate-500 font-medium mt-0.5 truncate">{ws.description}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(!formData.assignedStages || formData.assignedStages.length === 0) && (
+                    <p className="text-[10.5px] text-amber-600 font-semibold">⚠️ No stage selected (User will have access to all stages).</p>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    New Password <span className="text-slate-400 font-normal">(Leave blank to keep current)</span>
+                  </label>
+                  <Input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="New password (optional)"
+                    className="h-10 rounded-xl"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
+                  <span className="text-xs font-bold text-slate-700">Account Active</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.isActive}
+                      onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 block">
-                  New Password <span className="text-slate-400 font-normal">(Leave blank to keep current)</span>
-                </label>
-                <Input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="New password (optional)"
-                  className="h-10 rounded-xl"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">
-                <span className="text-xs font-bold text-slate-700">Account Active</span>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.isActive}
-                    onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                </label>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
+              {/* Pinned Sticky Footer */}
+              <div className="px-5 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setIsEditUserOpen(false)}
-                  className="h-10 rounded-xl font-bold cursor-pointer"
+                  className="h-10 rounded-xl font-bold cursor-pointer px-4"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   disabled={formSubmitting}
-                  className="h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer"
+                  className="h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer px-5 shadow-sm shadow-blue-500/20"
                 >
                   {formSubmitting ? "Saving..." : "Save Changes"}
                 </Button>

@@ -81,9 +81,27 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
 
   // Leaderboard interactive states
   const [leaderboardTab, setLeaderboardTab] = useState<"all" | "stations" | "operators">("all");
+  const [leaderboardStageFilter, setLeaderboardStageFilter] = useState<string>("all");
   const [leaderboardSearch, setLeaderboardSearch] = useState("");
-  const [leaderboardSortField, setLeaderboardSortField] = useState<"name" | "operations" | "completed" | "rejects" | "quality">("operations");
+  const [leaderboardSortField, setLeaderboardSortField] = useState<"name" | "operations" | "completed" | "sqm" | "rejects" | "quality">("operations");
   const [leaderboardSortOrder, setLeaderboardSortOrder] = useState<"asc" | "desc">("desc");
+
+  // User Accounts list for resolving full names to login usernames
+  const [usersList, setUsersList] = useState<{ id: string; name: string; username: string; assignedStages?: string[] }[]>([]);
+
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? (localStorage.getItem("auth_token") || localStorage.getItem("sejal_auth_token")) : null;
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch("/api/auth/users", { headers })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json && Array.isArray(json.users)) {
+          setUsersList(json.users);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Inspection Modal state
   const [inspectTarget, setInspectTarget] = useState<any | null>(null);
@@ -108,7 +126,15 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
             if (inspectTarget.type === "station") {
               return (h.stage || "").toLowerCase() === (inspectTarget.stageCategory || "").toLowerCase();
             } else {
-              return (h.user || h.operator || "").toLowerCase() === (inspectTarget.name || "").toLowerCase();
+              const logOp = (h.user || h.operator || "").toLowerCase();
+              const targetName = (inspectTarget.name || "").toLowerCase();
+              const targetDisplayName = (inspectTarget.displayName || "").toLowerCase();
+              const targetUsername = (inspectTarget.username || "").toLowerCase();
+              return (
+                logOp === targetName ||
+                logOp === targetDisplayName ||
+                (targetUsername && logOp === targetUsername)
+              );
             }
           });
           setInspectLogs(filtered);
@@ -283,7 +309,7 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
     toast.success("Enterprise Performance Analytics exported to Excel");
   };
 
-  const handleSort = (field: "name" | "operations" | "completed" | "rejects" | "quality") => {
+  const handleSort = (field: "name" | "operations" | "completed" | "sqm" | "rejects" | "quality") => {
     if (leaderboardSortField === field) {
       setLeaderboardSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -306,12 +332,14 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
       else if (stageName === "Pairing") displayName = "Pairing & Staging Buffer";
       else if (stageName === "Finished") displayName = "Quality Inspection & Final Gate";
       else if (stageName === "Cutting") displayName = "CNC Glass Cutting Table";
+      else if (stageName === "Polishing") displayName = "Glass Edge Polishing & Grinding Line";
       else if (stageName === "Lamination") displayName = "Lamination & EVA/PVB Autoclave";
 
       return {
         id: `station-${s.stage}`,
         name: s.stage,
         displayName,
+        username: undefined as string | undefined,
         type: "station" as const,
         stageCategory: s.stage,
         operationsCount: ops,
@@ -326,36 +354,94 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
       };
     });
 
-    const operatorRows = (data.operators || []).map((op) => {
+    let activeStationRows = stationRows;
+    if (leaderboardStageFilter !== "all") {
+      activeStationRows = stationRows.filter((s) => {
+        const sCat = s.stageCategory.toLowerCase();
+        const fCat = leaderboardStageFilter.toLowerCase();
+        return sCat === fCat || (fCat === "dispatched" && sCat === "finished") || (fCat === "finished" && sCat === "dispatched");
+      });
+    }
+
+    const operatorRows = (data.operators || []).flatMap((op) => {
       const isEngine = op.operator.toLowerCase().includes("engine") || op.operator.toLowerCase().includes("auto");
-      const isAdmin = op.operator.toLowerCase().includes("admin");
-      return {
+      const isAdmin = op.operator.toLowerCase().includes("admin") || op.role === "Admin";
+
+      // Find matching user from usersList if available
+      const matchedUser = usersList.find(
+        (u) =>
+          u.username.toLowerCase() === op.operator.toLowerCase() ||
+          u.name.toLowerCase() === op.operator.toLowerCase() ||
+          (op.username && u.username.toLowerCase() === op.username.toLowerCase()) ||
+          (op.name && u.name.toLowerCase() === op.name.toLowerCase())
+      );
+      const resolvedUsername = op.username || matchedUser?.username;
+      const resolvedName = op.name || matchedUser?.name || op.operator;
+
+      let ops = op.operationsCount;
+      let comp = op.completedCount;
+      let sqm = op.completedSqm || 0;
+      let rej = op.rejectCount;
+      let quality = op.qualityRate;
+
+      // When a specific stage filter is active, extract the operator's exact stage stats
+      if (leaderboardStageFilter !== "all") {
+        const fKey = leaderboardStageFilter.toLowerCase();
+        const normKey = fKey === "dispatched" ? "Dispatched" : leaderboardStageFilter;
+        const altKey = fKey === "dispatched" ? "Finished" : leaderboardStageFilter;
+        const sData = op.stageBreakdown?.[normKey] || op.stageBreakdown?.[altKey];
+
+        const userAssigned = (op.assignedStages || matchedUser?.assignedStages || []).map((s: string) => s.toLowerCase());
+        const isAssigned = userAssigned.includes(fKey) || (fKey === "dispatched" && userAssigned.includes("finished"));
+
+        // If the operator did not process pieces at this stage AND is not assigned to this stage, skip them
+        if (!isAssigned && (!sData || (sData.completedCount === 0 && sData.rejectCount === 0))) {
+          return [];
+        }
+
+        if (sData) {
+          comp = sData.completedCount;
+          sqm = sData.completedSqm;
+          rej = sData.rejectCount;
+          quality = sData.qualityRate;
+          ops = comp + rej;
+        } else {
+          comp = 0;
+          sqm = 0;
+          rej = 0;
+          quality = 100;
+          ops = 0;
+        }
+      }
+
+      return [{
         id: `op-${op.operator}`,
         name: op.operator,
-        displayName: op.operator,
+        displayName: resolvedName,
+        username: resolvedUsername,
         type: (isEngine ? "system" : "operator") as "operator" | "system",
-        stageCategory: "",
-        operationsCount: op.operationsCount,
-        completedCount: op.completedCount,
-        rejectCount: op.rejectCount,
-        qualityRate: op.qualityRate,
+        stageCategory: leaderboardStageFilter !== "all" ? leaderboardStageFilter : "",
+        operationsCount: ops,
+        completedCount: comp,
+        rejectCount: rej,
+        qualityRate: quality,
         pendingCount: 0,
-        throughputRate: op.completedCount,
+        throughputRate: comp,
         avgCycleTime: 0,
-        sqm: 0,
+        sqm,
         status: isEngine ? "Automation System" : isAdmin ? "Plant Admin" : "Floor Operator",
-      };
+      }];
     });
 
-    const totalStations = stationRows.length;
+    const totalStations = activeStationRows.length;
     const totalOps = operatorRows.length;
     const totalAll = totalStations + totalOps;
 
     let selectedList = [];
     if (leaderboardTab === "all") {
-      selectedList = [...stationRows, ...operatorRows];
+      selectedList = [...activeStationRows, ...operatorRows];
     } else if (leaderboardTab === "stations") {
-      selectedList = stationRows;
+      selectedList = activeStationRows;
     } else {
       selectedList = operatorRows;
     }
@@ -365,6 +451,7 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
       selectedList = selectedList.filter(
         (r) =>
           r.displayName.toLowerCase().includes(q) ||
+          (r.username && r.username.toLowerCase().includes(q)) ||
           r.status.toLowerCase().includes(q) ||
           r.type.toLowerCase().includes(q)
       );
@@ -378,6 +465,8 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
         cmp = a.operationsCount - b.operationsCount;
       } else if (leaderboardSortField === "completed") {
         cmp = a.completedCount - b.completedCount;
+      } else if (leaderboardSortField === "sqm") {
+        cmp = (a.sqm || 0) - (b.sqm || 0);
       } else if (leaderboardSortField === "rejects") {
         cmp = a.rejectCount - b.rejectCount;
       } else if (leaderboardSortField === "quality") {
@@ -394,23 +483,26 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
         operators: totalOps,
       },
     };
-  }, [data, leaderboardTab, leaderboardSearch, leaderboardSortField, leaderboardSortOrder]);
+  }, [data, leaderboardTab, leaderboardStageFilter, leaderboardSearch, leaderboardSortField, leaderboardSortOrder, usersList]);
 
   const exportLeaderboardExcel = () => {
     if (!allRows.length) return;
     const wb = XLSX.utils.book_new();
     const sheetData = allRows.map((r, i) => ({
       Rank: i + 1,
-      "Operator / Workstation": r.displayName,
+      "Operator / Workstation": r.username ? `${r.displayName} (@${r.username})` : r.displayName,
+      "User / Login ID": r.username || "-",
+      "Stage Filter": leaderboardStageFilter === "all" ? "All Stages" : leaderboardStageFilter,
       Type: r.type === "station" ? "Workstation" : r.type === "system" ? "Automated Engine" : "Floor Staff",
       "Total Operations": r.operationsCount,
       "Completed Units": r.completedCount,
+      "Volume (m²)": r.sqm ? Number(r.sqm.toFixed(2)) : 0,
       "Scrap Rejections": r.rejectCount,
       "Quality Score (%)": `${r.qualityRate}%`,
       Classification: r.status,
     }));
     const ws = XLSX.utils.json_to_sheet(sheetData);
-    ws["!cols"] = [{ wch: 8 }, { wch: 34 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 }];
+    ws["!cols"] = [{ wch: 8 }, { wch: 32 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, ws, "Leaderboard");
     XLSX.writeFile(wb, `Leaderboard_Efficiency_${new Date().toISOString().split("T")[0]}.xlsx`);
     toast.success("Leaderboard efficiency data exported!");
@@ -467,12 +559,18 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => onNavigateTab("overview")}
+              onClick={() => {
+                if (window.history.state && typeof window.history.state.idx === "number" && window.history.state.idx > 0) {
+                  window.history.back();
+                } else {
+                  onNavigateTab("overview");
+                }
+              }}
               className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 font-bold text-xs gap-1.5 h-8 px-3 rounded-xl shadow-xs cursor-pointer"
-              title="Return to Main Dashboard"
+              title="Back"
             >
               <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
-              <span>Back to Dashboard</span>
+              <span>Back</span>
             </Button>
           )}
           {/* Auto-Sync Toggle */}
@@ -967,6 +1065,36 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
           </div>
         </div>
 
+        {/* Workstation Stage Quick Filter Pills */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-3 border-t border-slate-200">
+          <span className="text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider mr-1">Workstation Stage:</span>
+          {[
+            { id: "all", label: "All Stages" },
+            { id: "Cutting", label: "Cutting" },
+            { id: "Polishing", label: "Polishing" },
+            { id: "Pairing", label: "Pairing" },
+            { id: "DGU", label: "IGU / DGU" },
+            { id: "Lamination", label: "Lamination" },
+            { id: "Dispatched", label: "Dispatch" },
+          ].map((stg) => {
+            const isSelected = leaderboardStageFilter.toLowerCase() === stg.id.toLowerCase();
+            return (
+              <button
+                key={stg.id}
+                type="button"
+                onClick={() => setLeaderboardStageFilter(stg.id)}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  isSelected
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                }`}
+              >
+                {stg.label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Table Content */}
         <div className="overflow-x-auto w-full">
           <table className="w-full text-left text-xs border-collapse">
@@ -997,7 +1125,16 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
                   className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-100 select-none transition-colors"
                 >
                   <div className="flex items-center justify-center gap-1.5">
-                    <span>Completed</span>
+                    <span>Completed (Pcs)</span>
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("sqm")}
+                  className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-100 select-none transition-colors"
+                >
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span>Volume (m²)</span>
                     <ArrowUpDown className="w-3 h-3 text-slate-400" />
                   </div>
                 </th>
@@ -1025,7 +1162,7 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {allRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400 font-medium">
+                  <td colSpan={9} className="py-8 text-center text-slate-400 font-medium">
                     No matching workstations or operators found.
                   </td>
                 </tr>
@@ -1057,8 +1194,15 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
                           </div>
                         )}
                         <div>
-                          <div className="font-extrabold text-slate-900 group-hover:text-indigo-700 transition-colors">
-                            {row.displayName}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-slate-900 group-hover:text-indigo-700 transition-colors">
+                              {row.displayName}
+                            </span>
+                            {row.username && (
+                              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded-md inline-flex items-center">
+                                @{row.username}
+                              </span>
+                            )}
                           </div>
                           {row.type === "station" && row.pendingCount > 0 && (
                             <div className="text-[10px] font-semibold text-amber-600 flex items-center gap-1 mt-0.5">
@@ -1087,6 +1231,9 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
                     </td>
                     <td className="py-3 px-3 text-center font-mono font-bold text-emerald-600 text-sm">
                       {row.completedCount.toLocaleString()}
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-bold text-blue-600 text-xs">
+                      {row.sqm > 0 ? `${row.sqm.toFixed(2)} m²` : "—"}
                     </td>
                     <td className="py-3 px-3 text-center font-mono font-bold text-sm">
                       {row.rejectCount > 0 ? (
@@ -1151,8 +1298,13 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
                       )}
                     </div>
                     <div>
-                      <DialogTitle className="text-lg font-black text-slate-900 flex items-center gap-2">
+                      <DialogTitle className="text-lg font-black text-slate-900 flex items-center gap-2 flex-wrap">
                         {inspectTarget.displayName}
+                        {inspectTarget.username && (
+                          <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded-md inline-flex items-center">
+                            @{inspectTarget.username}
+                          </span>
+                        )}
                         <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-slate-100 text-slate-700 border border-slate-200">
                           {inspectTarget.status}
                         </span>
@@ -1182,7 +1334,7 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
               </DialogHeader>
 
               {/* KPI Cards for Target */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                 <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl">
                   <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Total Scans</div>
                   <div className="text-xl font-black text-slate-900 mt-1 font-mono">{inspectTarget.operationsCount}</div>
@@ -1193,6 +1345,14 @@ export const PerformanceAnalyticsView: React.FC<{ onNavigateTab?: (tab: string) 
                   <div className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Completed</div>
                   <div className="text-xl font-black text-emerald-600 mt-1 font-mono">{inspectTarget.completedCount}</div>
                   <div className="text-[10px] text-emerald-700/80 mt-0.5">Successfully finished</div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-blue-600">Volume (m²)</div>
+                  <div className="text-xl font-black text-blue-700 mt-1 font-mono">
+                    {inspectTarget.sqm ? `${Number(inspectTarget.sqm).toFixed(1)} m²` : "0 m²"}
+                  </div>
+                  <div className="text-[10px] text-blue-600/80 mt-0.5">Processed area</div>
                 </div>
 
                 <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl">

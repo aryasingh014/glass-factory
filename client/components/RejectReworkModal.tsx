@@ -54,7 +54,7 @@ const REJECT_REASONS = [
 ];
 
 // Active processing stages available for rework target selection.
-const REWORK_TARGET_STAGES: Exclude<ProductionStage, "Finished">[] = ["Cutting", "DGU", "Lamination"];
+const REWORK_TARGET_STAGES: Exclude<ProductionStage, "Finished" | "Dispatched">[] = ["Cutting", "Polishing", "DGU", "Lamination"];
 
 export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   open,
@@ -254,6 +254,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
       if (item?.currentStage === "Finished" || item?.status === "Completed") {
         setDefectStation("Transit / Delivery to Customer");
         setReason("Transit / Delivery: Broken in Transit / Customer Delivery");
+      } else if (item?.currentStage === "Polishing") {
+        setDefectStation("Edging / CNC / Grinding / Drilling");
+        setReason("Edging: Grinding / Polishing Defect");
       } else if (item?.currentStage === "DGU") {
         setDefectStation("DGU Assembly Line");
         setReason("Spacer Misalignment / Primary Seal Defect");

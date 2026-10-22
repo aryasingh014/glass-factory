@@ -3,13 +3,19 @@ import { GlassItem, ProductionStage, ProductionHistory, PIMaster } from "@shared
 import { formatPlatformDate, formatPlatformDateTime, formatBatchNumber, getItemFinish, getDguEffectiveQtyAndSqm, isDlguGlass, isDguGlass, isLaminatedGlass, getDisplayStage } from "./utils";
 import { toast } from "sonner";
 
+export const excelSaver = {
+  save: (wb: XLSX.WorkBook, fileName: string) => {
+    XLSX.writeFile(wb, fileName);
+  },
+};
+
 /**
  * Trigger browser file download from XLSX workbook
  */
 function downloadWorkbook(wb: XLSX.WorkBook, fileName: string) {
   const cleanName = fileName.replace(/[^a-zA-Z0-9_\-]/g, "_");
   const finalFileName = `${cleanName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-  XLSX.writeFile(wb, finalFileName);
+  excelSaver.save(wb, finalFileName);
   try {
     toast.success(`Exported: ${finalFileName}`);
   } catch {}
@@ -109,6 +115,8 @@ function buildItemExportRows(items: GlassItem[], stage: ProductionStage, pis: PI
     let stageDetails = "";
     if (stage === "Cutting") {
       stageDetails = `Rack: ${item.rackNo || "1"} | Finish: ${finish}`;
+    } else if (stage === "Polishing") {
+      stageDetails = `Edge Polishing | Finish: ${finish}`;
     } else if (stage === "Pairing") {
       stageDetails = (item as any).dguPairId
         ? `Paired Ref: ${(item as any).dguPairId}`
@@ -642,8 +650,9 @@ export function exportBatchProgressMatrixToExcel(pi: PIMaster, items: GlassItem[
     const completedStages = item.completedStages || [];
 
     const isCut = completedStages.includes("Cutting") || item.currentStage !== "Cutting";
+    const isPolished = completedStages.includes("Polishing") || (item.currentStage !== "Cutting" && item.currentStage !== "Polishing");
     const isPairing = completedStages.includes("Pairing");
-    const isDgu = completedStages.includes("DGU") || (item.currentStage !== "Cutting" && item.currentStage !== "Pairing" && item.currentStage !== "DGU");
+    const isDgu = completedStages.includes("DGU") || (item.currentStage !== "Cutting" && item.currentStage !== "Polishing" && item.currentStage !== "Pairing" && item.currentStage !== "DGU");
     const isLam = completedStages.includes("Lamination") || (item.currentStage === "Finished" && item.processRoute.includes("Lamination"));
     const isDispatched = (item as any).isDispatched === true || (item as any).currentStage === "Dispatched" || Boolean((item as any).dispatchedAt);
 
@@ -679,6 +688,7 @@ export function exportBatchProgressMatrixToExcel(pi: PIMaster, items: GlassItem[
       "Origin": "MADE IN UAE",
       "Current Workstation": item.currentStage,
       "Cutting Status": isCut ? "DONE" : "PENDING",
+      "Polishing Status": item.processRoute.includes("Polishing") ? (isPolished ? "DONE" : "PENDING") : "N/A",
       "Pairing Status": item.processRoute.includes("Pairing") ? (isPairing ? "DONE" : "PENDING") : "N/A",
       "DGU / IGU Status": item.processRoute.includes("DGU") ? (isDgu ? "DONE" : "PENDING") : "N/A",
       "Lamination Status": item.processRoute.includes("Lamination") ? (isLam ? "DONE" : "PENDING") : "N/A",
@@ -717,6 +727,7 @@ export function exportBatchProgressMatrixToExcel(pi: PIMaster, items: GlassItem[
     { wch: 14 }, // Origin
     { wch: 16 }, // Current Workstation
     { wch: 14 }, // Cutting Status
+    { wch: 14 }, // Polishing Status
     { wch: 14 }, // Pairing Status
     { wch: 14 }, // DGU Status
     { wch: 14 }, // Lamination Status

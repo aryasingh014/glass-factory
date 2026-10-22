@@ -107,6 +107,7 @@ export const handleGetCurrentUser: RequestHandler = (req, res) => {
       email: payload.email || `${payload.role.toLowerCase()}@sejalglass.com`,
       name: payload.name || `${payload.role} User`,
       role: payload.role,
+      assignedStages: payload.assignedStages,
     };
     res.json({
       user: profile,
@@ -199,7 +200,7 @@ export const handleGetUsers: RequestHandler = (_req, res) => {
  * Create a new user (Admin only)
  */
 export const handleCreateUser: RequestHandler = async (req, res) => {
-  const { username, email, name, role, password, sendEmail } = req.body || {};
+  const { username, email, name, role, password, assignedStages, sendEmail } = req.body || {};
   if (!username || !email || !name || !role || !password) {
     res.status(400).json({ error: "Username, email, name, role, and password are required." });
     return;
@@ -211,6 +212,7 @@ export const handleCreateUser: RequestHandler = async (req, res) => {
       email: sanitizeString(email, 100),
       name: sanitizeString(name, 100),
       role: role as any,
+      assignedStages: Array.isArray(assignedStages) ? assignedStages : undefined,
       password: String(password),
     });
 
@@ -386,7 +388,7 @@ export const handleGetSmtpStatus: RequestHandler = async (_req, res) => {
  */
 export const handleUpdateUser: RequestHandler = (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const { username, email, name, role, password, isActive } = req.body || {};
+  const { username, email, name, role, password, assignedStages, isActive } = req.body || {};
 
   if (!id) {
     res.status(400).json({ error: "User ID is required." });
@@ -399,6 +401,7 @@ export const handleUpdateUser: RequestHandler = (req, res) => {
       email: email ? sanitizeString(email, 100) : undefined,
       name: name ? sanitizeString(name, 100) : undefined,
       role: role as any,
+      assignedStages: Array.isArray(assignedStages) ? assignedStages : undefined,
       password: password ? String(password) : undefined,
       isActive: typeof isActive === "boolean" ? isActive : undefined,
     });
