@@ -1248,14 +1248,28 @@ export default function Index() {
           if (pFileName !== selectedPdfFilter.trim().toLowerCase()) return false;
         }
 
-        const query = piSearchTerm.toLowerCase().trim();
-        return (
-          pi.piNumber.toLowerCase().includes(query) ||
-          pi.customerName.toLowerCase().includes(query) ||
-          pi.projectName.toLowerCase().includes(query) ||
-          (pi.fileName && pi.fileName.toLowerCase().includes(query)) ||
-          (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(query))
-        );
+        if (!piSearchTerm.trim()) return true;
+        const rawQuery = piSearchTerm.toLowerCase().trim();
+        const terms = rawQuery.split(/\s+/).filter(Boolean);
+        return terms.every((term) => {
+          const cleanTerm = term
+            .replace(/^[#]/, "")
+            .replace(/^pi[-_ ]?/i, "")
+            .replace(/^batch[-_ ]?/i, "");
+
+          return (
+            (pi.piNumber && pi.piNumber.toLowerCase().includes(term)) ||
+            (pi.proformaInvNo && pi.proformaInvNo.toLowerCase().includes(term)) ||
+            (Boolean(cleanTerm) && pi.piNumber && pi.piNumber.toLowerCase().includes(cleanTerm)) ||
+            (pi.customerName && pi.customerName.toLowerCase().includes(term)) ||
+            (pi.projectName && pi.projectName.toLowerCase().includes(term)) ||
+            (pi.batchNo && pi.batchNo.toLowerCase().includes(term)) ||
+            (Boolean(cleanTerm) && pi.batchNo && pi.batchNo.toLowerCase().includes(cleanTerm)) ||
+            (pi.glassDescription && pi.glassDescription.toLowerCase().includes(term)) ||
+            (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(term)) ||
+            (pi.colorOrClear && pi.colorOrClear.toLowerCase() === term)
+          );
+        });
       })
       .sort((a, b) => {
         let valA: any = a[sortField];

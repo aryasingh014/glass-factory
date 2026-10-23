@@ -301,14 +301,67 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
 
       // Search query filter
       if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase().trim();
-        const matchesPi = row.piNo.toLowerCase().includes(q);
-        const matchesCustomer = row.customerName.toLowerCase().includes(q);
-        const matchesProject = row.projectName.toLowerCase().includes(q);
-        const matchesBatch = row.batchNo.toLowerCase().includes(q);
-        const matchesGlassType = row.glassTypes.some((g) => g.toLowerCase().includes(q));
-        const matchesFile = row.fileName.toLowerCase().includes(q);
-        if (!matchesPi && !matchesCustomer && !matchesProject && !matchesBatch && !matchesGlassType && !matchesFile) {
+        const rawQuery = searchTerm.trim().toLowerCase();
+        const terms = rawQuery.split(/\s+/).filter(Boolean);
+
+        const matchesRow = terms.every((term) => {
+          const cleanTerm = term
+            .replace(/^[#]/, "")
+            .replace(/^pi[-_ ]?/i, "")
+            .replace(/^batch[-_ ]?/i, "");
+
+          const matchesPi =
+            row.piNo.toLowerCase().includes(term) ||
+            (Boolean(cleanTerm) && row.piNo.toLowerCase().includes(cleanTerm));
+
+          const matchesCustomer = row.customerName.toLowerCase().includes(term);
+
+          const matchesProject = row.projectName.toLowerCase().includes(term);
+
+          const matchesBatch =
+            row.batchNo.toLowerCase().includes(term) ||
+            (Boolean(cleanTerm) && row.batchNo.toLowerCase().includes(cleanTerm)) ||
+            formatBatchNumber(row.batchNo).toLowerCase().includes(term);
+
+          const matchesFinish =
+            row.colorOrClear.toLowerCase() === term ||
+            (term === "color" && row.colorOrClear.toLowerCase() === "colour") ||
+            (term === "colour" && row.colorOrClear.toLowerCase() === "colour") ||
+            (term === "clear" && row.colorOrClear.toLowerCase() === "clear");
+
+          const matchesGlassType = row.glassTypes.some((g) => g.toLowerCase().includes(term));
+
+          const matchesSizes = row.sizes.some((s) => {
+            const posMatch =
+              s.posNo &&
+              (s.posNo.toLowerCase().includes(term) ||
+                `pos ${s.posNo}`.toLowerCase().includes(term) ||
+                `pos#${s.posNo}`.toLowerCase().includes(term));
+            const stickerMatch =
+              s.stickerNo &&
+              (s.stickerNo.toLowerCase().includes(term) ||
+                (Boolean(cleanTerm) && s.stickerNo.toLowerCase().includes(cleanTerm)));
+            const serialMatch = s.serialNumber && s.serialNumber.toLowerCase().includes(term);
+            const sizeGlassMatch = s.glassType && s.glassType.toLowerCase().includes(term);
+            const dimMatch =
+              `${s.width}x${s.height}`.includes(term) ||
+              `${s.width}*${s.height}`.includes(term) ||
+              `${s.width} × ${s.height}`.includes(term);
+            return Boolean(posMatch || stickerMatch || serialMatch || sizeGlassMatch || dimMatch);
+          });
+
+          return (
+            matchesPi ||
+            matchesCustomer ||
+            matchesProject ||
+            matchesBatch ||
+            matchesFinish ||
+            matchesGlassType ||
+            matchesSizes
+          );
+        });
+
+        if (!matchesRow) {
           return false;
         }
       }
@@ -327,17 +380,35 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
   // Summary counts for filtered view
   const filteredTotalQty = filteredPiRows.reduce((acc, r) => acc + r.totalQty, 0);
   const filteredTotalSqm = filteredPiRows.reduce((acc, r) => acc + r.totalSqm, 0);
+  const filteredBatchesCount = useMemo(() => {
+    const set = new Set<string>();
+    filteredPiRows.forEach((r) => set.add(`${r.fileName}__${r.batchNo}`));
+    return set.size;
+  }, [filteredPiRows]);
 
   // Filtered PDF list for card view
   const filteredPdfs = pdfSummaries.filter((p) => {
     const q = searchTerm.toLowerCase().trim();
     if (!q) return true;
-    return (
-      p.fileName.toLowerCase().includes(q) ||
-      p.customers.some((c) => c.toLowerCase().includes(q)) ||
-      p.projects.some((pr) => pr.toLowerCase().includes(q)) ||
-      p.batches.some((b) => (b.batchNo || b.piNumber).toLowerCase().includes(q))
-    );
+    const terms = q.split(/\s+/).filter(Boolean);
+    return terms.every((term) => {
+      const cleanTerm = term
+        .replace(/^[#]/, "")
+        .replace(/^pi[-_ ]?/i, "")
+        .replace(/^batch[-_ ]?/i, "");
+      return (
+        p.fileName.toLowerCase().includes(term) ||
+        p.customers.some((c) => c.toLowerCase().includes(term)) ||
+        p.projects.some((pr) => pr.toLowerCase().includes(term)) ||
+        p.batches.some(
+          (b) =>
+            (b.batchNo && b.batchNo.toLowerCase().includes(term)) ||
+            (b.piNumber && b.piNumber.toLowerCase().includes(term)) ||
+            (Boolean(cleanTerm) && b.batchNo && b.batchNo.toLowerCase().includes(cleanTerm)) ||
+            (Boolean(cleanTerm) && b.piNumber && b.piNumber.toLowerCase().includes(cleanTerm))
+        )
+      );
+    });
   });
 
   return (
@@ -435,7 +506,7 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
             <span className="text-slate-300">•</span>
             <div className="flex items-center gap-1">
               <span className="text-slate-400">Batches:</span>
-              <span className="font-mono text-blue-700 font-black">{grandTotalBatches}</span>
+              <span className="font-mono text-blue-700 font-black">{filteredBatchesCount}</span>
             </div>
           </div>
 
@@ -527,7 +598,10 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
               {searchTerm && (
                 <button
                   type="button"
-                  onClick={() => setSearchTerm("")}
+                  onClick={() => {
+                    setSearchTerm("");
+                    setCurrentPage(1);
+                  }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
                   <X className="w-3 h-3" />
@@ -576,7 +650,8 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
                         paginatedPiRows.map((group, groupIdx) => {
                           const pageOffset = (validCurrentPage - 1) * (pageSize === -1 ? 0 : pageSize);
                           const slNo = groupIdx + 1 + pageOffset;
-                          const isExpanded = !!expandedPiKeys[group.piNo];
+                          const rowKey = `${group.fileName}__${group.batchNo}__${group.piNo}`;
+                          const isExpanded = !!expandedPiKeys[rowKey];
                           const sizesCount = group.sizes.length > 0 ? group.sizes.length : 1;
 
                           return (
@@ -669,7 +744,7 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
                                       type="button"
                                       size="sm"
                                       variant="ghost"
-                                      onClick={() => togglePiExpand(group.piNo)}
+                                      onClick={() => togglePiExpand(rowKey)}
                                       className="h-7 px-1.5 text-[11px] font-bold text-purple-700 hover:bg-purple-100 rounded-md gap-0.5 cursor-pointer"
                                       title="Toggle item and sizes breakdown for this PI"
                                     >
