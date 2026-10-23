@@ -475,6 +475,7 @@ export function updateUserPermission(userId: string, key: string, value: boolean
       pairing: "Pairing",
       dgu: "DGU",
       lamination: "Lamination",
+      finished: "Finished",
     };
     if (stageMap[moduleName]) {
       const stg = stageMap[moduleName];
@@ -597,6 +598,13 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canManageUsers: true,
     canManageSettings: true,
     canClearData: true,
+    canCameraScan: true,
+    canPrintStickers: true,
+    canScanLookup: true,
+    canUndoStageAdvance: true,
+    canCreateManualPI: true,
+    canViewPIDocuments: true,
+    canExportReports: true,
   },
   Supervisor: {
     role: "Supervisor",
@@ -624,6 +632,13 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canManageUsers: false,
     canManageSettings: false,
     canClearData: false,
+    canCameraScan: true,
+    canPrintStickers: true,
+    canScanLookup: true,
+    canUndoStageAdvance: true,
+    canCreateManualPI: true,
+    canViewPIDocuments: true,
+    canExportReports: true,
   },
   Operator: {
     role: "Operator",
@@ -645,6 +660,13 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canManageUsers: false,
     canManageSettings: false,
     canClearData: false,
+    canCameraScan: true,
+    canPrintStickers: true,
+    canScanLookup: true,
+    canUndoStageAdvance: false,
+    canCreateManualPI: false,
+    canViewPIDocuments: false,
+    canExportReports: false,
   },
 };
 

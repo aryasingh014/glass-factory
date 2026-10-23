@@ -5,8 +5,8 @@
     "email": "gauravraj77820@gmail.com",
     "name": "Gaurav Kumar (Administrator)",
     "role": "Admin",
-    "passwordHash": "5359acc1e1fd8ef2ad8cd2616d605b89e8120b54a3dd0b775d1f675988ddff8b4a757c73fc3d8f767c67761d3578acac7a62affe513d0f86f1ca72280fb8a524",
-    "salt": "f2b10b4248ef44cc69c329e31036eba9",
+    "passwordHash": "a2d6a95f5c1eea4adc8db8ab2c3f103e11e3497bba657d6b98bb5ab5c43b3b628f21eccf552ccab5b3626bf4766e45c085dd08cf1c73a59309bf9d5eab1c698a",
+    "salt": "c11fdc9fdfad42613eada64b87ec5932",
     "isActive": true,
     "createdAt": "2026-10-02T10:24:53.039Z",
     "lastLoginAt": "2026-10-23T19:12:40.268Z",
@@ -26,10 +26,7 @@
     "email": "gauravkumar77820@gmail.com",
     "name": "Deepa K",
     "role": "Operator",
-    "assignedStages": [
-      "Cutting",
-      "Pairing"
-    ],
+    "assignedStages": [],
     "passwordHash": "85d00a0042722891d5f3b5e994e8aea7e6d25d5615c2d2911c57c0c028e9c07d838f42fe6a24d3464832cfdc2dd15d649aee325cd745d1cb3d8abeab9c221a43",
     "salt": "a61671aa6933426b85160444458d440a",
     "isActive": true,
@@ -38,10 +35,7 @@
     "customPermissions": {
       "role": "Operator",
       "description": "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
-      "allowedModules": [
-        "finished",
-        "cutting"
-      ],
+      "allowedModules": [],
       "canUploadPI": false,
       "canDeletePI": false,
       "canDispatch": false,
@@ -50,7 +44,14 @@
       "canViewAnalytics": false,
       "canManageUsers": false,
       "canManageSettings": false,
-      "canClearData": false
+      "canClearData": false,
+      "canCameraScan": false,
+      "canPrintStickers": false,
+      "canScanLookup": false,
+      "canUndoStageAdvance": false,
+      "canCreateManualPI": false,
+      "canViewPIDocuments": false,
+      "canExportReports": false
     }
   },
   {

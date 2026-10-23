@@ -344,6 +344,16 @@ export interface RolePermissions {
   canManageUsers: boolean;
   canManageSettings: boolean;
   canClearData: boolean;
+  // Granular floor tools & actions
+  canCameraScan?: boolean;
+  canPrintStickers?: boolean;
+  canScanLookup?: boolean;
+  canUndoStageAdvance?: boolean;
+  // Granular order & batch tools
+  canCreateManualPI?: boolean;
+  canViewPIDocuments?: boolean;
+  // Granular intelligence & export tools
+  canExportReports?: boolean;
 }
 
 // ==========================================

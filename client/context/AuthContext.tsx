@@ -25,7 +25,7 @@ interface AuthContextType {
   isSupervisor: boolean;
   isOperator: boolean;
   canAccessTab: (tab: string) => boolean;
-  canPerformAction: (action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb") => boolean;
+  canPerformAction: (action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb" | "cameraScan" | "printStickers" | "scanLookup" | "undoAdvance" | "manualPI" | "viewPIDocs" | "exportReports") => boolean;
   login: (credentials: { username?: string; identifier?: string; password?: string; role?: UserRole }) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
   getAuthHeaders: () => Record<string, string>;
@@ -366,7 +366,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   }, [isAdmin, isSupervisor, isOperator, user, permissions]);
 
-  const canPerformAction = useCallback((action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb"): boolean => {
+  const canPerformAction = useCallback((action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb" | "cameraScan" | "printStickers" | "scanLookup" | "undoAdvance" | "manualPI" | "viewPIDocs" | "exportReports"): boolean => {
     if (isAdmin) return true;
 
     // 1. Check effective permissions
@@ -390,12 +390,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return Boolean(permissions.canManageSettings);
         case "clearDb":
           return Boolean(permissions.canClearData);
+        case "cameraScan":
+          return Boolean(permissions.canCameraScan ?? true);
+        case "printStickers":
+          return Boolean(permissions.canPrintStickers ?? true);
+        case "scanLookup":
+          return Boolean(permissions.canScanLookup ?? true);
+        case "undoAdvance":
+          return Boolean(permissions.canUndoStageAdvance ?? isSupervisor);
+        case "manualPI":
+          return Boolean(permissions.canCreateManualPI ?? isSupervisor);
+        case "viewPIDocs":
+          return Boolean(permissions.canViewPIDocuments ?? isSupervisor);
+        case "exportReports":
+          return Boolean(permissions.canExportReports ?? isSupervisor);
       }
     }
 
     // 2. Fallbacks
     if (isSupervisor) {
-      return ["upload", "delete", "dispatch", "rejectRework", "reports", "analytics"].includes(action);
+      return ["upload", "delete", "dispatch", "rejectRework", "reports", "analytics", "cameraScan", "printStickers", "scanLookup", "undoAdvance", "manualPI", "viewPIDocs", "exportReports"].includes(action);
     }
     if (isOperator) {
       if (action === "dispatch") {
@@ -403,7 +417,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!user?.assignedStages || user.assignedStages.length === 0) return true;
         return user.assignedStages.some((s) => ["finished", "dispatched", "dispatch"].includes(s.toLowerCase()));
       }
-      return ["rejectRework"].includes(action);
+      return ["rejectRework", "cameraScan", "printStickers", "scanLookup"].includes(action);
     }
     return false;
   }, [isAdmin, isSupervisor, isOperator, user, permissions]);

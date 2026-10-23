@@ -3,7 +3,10 @@ import { useSearchParams } from "react-router-dom";
 import { 
   Settings, Users, Shield, Bell, Plus, Edit2, Trash2, Save, X, Key, KeyRound,
   Mail, Lock, CheckCircle2, AlertCircle, RefreshCw, Check, Minus,
-  Power, Smartphone, Laptop, Globe, ShieldCheck, UserCheck, Zap, Activity
+  Power, Smartphone, Laptop, Globe, ShieldCheck, UserCheck, Zap, Activity,
+  Search, Filter, Scissors, Sparkles, Layers, Boxes, Box, PackageCheck,
+  Truck, Camera, Tag, ScanLine, RotateCcw, ClipboardList, FileSpreadsheet,
+  FileText, Eye, AlertOctagon, SlidersHorizontal, Calendar, AlertTriangle
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -131,22 +134,238 @@ export function SettingsView() {
     } catch {}
   }, [getAuthHeaders]);
 
-  // System modules configuration for interactive permission matrix
-  const SYSTEM_MODULES = [
-    { id: "mod-cutting", name: "Cutting Workstation (Scan & Barcode Execution)", category: "Shop Floor Workstations", key: "module:cutting" },
-    { id: "mod-polishing", name: "Polishing & Edging Line (Edge Grinding & Polishing)", category: "Shop Floor Workstations", key: "module:polishing" },
-    { id: "mod-pairing", name: "Pairing & Assembly Workstation", category: "Shop Floor Workstations", key: "module:pairing" },
-    { id: "mod-dgu", name: "DGU Insulating Glass Assembly Line", category: "Shop Floor Workstations", key: "module:dgu" },
-    { id: "mod-lamination", name: "Lamination & Autoclave Processing Line", category: "Shop Floor Workstations", key: "module:lamination" },
-    { id: "mod-finished", name: "Finished Warehouse & Dispatch Execution", category: "Shop Floor Workstations", key: "canDispatch" },
-    { id: "mod-pi-upload", name: "PI & Sticker Batch Excel Uploads", category: "Order Management", key: "canUploadPI" },
-    { id: "mod-pi-delete", name: "PI Batch Deletion & Order Cancellation", category: "Order Management", key: "canDeletePI" },
-    { id: "mod-reject-rework", name: "Defect Logging, Quality Rejection & Remake Queue", category: "Quality Assurance", key: "canRejectRework" },
-    { id: "mod-reports", name: "Daily Production & Quality Audit Reports", category: "Reporting & Governance", key: "canViewReports" },
-    { id: "mod-analytics", name: "Plant Performance & Efficiency Analytics", category: "Reporting & Governance", key: "canViewAnalytics" },
-    { id: "mod-user-mgmt", name: "User Provisioning & Password Administration", category: "Access & Security", key: "canManageUsers" },
-    { id: "mod-settings", name: "System Configuration & Terminal Session Control", category: "Access & Security", key: "canManageSettings" },
-    { id: "mod-clear-db", name: "Master Database Reset & System Data Purge", category: "Access & Security", key: "canClearData" },
+  // Permission Matrix Search & Category Filters
+  const [moduleSearch, setModuleSearch] = useState("");
+  const [moduleCategoryFilter, setModuleCategoryFilter] = useState<string>("ALL");
+
+  // Comprehensive System modules, workstations, floor tools & small parts configuration
+  const SYSTEM_MODULES: {
+    id: string;
+    name: string;
+    category: "Shop Floor Workstations" | "Workstation Floor Tools" | "Order & Batch Management" | "Quality Assurance" | "Reports & Plant Intelligence" | "System Administration";
+    description: string;
+    key: string;
+    icon: any;
+  }[] = [
+    // 1. Shop Floor Workstations
+    {
+      id: "mod-cutting",
+      name: "Cutting Workstation (Glass Cutting & Breaking Tables)",
+      category: "Shop Floor Workstations",
+      description: "CNC cutting tables, breakout bars, primary barcode labeling & batch drilldown",
+      key: "module:cutting",
+      icon: Scissors,
+    },
+    {
+      id: "mod-polishing",
+      name: "Polishing & Edging Line (Edge Grinding & Arrising)",
+      category: "Shop Floor Workstations",
+      description: "Straight-line edging, CNC arrising, diamond wheel polishing & bulk rack advance",
+      key: "module:polishing",
+      icon: Sparkles,
+    },
+    {
+      id: "mod-pairing",
+      name: "Pairing & Assembly Buffer Workstation",
+      category: "Shop Floor Workstations",
+      description: "Inner/outer glass pane matching, pairing queue buffer & DGU unit assembly preparation",
+      key: "module:pairing",
+      icon: Layers,
+    },
+    {
+      id: "mod-dgu",
+      name: "DGU / IGU Insulated Double Glazing Line",
+      category: "Shop Floor Workstations",
+      description: "Aluminum spacer bending, desiccant gas fill, secondary sealing & paired unit advance",
+      key: "module:dgu",
+      icon: Boxes,
+    },
+    {
+      id: "mod-lamination",
+      name: "Lamination & Autoclave Processing Line",
+      category: "Shop Floor Workstations",
+      description: "Cleanroom PVB/EVA film layering, vacuum ring de-airing & high-pressure autoclave curing",
+      key: "module:lamination",
+      icon: Box,
+    },
+    {
+      id: "mod-finished",
+      name: "Finished Warehouse & Quality Inspection Staging",
+      category: "Shop Floor Workstations",
+      description: "Final optical QC inspection, finished goods crating, rack storage & dispatch staging",
+      key: "module:finished",
+      icon: PackageCheck,
+    },
+    {
+      id: "mod-dispatch-exec",
+      name: "Shipment Dispatch & Gate Pass Execution",
+      category: "Shop Floor Workstations",
+      description: "Authorize delivery gate passes, customer handover notes & mark items as Dispatched",
+      key: "canDispatch",
+      icon: Truck,
+    },
+
+    // 2. Workstation Floor Tools & Hardware
+    {
+      id: "mod-cam-scan",
+      name: "Live Camera Barcode Scanner",
+      category: "Workstation Floor Tools",
+      description: "Use workstation webcam, USB video camera or mobile camera for real-time barcode scanning",
+      key: "canCameraScan",
+      icon: Camera,
+    },
+    {
+      id: "mod-print-stickers",
+      name: "Thermal Barcode Sticker Printing",
+      category: "Workstation Floor Tools",
+      description: "Generate & print single piece labels, batch barcodes & thermal sticker rolls",
+      key: "canPrintStickers",
+      icon: Tag,
+    },
+    {
+      id: "mod-scan-lookup",
+      name: "Barcode Diagnostic & Fast Item Lookup Modal",
+      category: "Workstation Floor Tools",
+      description: "Instant barcode scan diagnostic tool, item status verification & history lookup",
+      key: "canScanLookup",
+      icon: ScanLine,
+    },
+    {
+      id: "mod-undo-advance",
+      name: "Stage Advance Reversal & Step-Back (Undo)",
+      category: "Workstation Floor Tools",
+      description: "Revert accidental barcode scans and move glass pieces back to previous workstation",
+      key: "canUndoStageAdvance",
+      icon: RotateCcw,
+    },
+
+    // 3. Order & Batch Management
+    {
+      id: "mod-pi-tracking",
+      name: "PI Master Tracking & Production Batches",
+      category: "Order & Batch Management",
+      description: "Browse Proforma Invoices, batch order completion percentages & customer specifications",
+      key: "module:pis",
+      icon: ClipboardList,
+    },
+    {
+      id: "mod-pi-upload",
+      name: "Excel PI Sheets & Barcode Batch Uploader",
+      category: "Order & Batch Management",
+      description: "Import customer PI spreadsheets, glass cutting lists & barcode manifest files",
+      key: "canUploadPI",
+      icon: FileSpreadsheet,
+    },
+    {
+      id: "mod-manual-pi",
+      name: "Manual PI Order Creation Modal",
+      category: "Order & Batch Management",
+      description: "Direct manual creation of new customer PIs, glass specifications & pane dimensions",
+      key: "canCreateManualPI",
+      icon: FileText,
+    },
+    {
+      id: "mod-pi-docs",
+      name: "CAD Drawings & Technical PDF Viewer",
+      category: "Order & Batch Management",
+      description: "Open uploaded technical engineering drawings, CAD specifications & project PDFs",
+      key: "canViewPIDocuments",
+      icon: Eye,
+    },
+    {
+      id: "mod-pi-delete",
+      name: "PI Batch Deletion & Order Cancellation",
+      category: "Order & Batch Management",
+      description: "Permanently delete PI batches and cancel active manufacturing orders",
+      key: "canDeletePI",
+      icon: Trash2,
+    },
+
+    // 4. Quality Assurance & Defect Control
+    {
+      id: "mod-reject-rework",
+      name: "Defect Logging & Quality Rejection",
+      category: "Quality Assurance",
+      description: "Log surface scratches, edge chips, bubbles & reject non-conforming glass panes",
+      key: "canRejectRework",
+      icon: AlertOctagon,
+    },
+    {
+      id: "mod-remake-queue",
+      name: "Remake & Rework Routing Queue",
+      category: "Quality Assurance",
+      description: "Route rejected items back to Cutting/Polishing for re-cutting and re-fabrication",
+      key: "canRejectRework",
+      icon: RefreshCw,
+    },
+
+    // 5. Reports & Plant Intelligence
+    {
+      id: "mod-production-overview",
+      name: "Factory Floor WIP & Bottleneck Pipeline",
+      category: "Reports & Plant Intelligence",
+      description: "Live bird's-eye view of active pieces across all stations & pipeline bottlenecks",
+      key: "module:production-overview",
+      icon: SlidersHorizontal,
+    },
+    {
+      id: "mod-dispatched-history",
+      name: "Dispatched History & Delivery Archive",
+      category: "Reports & Plant Intelligence",
+      description: "Browse historical completed shipments, customer delivery dates & delivery notes",
+      key: "module:dispatched-history",
+      icon: Calendar,
+    },
+    {
+      id: "mod-audit-reports",
+      name: "Daily Production & Operator Audit Reports",
+      category: "Reports & Plant Intelligence",
+      description: "Daily shift production totals, rejection summaries & operator throughput logs",
+      key: "canViewReports",
+      icon: FileSpreadsheet,
+    },
+    {
+      id: "mod-export-reports",
+      name: "Excel & CSV Data Export",
+      category: "Reports & Plant Intelligence",
+      description: "Download workstation WIP tables, batch progress matrices & audit reports to Excel",
+      key: "canExportReports",
+      icon: FileSpreadsheet,
+    },
+    {
+      id: "mod-analytics",
+      name: "Plant Performance & OEE Analytics",
+      category: "Reports & Plant Intelligence",
+      description: "Overall Equipment Effectiveness, availability, quality rate & cycle times",
+      key: "canViewAnalytics",
+      icon: Zap,
+    },
+
+    // 6. System Administration & Security
+    {
+      id: "mod-user-mgmt",
+      name: "User Provisioning & Password Administration",
+      category: "System Administration",
+      description: "Create user accounts, edit profiles, assign roles and reset passwords",
+      key: "canManageUsers",
+      icon: Users,
+    },
+    {
+      id: "mod-settings",
+      name: "System Configuration & Terminal Sessions",
+      category: "System Administration",
+      description: "Configure platform settings, manage active operator sessions & terminate sessions",
+      key: "canManageSettings",
+      icon: Settings,
+    },
+    {
+      id: "mod-clear-db",
+      name: "Master Database Reset & System Data Purge",
+      category: "System Administration",
+      description: "Factory reset database and purge all production records and scan logs",
+      key: "canClearData",
+      icon: AlertTriangle,
+    },
   ];
 
   const hasPermission = (role: UserRole, permKey: string): boolean => {
@@ -265,6 +484,7 @@ export function SettingsView() {
           pairing: "Pairing",
           dgu: "DGU",
           lamination: "Lamination",
+          finished: "Finished",
         };
         const targetStage = stageMap[mod];
         if (targetStage) {
@@ -959,6 +1179,18 @@ export function SettingsView() {
                               </div>
                             )}
 
+                            {/* Live Permission Counter Badge */}
+                            <div className="flex items-center gap-2 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-bold shadow-2xs">
+                              <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                                {userForPerms ? SYSTEM_MODULES.filter((m) => getUserPermissionValue(userForPerms, m.key).effective).length : 0} Granted
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-slate-500 font-medium">
+                                {userForPerms ? SYSTEM_MODULES.filter((m) => !getUserPermissionValue(userForPerms, m.key).effective).length : 0} Disabled
+                              </span>
+                            </div>
+
                             {/* Reset Button */}
                             {userForPerms.customPermissions && Object.keys(userForPerms.customPermissions).length > 0 && userForPerms.role !== "Admin" && (
                               <button
@@ -976,73 +1208,157 @@ export function SettingsView() {
                       </div>
                     </div>
 
-                    {/* User Permission Matrix Table */}
-                    <div className="bg-white rounded-lg border border-slate-200/80 shadow-2xs overflow-hidden">
+                    {/* Search & Category Filter Toolbar */}
+                    <div className="space-y-2.5 bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        {/* Search Input */}
+                        <div className="relative flex-1 max-w-md">
+                          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="text"
+                            value={moduleSearch}
+                            onChange={(e) => setModuleSearch(e.target.value)}
+                            placeholder="Search by module name, floor tool, report, or keyword..."
+                            className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                          />
+                          {moduleSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setModuleSearch("")}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Category Filter Pills */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {[
+                          { id: "ALL", label: "All Items", count: SYSTEM_MODULES.length },
+                          { id: "Shop Floor Workstations", label: "Workstations", count: SYSTEM_MODULES.filter(m => m.category === "Shop Floor Workstations").length },
+                          { id: "Workstation Floor Tools", label: "Shop Floor Tools", count: SYSTEM_MODULES.filter(m => m.category === "Workstation Floor Tools").length },
+                          { id: "Order & Batch Management", label: "Order & Batches", count: SYSTEM_MODULES.filter(m => m.category === "Order & Batch Management").length },
+                          { id: "Quality Assurance", label: "Quality & Remakes", count: SYSTEM_MODULES.filter(m => m.category === "Quality Assurance").length },
+                          { id: "Reports & Plant Intelligence", label: "Reports & Intelligence", count: SYSTEM_MODULES.filter(m => m.category === "Reports & Plant Intelligence").length },
+                          { id: "System Administration", label: "Administration", count: SYSTEM_MODULES.filter(m => m.category === "System Administration").length },
+                        ].map((cat) => {
+                          const isActive = moduleCategoryFilter === cat.id;
+                          return (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => setModuleCategoryFilter(cat.id)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isActive
+                                  ? "bg-indigo-600 text-white shadow-2xs"
+                                  : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                              }`}
+                            >
+                              <span>{cat.label}</span>
+                              <span className={`text-[9.5px] px-1.5 py-0.2 rounded-full ${
+                                isActive ? "bg-indigo-700 text-indigo-100" : "bg-slate-100 text-slate-500"
+                              }`}>
+                                {cat.count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Clean 2-Column User Permission Matrix Table */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-200 bg-slate-50/80">
-                              <th className="px-3 py-2 font-extrabold text-slate-600 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[280px]">
-                                System Module &amp; Category
+                            <tr className="border-b border-slate-200 bg-slate-50/90">
+                              <th className="px-4 py-3 font-extrabold text-slate-700 uppercase tracking-wider text-[10.5px]">
+                                System Module &amp; Feature Details ({SYSTEM_MODULES.filter((mod) => {
+                                  if (moduleCategoryFilter !== "ALL" && mod.category !== moduleCategoryFilter) return false;
+                                  if (moduleSearch.trim()) {
+                                    const q = moduleSearch.toLowerCase();
+                                    return mod.name.toLowerCase().includes(q) || mod.description.toLowerCase().includes(q) || mod.category.toLowerCase().includes(q) || mod.key.toLowerCase().includes(q);
+                                  }
+                                  return true;
+                                }).length} Items)
                               </th>
-                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[130px]">
-                                <div className="font-black text-slate-900 text-xs">Standard Role Default</div>
-                                <div className="text-[8.5px] text-slate-400 font-mono font-medium tracking-wider">
-                                  {userForPerms?.role?.toUpperCase()} STANDARD
-                                </div>
-                              </th>
-                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[160px]">
+                              <th className="px-4 py-3 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10.5px] whitespace-nowrap w-[200px]">
                                 <div className="font-black text-indigo-700 text-xs">
                                   {userForPerms?.name ? `${userForPerms.name}'s Access` : "Individual Access"}
                                 </div>
                                 <div className="text-[8.5px] text-indigo-500 font-mono font-medium tracking-wider">
-                                  CLICK TO TOGGLE FOR THIS USER
+                                  CLICK TO TOGGLE PERMISSION
                                 </div>
-                              </th>
-                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">
-                                Permission Source
                               </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {SYSTEM_MODULES.map((mod) => {
+                            {SYSTEM_MODULES.filter((mod) => {
+                              if (moduleCategoryFilter !== "ALL" && mod.category !== moduleCategoryFilter) return false;
+                              if (moduleSearch.trim()) {
+                                const q = moduleSearch.toLowerCase();
+                                return (
+                                  mod.name.toLowerCase().includes(q) ||
+                                  mod.description.toLowerCase().includes(q) ||
+                                  mod.category.toLowerCase().includes(q) ||
+                                  mod.key.toLowerCase().includes(q)
+                                );
+                              }
+                              return true;
+                            }).map((mod) => {
                               if (!userForPerms) return null;
-                              const { effective, isOverridden, roleDefault } = getUserPermissionValue(userForPerms, mod.key);
+                              const { effective, isOverridden } = getUserPermissionValue(userForPerms, mod.key);
                               const isUserAdmin = userForPerms.role === "Admin";
+                              const IconComponent = mod.icon;
+
+                              const getCatBadge = (cat: string) => {
+                                switch (cat) {
+                                  case "Shop Floor Workstations": return "bg-blue-50 text-blue-700 border-blue-200";
+                                  case "Workstation Floor Tools": return "bg-purple-50 text-purple-700 border-purple-200";
+                                  case "Order & Batch Management": return "bg-indigo-50 text-indigo-700 border-indigo-200";
+                                  case "Quality Assurance": return "bg-rose-50 text-rose-700 border-rose-200";
+                                  case "Reports & Plant Intelligence": return "bg-cyan-50 text-cyan-700 border-cyan-200";
+                                  case "System Administration": return "bg-slate-100 text-slate-700 border-slate-300";
+                                  default: return "bg-slate-50 text-slate-600 border-slate-200";
+                                }
+                              };
 
                               return (
                                 <tr key={mod.id} className="hover:bg-slate-50/80 transition-colors">
-                                  {/* Module info */}
-                                  <td className="px-3 py-1.5 whitespace-nowrap">
-                                    <div className="font-bold text-slate-900 text-[11.5px]">{mod.name}</div>
-                                    <div className="text-[9.5px] text-slate-400 font-medium">{mod.category}</div>
-                                  </td>
-
-                                  {/* Base role default display */}
-                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                                    <div className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-bold text-slate-600 bg-slate-100">
-                                      {roleDefault ? (
-                                        <>
-                                          <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
-                                          <span className="text-emerald-700">Allowed</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Minus className="w-3 h-3 text-slate-400 stroke-[2.5]" />
-                                          <span className="text-slate-400">Revoked</span>
-                                        </>
-                                      )}
+                                  {/* Module & Feature Info */}
+                                  <td className="px-4 py-2.5">
+                                    <div className="flex items-start gap-3">
+                                      <div className="mt-0.5 p-2 rounded-lg bg-slate-100 border border-slate-200/80 shrink-0 text-slate-600">
+                                        <IconComponent className="w-4 h-4" />
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                                          <span className="font-bold text-slate-900 text-xs">{mod.name}</span>
+                                          <span className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold border ${getCatBadge(mod.category)}`}>
+                                            {mod.category}
+                                          </span>
+                                          {isOverridden && (
+                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse" />
+                                              Custom
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 leading-snug">{mod.description}</p>
+                                      </div>
                                     </div>
                                   </td>
 
                                   {/* User's custom toggle button */}
-                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
+                                  <td className="px-4 py-2.5 whitespace-nowrap text-center">
                                     {isUserAdmin ? (
                                       <div 
-                                        className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs select-none shadow-2xs"
+                                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs select-none shadow-2xs"
                                         title="Administrator accounts are locked to full system access"
                                       >
-                                        <Lock className="w-3 h-3 text-emerald-600" />
+                                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
                                         <span>Full Access (Admin)</span>
                                       </div>
                                     ) : (
@@ -1050,13 +1366,13 @@ export function SettingsView() {
                                         type="button"
                                         onClick={() => handleToggleUserPermission(userForPerms, mod.key, effective)}
                                         disabled={!isAdmin}
-                                        title={isAdmin ? `Click to ${effective ? "revoke" : "grant"} access specifically for ${userForPerms.name}` : undefined}
-                                        className={`inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all duration-150 select-none ${
+                                        title={isAdmin ? `Click to ${effective ? "revoke" : "grant"} '${mod.name}' for ${userForPerms.name}` : undefined}
+                                        className={`inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 select-none shadow-2xs ${
                                           isAdmin ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"
                                         } ${
                                           effective
-                                            ? "bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-2xs"
-                                            : "bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-400"
+                                            ? "bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700"
+                                            : "bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-500"
                                         }`}
                                       >
                                         {effective ? (
@@ -1073,23 +1389,23 @@ export function SettingsView() {
                                       </button>
                                     )}
                                   </td>
-
-                                  {/* Source / status badge */}
-                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                                    {isOverridden ? (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700 shadow-2xs">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse" />
-                                        Custom Override
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-medium bg-slate-100 text-slate-500">
-                                        Inherited ({userForPerms.role})
-                                      </span>
-                                    )}
-                                  </td>
                                 </tr>
                               );
                             })}
+                            {SYSTEM_MODULES.filter((mod) => {
+                              if (moduleCategoryFilter !== "ALL" && mod.category !== moduleCategoryFilter) return false;
+                              if (moduleSearch.trim()) {
+                                const q = moduleSearch.toLowerCase();
+                                return mod.name.toLowerCase().includes(q) || mod.description.toLowerCase().includes(q) || mod.category.toLowerCase().includes(q) || mod.key.toLowerCase().includes(q);
+                              }
+                              return true;
+                            }).length === 0 && (
+                              <tr>
+                                <td colSpan={2} className="px-4 py-8 text-center text-slate-400 text-xs">
+                                  No system modules or tools match your search &ldquo;{moduleSearch}&rdquo;.
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
