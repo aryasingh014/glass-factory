@@ -534,7 +534,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
-                    {metrics.cuttingCount} Panes
+                    {metrics.cuttingCount} Pcs
                   </span>
                 </button>
 
@@ -556,7 +556,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-cyan-100 text-cyan-800 border border-cyan-200">
-                    {metrics.polishingCount} Panes
+                    {metrics.polishingCount} Pcs
                   </span>
                 </button>
 
@@ -574,11 +574,11 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                     <div>
                       <div className="text-xs font-bold leading-none">Dispatch & Shipping</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Completed Units</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Completed Pieces</div>
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    {metrics.finishedCount} Units
+                    {metrics.finishedCount} Pcs
                   </span>
                 </button>
               </div>
@@ -595,7 +595,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-blue"><Boxes className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Total Production</h3>
-              <strong>{metrics.totalItems} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
+              <strong>{metrics.totalItems} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Plant Total</span></div>
             </div>
           </div>
@@ -611,7 +611,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-blue"><Clock className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>In-Progress WIP</h3>
-              <strong>{metrics.inProgressCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
+              <strong>{metrics.inProgressCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Active</span><small>Pipeline</small></div>
             </div>
           </div>
@@ -626,8 +626,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
-              <h3>Completed Units</h3>
-              <strong>{metrics.finishedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
+              <h3>Completed Pieces</h3>
+              <strong>{metrics.finishedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>Dispatch</small></div>
             </div>
           </div>
@@ -643,7 +643,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-yellow"><Scissors className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Pending Cutting</h3>
-              <strong>{metrics.pendingCuttingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
+              <strong>{metrics.pendingCuttingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-flat" style={{color:'#d97706', fontWeight:700}}>Awaiting</span><small>Cutting</small></div>
             </div>
           </div>
@@ -659,7 +659,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-cyan"><Sparkles className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Pending Polish</h3>
-              <strong>{metrics.polishingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
+              <strong>{metrics.polishingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span style={{color:'#0891b2', fontWeight:700}}>Awaiting</span><small>Polish</small></div>
             </div>
           </div>
@@ -675,7 +675,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rejected Items</h3>
-              <strong>{metrics.rejectedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
+              <strong>{metrics.rejectedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span style={{color: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>{metrics.rejectedCount === 0 ? "Quality" : "Audit"}</small></div>
             </div>
           </div>
@@ -691,7 +691,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span className="ppb-metric-icon ppb-metric-icon-purple"><RotateCw className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rework Items</h3>
-              <strong>{metrics.reworkCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Items</small></strong>
+              <strong>{metrics.reworkCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>{metrics.reworkCount === 0 ? "Normal" : "Active"}</span><small>Routing</small></div>
             </div>
           </div>
@@ -735,19 +735,19 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
               <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={14} /></span>
-              <div><strong>1. Cutting</strong><span className="ppb-count"><b>{metrics.cuttingCount}</b> Panes</span></div>
+              <div><strong>1. Cutting</strong><span className="ppb-count"><b>{metrics.cuttingCount}</b> Pcs</span></div>
             </div>
             <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-cyan" onClick={() => onNavigateTab("polishing")} style={{cursor: 'pointer'}}>
               <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={14} /></span>
-              <div><strong>2. Polish</strong><span className="ppb-count"><b>{metrics.polishingCount}</b> Panes</span></div>
+              <div><strong>2. Polish</strong><span className="ppb-count"><b>{metrics.polishingCount}</b> Pcs</span></div>
             </div>
             <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
               <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={14} /></span>
-              <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Panes</span></div>
+              <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Pcs</span></div>
             </div>
             <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
               <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={14} /></span>
-              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
+              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.dguCount + metrics.laminationCount}</b> Pcs</span></div>
             </div>
             <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
               <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={14} /></span>
@@ -800,19 +800,19 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <div className="flex items-center gap-4 flex-wrap">
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                <span>Completed: <strong className="text-slate-800">{metrics.finishedCount}</strong> ({metrics.completionPercent}%)</span>
+                <span>Completed: <strong className="text-slate-800">{metrics.finishedCount} Pcs</strong> ({metrics.completionPercent}%)</span>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 flex-shrink-0" />
-                <span>In Progress: <strong className="text-slate-800">{metrics.inProgressCount}</strong> ({metrics.inProgressPercent}%)</span>
+                <span>In Progress: <strong className="text-slate-800">{metrics.inProgressCount} Pcs</strong> ({metrics.inProgressPercent}%)</span>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" />
-                <span>Pending: <strong className="text-slate-800">{metrics.pendingCuttingCount}</strong> ({metrics.pendingPercent}%)</span>
+                <span>Pending: <strong className="text-slate-800">{metrics.pendingCuttingCount} Pcs</strong> ({metrics.pendingPercent}%)</span>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-rose-500 flex-shrink-0" />
-                <span>Rejects: <strong className="text-slate-800">{metrics.rejectedCount}</strong> ({metrics.rejectedPercent}%)</span>
+                <span>Rejects: <strong className="text-slate-800">{metrics.rejectedCount} Pcs</strong> ({metrics.rejectedPercent}%)</span>
               </span>
             </div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-900 font-mono text-xs">
