@@ -87,6 +87,11 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
         batchVal.includes(q) ||
         barcodeVal.includes(q)
       );
+    }).sort((a, b) => {
+      const posA = a.srNo != null ? a.srNo : parseInt(String(a.posNo || "").replace(/\D/g, ""), 10) || 0;
+      const posB = b.srNo != null ? b.srNo : parseInt(String(b.posNo || "").replace(/\D/g, ""), 10) || 0;
+      if (posA !== posB) return posA - posB;
+      return (a.serialNumber || "").localeCompare(b.serialNumber || "");
     });
   }, [items, searchTerm, finishFilter, pi]);
 

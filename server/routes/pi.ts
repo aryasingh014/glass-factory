@@ -683,9 +683,17 @@ export const handleDeletePI: RequestHandler = (req, res) => {
   const deletedIdentifiers = new Set<string>();
   if (deletedPI.piNumber) deletedIdentifiers.add(deletedPI.piNumber);
 
+  const cleanPiId = (deletedPI.id || "").replace(/^STK-/i, "");
+  const cleanPiNo = (deletedPI.piNumber || "").replace(/^STK-/i, "");
+
   for (let i = glassItemsDatabase.length - 1; i >= 0; i--) {
     const item = glassItemsDatabase[i];
-    if (item.piId === deletedPI.id || item.piNumber === deletedPI.piNumber) {
+    const isMatch =
+      item.piId === deletedPI.id ||
+      item.piNumber === deletedPI.piNumber ||
+      (cleanPiId && item.piId === cleanPiId) ||
+      (cleanPiNo && item.piNumber === cleanPiNo);
+    if (isMatch) {
       if (item.serialNumber) deletedIdentifiers.add(item.serialNumber);
       if (item.barcode) deletedIdentifiers.add(item.barcode);
       glassItemsDatabase.splice(i, 1);

@@ -653,6 +653,10 @@ export default function Index() {
         throw new Error(errData.error || `Failed to delete Batch ${batchNumber}`);
       }
       toast.success(`Batch ${batchNumber} deleted successfully!`);
+      if (selectedPI && (selectedPI.id === piId || selectedPI.piNumber === piId)) {
+        setSelectedPI(null);
+        setSelectedPIItems([]);
+      }
       fetchData(true);
     } catch (err: any) {
       toast.error(err.message || `Error deleting Batch ${batchNumber}`);
@@ -1230,7 +1234,7 @@ export default function Index() {
       }
     });
 
-    return Array.from(map.values());
+    return Array.from(map.values()).sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { sensitivity: "base" }));
   }, [pis, getBatchMetrics]);
 
   const totalUploadedPdfs = uploadedPdfsSummary.length;
@@ -1278,7 +1282,7 @@ export default function Index() {
         if (typeof valB === "string") valB = valB.toLowerCase();
         if (valA < valB) return sortOrder === "asc" ? -1 : 1;
         if (valA > valB) return sortOrder === "asc" ? 1 : -1;
-        return 0;
+        return String(a.id || "").localeCompare(String(b.id || ""));
       });
   }, [pis, piFinishFilter, selectedPdfFilter, piSearchTerm, sortField, sortOrder]);
 
@@ -1395,7 +1399,7 @@ export default function Index() {
         customerName,
         projectName,
         batches,
-        pdfFiles: Array.from(pdfFilesSet),
+        pdfFiles: Array.from(pdfFilesSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
         totalBatches: batches.length,
         totalPieces,
         completedPieces,
@@ -1409,10 +1413,27 @@ export default function Index() {
         progressPct,
         hasColour,
         hasClear,
-        projects: Array.from(projectsSet),
+        projects: Array.from(projectsSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
         status,
         earliestDate: batches[batches.length - 1]?.createdAt || batches[batches.length - 1]?.issueDate || "",
         latestDate: batches[0]?.createdAt || batches[0]?.issueDate || "",
+      });
+    });
+
+    // Stable sort customer groups so they NEVER jump or change positions when batches are deleted
+    groups.sort((a, b) => {
+      const cComp = a.customerName.localeCompare(b.customerName, undefined, { sensitivity: "base" });
+      if (cComp !== 0) return cComp;
+      return a.projectName.localeCompare(b.projectName, undefined, { sensitivity: "base" });
+    });
+
+    // Stable sort batches inside each customer group by numeric batch number descending (newest batch first)
+    groups.forEach((g) => {
+      g.batches.sort((a, b) => {
+        const numA = parseInt(String(a.batchNo || a.piNumber || "").replace(/\D/g, ""), 10) || 0;
+        const numB = parseInt(String(b.batchNo || b.piNumber || "").replace(/\D/g, ""), 10) || 0;
+        if (numA !== numB) return numB - numA;
+        return String(b.piNumber || "").localeCompare(String(a.piNumber || ""));
       });
     });
 

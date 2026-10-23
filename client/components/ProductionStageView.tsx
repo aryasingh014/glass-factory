@@ -351,7 +351,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       }
     });
 
-    return Array.from(map.values()).map((b) => {
+    const summaries = Array.from(map.values()).map((b) => {
       const parentPI = pis.find((p) => p.id === b.id || p.piNumber === b.piNumber);
       const stageSqm = b.stageItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
       const allSqm = b.items.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
@@ -415,6 +415,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         issueDate,
       };
     });
+
+    summaries.sort((a, b) => {
+      const cComp = (a.customerName || "").localeCompare(b.customerName || "", undefined, { sensitivity: "base" });
+      if (cComp !== 0) return cComp;
+      const pComp = (a.projectName || "").localeCompare(b.projectName || "", undefined, { sensitivity: "base" });
+      if (pComp !== 0) return pComp;
+      const numA = parseInt(String(a.batchNo || a.piNumber || "").replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(String(b.batchNo || b.piNumber || "").replace(/\D/g, ""), 10) || 0;
+      if (numA !== numB) return numB - numA;
+      return String(b.piNumber || "").localeCompare(String(a.piNumber || ""));
+    });
+
+    return summaries;
   }, [items, pis, stage]);
 
   const batchSummaries = useMemo(() => {
@@ -701,11 +714,28 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         hasColour,
         hasClear,
         categories,
-        projects: Array.from(projectsSet),
-        pdfFiles: Array.from(pdfFilesSet),
+        projects: Array.from(projectsSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+        pdfFiles: Array.from(pdfFilesSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
         isAllCompleted,
         status: isAllCompleted ? "Completed" : "In Production",
         progressPct,
+      });
+    });
+
+    // Stable sort customer groups so they NEVER jump or change positions when batches are deleted
+    groups.sort((a, b) => {
+      const cComp = a.customerName.localeCompare(b.customerName, undefined, { sensitivity: "base" });
+      if (cComp !== 0) return cComp;
+      return a.projectName.localeCompare(b.projectName, undefined, { sensitivity: "base" });
+    });
+
+    // Stable sort batches inside each customer group by numeric batch number descending (newest batch first)
+    groups.forEach((g) => {
+      g.batches.sort((a, b) => {
+        const numA = parseInt(String(a.batchNo || a.piNumber || "").replace(/\D/g, ""), 10) || 0;
+        const numB = parseInt(String(b.batchNo || b.piNumber || "").replace(/\D/g, ""), 10) || 0;
+        if (numA !== numB) return numB - numA;
+        return String(b.piNumber || "").localeCompare(String(a.piNumber || ""));
       });
     });
 
@@ -1804,8 +1834,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         rows: cRows,
         totalUnits,
         totalSqm,
-        projects: Array.from(projectsSet),
-        pdfFiles: Array.from(pdfFilesSet),
+        projects: Array.from(projectsSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+        pdfFiles: Array.from(pdfFilesSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
         hasColour,
         hasClear,
         categories,
@@ -1814,6 +1844,23 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         allRowIds,
         isAllSelected,
         isSomeSelected,
+      });
+    });
+
+    // Stable sort customer groups so they NEVER jump or change positions
+    groups.sort((a, b) => {
+      const cComp = a.customerName.localeCompare(b.customerName, undefined, { sensitivity: "base" });
+      if (cComp !== 0) return cComp;
+      return a.projectName.localeCompare(b.projectName, undefined, { sensitivity: "base" });
+    });
+
+    // Stable sort rows inside each customer group by POS / serialNumber
+    groups.forEach((g) => {
+      g.rows.sort((a, b) => {
+        const posA = parseInt(String(a.item.posNo || a.item.srNo || "").replace(/\D/g, ""), 10) || 0;
+        const posB = parseInt(String(b.item.posNo || b.item.srNo || "").replace(/\D/g, ""), 10) || 0;
+        if (posA !== posB) return posA - posB;
+        return (a.displaySerial || "").localeCompare(b.displaySerial || "");
       });
     });
 
@@ -1831,6 +1878,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
     return Array.from(map.entries())
       .map(([rackNo, groupRows]) => {
+        // Stably sort rows inside this sheet by posNo / srNo / serial
+        groupRows.sort((a, b) => {
+          const posA = parseInt(String(a.item.posNo || a.item.srNo || "").replace(/\D/g, ""), 10) || 0;
+          const posB = parseInt(String(b.item.posNo || b.item.srNo || "").replace(/\D/g, ""), 10) || 0;
+          if (posA !== posB) return posA - posB;
+          return (a.displaySerial || "").localeCompare(b.displaySerial || "");
+        });
+
         const totalSqm = groupRows.reduce((acc, curr) => acc + (curr.effectiveSqm || 0), 0);
         const sfoSet = Array.from(new Set(groupRows.map((r) => r.item.sfoNo || r.item.piNumber).filter(Boolean)));
         const obSet = Array.from(new Set(groupRows.map((r) => r.item.obNo).filter(Boolean)));
