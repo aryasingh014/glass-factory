@@ -392,9 +392,11 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 }
 .ppb-metric-icon-blue   { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
+.ppb-metric-icon-cyan   { background: linear-gradient(135deg, #06b6d4, #0891b2); color: #fff; }
 .ppb-metric-icon-green  { background: linear-gradient(135deg, #10b981, #047857); color: #fff; }
 .ppb-metric-icon-red    { background: linear-gradient(135deg, #f87171, #dc2626); color: #fff; }
 .ppb-metric-icon-yellow { background: linear-gradient(135deg, #fbbf24, #d97706); color: #fff; }
+.ppb-metric-icon-purple { background: linear-gradient(135deg, #a855f7, #7e22ce); color: #fff; }
 
 .ppb-metric-copy { min-width: 0; flex: 1; }
 .ppb-metric-copy h3 {
@@ -426,9 +428,11 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   display: flex; align-items: center; gap: 7px; padding: 0 15px;
 }
 .ppb-note-blue   { background: rgba(37,99,235,0.07);  color: #1d4ed8; }
+.ppb-note-cyan   { background: rgba(6,182,212,0.08);  color: #0e7490; }
 .ppb-note-green  { background: rgba(5,150,105,0.07);  color: #065f46; }
 .ppb-note-red    { background: rgba(220,38,38,0.07);  color: #b91c1c; }
 .ppb-note-yellow { background: rgba(217,119,6,0.07);  color: #92400e; }
+.ppb-note-purple { background: rgba(139,92,246,0.08); color: #7e22ce; }
 
 /* Two-column dashboard layout */
 .ppb-dashboard-columns { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(310px, 1fr); gap: 12px; }
@@ -463,6 +467,7 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
 }
 .ppb-queue-tile:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(37,99,235,0.14); border-color: #93c5fd; }
 .ppb-queue-tile-blue   { background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(37,99,235,0.03)); }
+.ppb-queue-tile-cyan   { background: linear-gradient(135deg, rgba(6,182,212,0.06), rgba(8,145,178,0.03)); }
 .ppb-queue-tile-green  { background: linear-gradient(135deg, rgba(16,185,129,0.06), rgba(5,150,105,0.03)); }
 .ppb-queue-tile-purple { background: linear-gradient(135deg, rgba(139,92,246,0.06), rgba(109,40,217,0.03)); }
 .ppb-queue-tile-emerald{ background: linear-gradient(135deg, rgba(16,185,129,0.06), rgba(4,120,87,0.03)); }
@@ -474,6 +479,7 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 .ppb-queue-icon-blue   { background: linear-gradient(135deg, #3b82f6, #1d4ed8); box-shadow: 0 0 0 6px rgba(59,130,246,0.14); }
+.ppb-queue-icon-cyan   { background: linear-gradient(135deg, #06b6d4, #0891b2); box-shadow: 0 0 0 6px rgba(6,182,212,0.14); }
 .ppb-queue-icon-green  { background: linear-gradient(135deg, #10b981, #047857); box-shadow: 0 0 0 6px rgba(16,185,129,0.14); }
 .ppb-queue-icon-purple { background: linear-gradient(135deg, #8b5cf6, #6d28d9); box-shadow: 0 0 0 6px rgba(139,92,246,0.14); }
 .ppb-queue-icon-emerald{ background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 0 0 6px rgba(16,185,129,0.14); }
@@ -490,10 +496,12 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   display: grid; place-items: center; flex: 0 0 22px; font-weight: 900; font-size: 10px;
 }
 .ppb-queue-badge-blue   { background: rgba(59,130,246,0.18);  color: #1d4ed8; }
+.ppb-queue-badge-cyan   { background: rgba(6,182,212,0.18);  color: #0e7490; }
 .ppb-queue-badge-green  { background: rgba(16,185,129,0.18);  color: #065f46; }
 .ppb-queue-badge-purple { background: rgba(139,92,246,0.18);  color: #5b21b6; }
 .ppb-queue-badge-emerald{ background: rgba(16,185,129,0.18);  color: #065f46; }
 .ppb-queue-badge-amber{ background: rgba(245,158,11,0.18);  color: #92400e; }
+
 
 /* Arrow between queue tiles */
 .ppb-queue-arrow {
@@ -596,12 +604,12 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
 .ppb-dot-red    { background: #ef4444; }
 
 /* Stage chips row */
-.ppb-summary-chips { display: flex; justify-content: space-between; gap: 5px; margin-top: 12px; }
+.ppb-summary-chips { display: flex; justify-content: space-between; gap: 4px; margin-top: 12px; flex-wrap: wrap; }
 .ppb-summary-chips span {
   border: 1px solid #d8e8f4; border-radius: 20px; background: #f4f8fc;
-  font-size: 9.5px; padding: 5px 10px; font-weight: 700; white-space: nowrap;
+  font-size: 9.5px; padding: 4px 7px; font-weight: 700; white-space: nowrap;
 }
-.ppb-summary-chips b { margin-left: 6px; font-weight: 900; }
+.ppb-summary-chips b { margin-left: 4px; font-weight: 900; }
 
 /* Today's Overview progress */
 .ppb-overview-panel { min-height: 128px; }
@@ -763,56 +771,158 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
 .bg-indigo-600:hover { background-image: linear-gradient(135deg, #4338ca, #3730a3) !important; }
 
 
-/* Overrides for Production Overview 6-card grid */
-.grid.lg\:grid-cols-6 .overview-small-card {
-  min-height: auto;
+/* Executive Production Summary Cards (Production Overview Grid) */
+.overview-small-card {
+  min-height: 114px !important;
   padding: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  border-radius: 14px !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-main {
-  min-height: auto;
-  padding: 12px 10px 8px;
-  gap: 8px;
+.overview-small-card:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.07) !important;
+  border-color: #cbd5e1 !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-icon {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
+.overview-small-card .ppb-metric-main {
+  min-height: 78px !important;
+  padding: 10px 10px 6px !important;
+  gap: 9px !important;
+  display: flex !important;
+  align-items: center !important;
+  position: relative !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-icon svg {
-  width: 18px;
-  height: 18px;
+.overview-small-card .ppb-metric-icon {
+  width: 36px !important;
+  height: 36px !important;
+  flex: 0 0 36px !important;
+  border-radius: 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08) !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-copy h3 {
-  font-size: 9.5px;
-  white-space: normal;
-  word-break: break-word;
+.overview-small-card .ppb-metric-icon svg {
+  width: 18px !important;
+  height: 18px !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-copy strong {
-  font-size: 16px;
-  letter-spacing: -0.5px;
+.overview-small-card .ppb-metric-copy {
+  min-width: 0 !important;
+  flex: 1 !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-sparkline {
-  display: none;
+.overview-small-card .ppb-metric-copy h3 {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: #64748b !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.03em !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  margin: 0 !important;
+  line-height: 1.2 !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-change {
-  white-space: normal;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
+.overview-small-card .ppb-metric-copy strong {
+  font-size: 19px !important;
+  font-weight: 900 !important;
+  color: #0f172a !important;
+  letter-spacing: -0.5px !important;
+  line-height: 1.15 !important;
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 3px !important;
+  margin-top: 1px !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-change-up,
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-change-down,
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-change-flat {
-  font-size: 10.5px;
+.overview-small-card .ppb-metric-copy strong small {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #94a3b8 !important;
 }
-.grid.lg\:grid-cols-6 .overview-small-card .ppb-metric-note {
-  font-size: 8.5px;
-  padding: 6px 10px;
-  height: auto;
-  min-height: 24px;
-  white-space: normal;
-  line-height: 1.2;
+.overview-small-card .ppb-sparkline {
+  display: none !important;
+}
+.overview-small-card .ppb-metric-change {
+  display: flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  margin-top: 2px !important;
+  font-size: 10px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+.overview-small-card .ppb-metric-change-up,
+.overview-small-card .ppb-metric-change-down,
+.overview-small-card .ppb-metric-change-flat {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+.overview-small-card .ppb-metric-note {
+  font-size: 9.5px !important;
+  font-weight: 600 !important;
+  padding: 4px 8px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  max-height: 26px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.2 !important;
+  border-top: 1px solid #f1f5f9 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+
+/* Compact workflow tiles in Stage-Wise Workflows */
+.ppb-workflow-tile {
+  padding: 8px 6px !important;
+  gap: 6px !important;
+  min-height: 68px !important;
+  display: flex !important;
+  align-items: center !important;
+  border-radius: 10px !important;
+}
+.ppb-workflow-tile .ppb-queue-icon {
+  width: 28px !important;
+  height: 28px !important;
+  flex: 0 0 28px !important;
+  box-shadow: none !important;
+  border-radius: 8px !important;
+}
+.ppb-workflow-tile .ppb-queue-icon svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+.ppb-workflow-tile > div {
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+.ppb-workflow-tile strong {
+  display: block !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  white-space: normal !important;
+  line-height: 1.15 !important;
+}
+.ppb-workflow-tile .ppb-count {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 2px !important;
+  font-size: 9.5px !important;
+  color: #64748b !important;
+  margin-top: 2px !important;
+}
+.ppb-workflow-tile .ppb-count b {
+  font-size: 14px !important;
+  margin-right: 2px !important;
+  font-weight: 900 !important;
+  color: #0f172a !important;
 }

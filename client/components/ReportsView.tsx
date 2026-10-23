@@ -1744,8 +1744,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             >
               <option value="all">All Stages</option>
               <option value="Cutting">Cutting Stage</option>
-              <option value="Edging">Edging Stage</option>
-              <option value="Tempering">Tempering Stage</option>
+              <option value="Polishing">Polishing Stage</option>
+              <option value="Pairing">Pairing Stage</option>
               <option value="DGU">DGU Assembly Stage</option>
               <option value="Lamination">Lamination Stage</option>
               <option value="Finished">Finished / Dispatch</option>

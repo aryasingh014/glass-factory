@@ -3066,7 +3066,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
                 }`}
               >
-                <span>{stage === "DGU" ? "All DGU Queue" : stage === "Finished" ? "All Finished" : stage === "Lamination" ? "All Lamination Line" : "All Glass"}</span>
+                <span>{stage === "DGU" ? "All DGU Queue" : stage === "Finished" ? "All Finished" : stage === "Lamination" ? "All Lamination Line" : stage === "Polishing" ? "All Polishing Queue" : "All Glass"}</span>
                 <span
                   className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
                     finishFilter === "ALL" ? "bg-slate-200 text-slate-800" : "bg-slate-200/60 text-slate-600"
@@ -4069,6 +4069,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   Total in Finished Queue:{" "}
                   <strong className="text-emerald-700 font-bold">
                     {stageRows.length} {stageRows.length === 1 ? "Finished Unit" : "Finished Units"}
+                  </strong>
+                </>
+              ) : stage === "Polishing" ? (
+                <>
+                  Total in Polishing Queue:{" "}
+                  <strong className="text-cyan-700 font-bold">
+                    {stageRows.length} {stageRows.length === 1 ? "Pane" : "Panes"}
                   </strong>
                 </>
               ) : (

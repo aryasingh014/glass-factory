@@ -2295,6 +2295,14 @@ export default function Index() {
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
+                            <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => setActiveTab("polishing")}>
+                              <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={22} /></span>
+                              <div><strong>Polishing Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Panes</span></div>
+                              <span className="ppb-queue-badge ppb-queue-badge-cyan">{effectiveStats.pendingPolishing ?? 0}</span>
+                            </div>
+                            <ArrowRight className="ppb-queue-arrow" size={15} />
+                          </div>
+                          <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => setActiveTab("dgu")}>
                               <span className="ppb-queue-icon ppb-queue-icon-green"><Boxes size={22} /></span>
                               <div><strong>DGU Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingDGU ?? 0}</b> Units</span></div>
@@ -2573,6 +2581,14 @@ export default function Index() {
                             ◉&nbsp; Cut <b>{effectiveStats.pendingCutting ?? 0}</b>
                           </span>
                           <span
+                            onClick={() => setActiveTab("polishing")}
+                            className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                            style={{ color: '#0891b2' }}
+                            title="View Polishing Workstation"
+                          >
+                            ◉&nbsp; Polish <b>{effectiveStats.pendingPolishing ?? 0}</b>
+                          </span>
+                          <span
                             onClick={() => setActiveTab("dgu")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#059669' }}
@@ -2751,13 +2767,14 @@ export default function Index() {
                       activeTab === "production-overview" ? "Production Overview" :
                         activeTab === "dispatched-history" ? "Dispatched History" :
                           activeTab === "cutting" ? "Cutting Workstation" :
-                            activeTab === "pairing" ? "Glass Pairing" :
-                              activeTab === "dgu" ? "DGU/IGU Assembly" :
-                                activeTab === "lamination" ? "Lamination Line" :
-                                  activeTab === "finished" ? "Finished Warehouse" :
-                                    activeTab === "reports" ? "Reports & Analytics" :
-                                      activeTab === "analytics" ? "Performance Analytics" :
-                                        activeTab === "settings" ? "System Settings" : activeTab}
+                            activeTab === "polishing" ? "Polishing Workstation" :
+                              activeTab === "pairing" ? "Glass Pairing" :
+                                activeTab === "dgu" ? "DGU/IGU Assembly" :
+                                  activeTab === "lamination" ? "Lamination Line" :
+                                    activeTab === "finished" ? "Finished Warehouse" :
+                                      activeTab === "reports" ? "Reports & Analytics" :
+                                        activeTab === "analytics" ? "Performance Analytics" :
+                                          activeTab === "settings" ? "System Settings" : activeTab}
                   </span>
                 </div>
               </div>

@@ -588,143 +588,170 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       </div>
 
       {/* ── Section 1: Executive Production Summary Grid ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 mb-4">
         {/* 1. Total Production */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pis")} style={{cursor:'pointer'}}>
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pis")} style={{cursor:'pointer'}} title="View all Production Instructions & Batches">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon ppb-metric-icon-blue"><Boxes className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-blue"><Boxes className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Total Production</h3>
-              <strong>{metrics.totalItems} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
+              <strong>{metrics.totalItems} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Plant Total</span></div>
             </div>
-            <div className="ppb-sparkline">{[20,25,24,34,30,48,51,72].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#3b82f6'}} />)}</div>
           </div>
-          <div className="ppb-metric-note ppb-note-blue"><span style={{width:8,height:8,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />{metrics.totalSqm.toFixed(1)} m² • {batchRows.length} Active Batches</div>
+          <div className="ppb-metric-note ppb-note-blue" title={`${metrics.totalSqm.toFixed(1)} m² • ${batchRows.length} Active Batches`}>
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.totalSqm.toFixed(1)} m² • {batchRows.length} Batches</span>
+          </div>
         </div>
 
         {/* 2. In-Progress Quantity */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}}>
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}} title="View Active Work in Progress">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon ppb-metric-icon-blue"><Clock className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-blue"><Clock className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>In-Progress WIP</h3>
-              <strong>{metrics.inProgressCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
-              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Active</span><small>in Pipeline</small></div>
+              <strong>{metrics.inProgressCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Active</span><small>Pipeline</small></div>
             </div>
-            <div className="ppb-sparkline">{[30,40,35,50,45,60,55,70].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#3b82f6'}} />)}</div>
           </div>
-          <div className="ppb-metric-note ppb-note-blue"><span style={{width:8,height:8,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />{metrics.inProgressSqm.toFixed(1)} m² Active WIP</div>
+          <div className="ppb-metric-note ppb-note-blue" title={`${metrics.inProgressSqm.toFixed(1)} m² Active WIP Volume`}>
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.inProgressSqm.toFixed(1)} m² WIP</span>
+          </div>
         </div>
 
         {/* 3. Completed Quantity */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}}>
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}} title="View Quality Inspected / Ready for Dispatch">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Completed Units</h3>
-              <strong>{metrics.finishedCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Units</small></strong>
-              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>for Dispatch</small></div>
+              <strong>{metrics.finishedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Units</small></strong>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>Dispatch</small></div>
             </div>
-            <div className="ppb-sparkline">{[10,15,12,25,20,35,40,65].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#10b981'}} />)}</div>
           </div>
-          <div className="ppb-metric-note ppb-note-green"><span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'inline-block',flexShrink:0}} />Quality Inspected</div>
+          <div className="ppb-metric-note ppb-note-green" title="Quality Inspected - Completed and Ready for Dispatch">
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#10b981',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">Quality Inspected</span>
+          </div>
         </div>
 
         {/* 4. Pending Cutting */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}}>
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}} title="View Cutting Workstation Queue">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon ppb-metric-icon-yellow"><Scissors className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-yellow"><Scissors className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Pending Cutting</h3>
-              <strong>{metrics.pendingCuttingCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Panes</small></strong>
+              <strong>{metrics.pendingCuttingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-flat" style={{color:'#d97706', fontWeight:700}}>Awaiting</span><small>Cutting</small></div>
             </div>
-            <div className="ppb-sparkline">{[60,55,70,50,45,35,25,15].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#f59e0b'}} />)}</div>
           </div>
-          <div className="ppb-metric-note ppb-note-yellow"><span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block',flexShrink:0}} />{metrics.distinctCuttingSheets} Raw Sheets</div>
+          <div className="ppb-metric-note ppb-note-yellow" title={`${metrics.distinctCuttingSheets} Raw Glass Sheets in Queue`}>
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#f59e0b',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.distinctCuttingSheets} Raw Sheets</span>
+          </div>
         </div>
 
-        {/* 5. Rejected Items */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}}>
+        {/* 5. Pending Polishing */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("polishing")} style={{cursor:'pointer'}} title="View Polishing Workstation Queue">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-cyan"><Sparkles className="w-5 h-5" /></span>
+            <div className="ppb-metric-copy">
+              <h3>Pending Polish</h3>
+              <strong>{metrics.polishingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
+              <div className="ppb-metric-change"><span style={{color:'#0891b2', fontWeight:700}}>Awaiting</span><small>Polish</small></div>
+            </div>
+          </div>
+          <div className="ppb-metric-note ppb-note-cyan" title={`${metrics.polishingSqm.toFixed(1)} m² Polishing Volume`}>
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#06b6d4',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.polishingSqm.toFixed(1)} m² Volume</span>
+          </div>
+        </div>
+
+        {/* 6. Rejected Items */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rejection Reports & Quality Logs">
+          <div className="ppb-metric-main">
+            <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rejected Items</h3>
-              <strong>{metrics.rejectedCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Panes</small></strong>
-              <div className="ppb-metric-change"><span style={{color:'#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>Quality Yield</small></div>
+              <strong>{metrics.rejectedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Panes</small></strong>
+              <div className="ppb-metric-change"><span style={{color: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>{metrics.rejectedCount === 0 ? "Quality" : "Audit"}</small></div>
             </div>
-            <div className="ppb-sparkline">{[5,10,2,8,12,5,3,6].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#ef4444'}} />)}</div>
           </div>
-          <div className="ppb-metric-note ppb-note-red"><span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block',flexShrink:0}} />{metrics.rejectedCount === 0 ? "No rejection today" : "Rejection logged"}</div>
+          <div className="ppb-metric-note ppb-note-red" title={metrics.rejectedCount === 0 ? "No rejection today - Zero Defects" : `${metrics.rejectedCount} items rejected`}>
+            <span style={{width:6,height:6,borderRadius:'50%',background: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.rejectedCount === 0 ? "No rejection today" : "Rejection logged"}</span>
+          </div>
         </div>
 
-        {/* 6. Rework Items */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}}>
+        {/* 7. Rework Items */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rework Routing & History">
           <div className="ppb-metric-main">
-            <span className="ppb-metric-icon" style={{background: 'linear-gradient(135deg, #a855f7, #7e22ce)', color: '#fff'}}><RotateCw className="w-6 h-6" /></span>
+            <span className="ppb-metric-icon ppb-metric-icon-purple"><RotateCw className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rework Items</h3>
-              <strong>{metrics.reworkCount} <small style={{fontSize:'12px',color:'#8099b4'}}>Items</small></strong>
-              <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>Active</span><small>Re-routing</small></div>
+              <strong>{metrics.reworkCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Items</small></strong>
+              <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>{metrics.reworkCount === 0 ? "Normal" : "Active"}</span><small>Routing</small></div>
             </div>
-            <div className="ppb-sparkline">{[8,15,10,20,12,18,10,25].map((h,i) => <i key={i} style={{height:`${h}%`, background:'#a855f7'}} />)}</div>
           </div>
-          <div className="ppb-metric-note" style={{color:'#7e22ce', background:'#faf5ff', borderColor:'#f3e8ff'}}><span style={{width:8,height:8,borderRadius:'50%',background:'#a855f7',display:'inline-block',flexShrink:0}} />Secondary Route Active</div>
+          <div className="ppb-metric-note ppb-note-purple" title="Secondary Route Activity">
+            <span style={{width:6,height:6,borderRadius:'50%',background:'#a855f7',display:'inline-block',flexShrink:0}} />
+            <span className="truncate">{metrics.reworkCount === 0 ? "No active rework" : "Secondary Route Active"}</span>
+          </div>
         </div>
       </div>
 
-            
       {/* ── Section 2 & 3: Horizontal Queues ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         {/* Section 2: Specialty Glass */}
-        <section className="ppb-panel">
+        <section className="ppb-panel h-full flex flex-col justify-between">
           <div className="ppb-panel-heading">
             <div><Sparkles className="ppb-heading-icon" size={20} /><h3>Specialty Glass Assembly</h3></div>
             <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Automated 1+1 Pairing</div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
-              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={22} /></span>
-              <div><strong style={{fontSize:'12px'}}>DGU / IGU Units</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.dguTotalUnits}</b> Units Assembly</span></div>
+              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={20} /></span>
+              <div><strong style={{fontSize:'11.5px'}}>DGU / IGU Units</strong><span className="ppb-count"><b>{metrics.dguTotalUnits}</b> Units Assembly</span></div>
             </div>
             <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
-              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={22} /></span>
-              <div><strong style={{fontSize:'12px'}}>DLGU Multi-Layer</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.dlguTotalUnits}</b> Units Processed</span></div>
+              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
+              <div><strong style={{fontSize:'11.5px'}}>DLGU Multi-Layer</strong><span className="ppb-count"><b>{metrics.dlguTotalUnits}</b> Units Processed</span></div>
             </div>
             <div className="ppb-queue-tile ppb-queue-tile-amber" onClick={() => onNavigateTab("lamination")}>
-              <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={22} /></span>
-              <div><strong style={{fontSize:'12px'}}>Lamination Line</strong><span className="ppb-count" style={{fontSize:'11px'}}><b>{metrics.lamTotalUnits}</b> Pairs Autoclave</span></div>
+              <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={20} /></span>
+              <div><strong style={{fontSize:'11.5px'}}>Lamination Line</strong><span className="ppb-count"><b>{metrics.lamTotalUnits}</b> Pairs Autoclave</span></div>
             </div>
           </div>
         </section>
 
         {/* Section 3: Stage-Wise Workflows */}
-        <section className="ppb-panel">
+        <section className="ppb-panel h-full flex flex-col justify-between">
           <div className="ppb-panel-heading">
             <div><Activity className="ppb-heading-icon" size={20} /><h3>Stage-Wise Workflows</h3></div>
             <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Cutting ➔ Polishing ➔ Assembly ➔ Dispatch</div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
-              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>1. Cutting</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.cuttingCount}</b> Panes</span></div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
+              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={14} /></span>
+              <div><strong>1. Cutting</strong><span className="ppb-count"><b>{metrics.cuttingCount}</b> Panes</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => onNavigateTab("polishing")} style={{cursor: 'pointer'}}>
-              <span className="ppb-queue-icon ppb-queue-icon-cyan text-cyan-600 bg-cyan-50"><Sparkles size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>2. Polishing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.polishingCount}</b> Panes</span></div>
+            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-cyan" onClick={() => onNavigateTab("polishing")} style={{cursor: 'pointer'}}>
+              <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={14} /></span>
+              <div><strong>2. Polish</strong><span className="ppb-count"><b>{metrics.polishingCount}</b> Panes</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
-              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>3. Pairing</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.pairingCount}</b> Panes</span></div>
+            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
+              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={14} /></span>
+              <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Panes</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
-              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>4. Assembly</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
+            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
+              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={14} /></span>
+              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.dguCount + metrics.laminationCount}</b> Units</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
-              <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={18} /></span>
-              <div><strong style={{fontSize:'11px'}}>5. Dispatch</strong><span className="ppb-count" style={{fontSize:'10px'}}><b>{metrics.finishedCount}</b> Ready</span></div>
+            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
+              <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={14} /></span>
+              <div><strong>5. Dispatch</strong><span className="ppb-count"><b>{metrics.finishedCount}</b> Ready</span></div>
             </div>
           </div>
         </section>
@@ -769,22 +796,29 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             )}
           </div>
 
-          <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 flex-wrap gap-2 pt-1">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Completed: {metrics.finishedCount} ({metrics.completionPercent}%)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-500" /> In Progress: {metrics.inProgressCount} ({metrics.inProgressPercent}%)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> Pending: {metrics.pendingCuttingCount} ({metrics.pendingPercent}%)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> Rejects: {metrics.rejectedCount} ({metrics.rejectedPercent}%)
-            </span>
-            <span className="font-mono text-purple-700">
-              Total Area: {metrics.totalSqm.toFixed(1)} m²
-            </span>
+          <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 flex-wrap gap-2 pt-1">
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
+                <span>Completed: <strong className="text-slate-800">{metrics.finishedCount}</strong> ({metrics.completionPercent}%)</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 flex-shrink-0" />
+                <span>In Progress: <strong className="text-slate-800">{metrics.inProgressCount}</strong> ({metrics.inProgressPercent}%)</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" />
+                <span>Pending: <strong className="text-slate-800">{metrics.pendingCuttingCount}</strong> ({metrics.pendingPercent}%)</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 flex-shrink-0" />
+                <span>Rejects: <strong className="text-slate-800">{metrics.rejectedCount}</strong> ({metrics.rejectedPercent}%)</span>
+              </span>
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-900 font-mono text-xs">
+              <span className="text-[10px] font-sans font-bold text-indigo-500 uppercase tracking-wider">Total Area:</span>
+              <span className="font-black text-indigo-700">{metrics.totalSqm.toFixed(1)} m²</span>
+            </div>
           </div>
         </div>
 
