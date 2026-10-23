@@ -2288,41 +2288,36 @@ export default function Index() {
                         <div className="ppb-queue-list">
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => setActiveTab("cutting")}>
-                              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={22} /></span>
+                              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={20} /></span>
                               <div><strong>Cutting Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Items</span></div>
-                              <span className="ppb-queue-badge ppb-queue-badge-blue">{effectiveStats.pendingCutting ?? 0}</span>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => setActiveTab("polishing")}>
-                              <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={22} /></span>
+                              <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={20} /></span>
                               <div><strong>Polishing Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Panes</span></div>
-                              <span className="ppb-queue-badge ppb-queue-badge-cyan">{effectiveStats.pendingPolishing ?? 0}</span>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => setActiveTab("dgu")}>
-                              <span className="ppb-queue-icon ppb-queue-icon-green"><Boxes size={22} /></span>
+                              <span className="ppb-queue-icon ppb-queue-icon-green"><Boxes size={20} /></span>
                               <div><strong>DGU Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingDGU ?? 0}</b> Units</span></div>
-                              <span className="ppb-queue-badge ppb-queue-badge-green">{effectiveStats.pendingDGU ?? 0}</span>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => setActiveTab("lamination")}>
-                              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={22} /></span>
+                              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
                               <div><strong>Lamination Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Items</span></div>
-                              <span className="ppb-queue-badge ppb-queue-badge-purple">{effectiveStats.pendingLamination ?? 0}</span>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => setActiveTab("finished")}>
-                              <span className="ppb-queue-icon ppb-queue-icon-emerald"><CheckCircle size={22} /></span>
+                              <span className="ppb-queue-icon ppb-queue-icon-emerald"><CheckCircle size={20} /></span>
                               <div><strong>Finished Warehouse</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Items</span></div>
-                              <span className="ppb-queue-badge ppb-queue-badge-emerald">{effectiveStats.finishedItems ?? 0}</span>
                             </div>
                           </div>
                         </div>
