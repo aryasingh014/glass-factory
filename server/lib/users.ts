@@ -11,6 +11,7 @@ export interface User {
   name: string;
   role: UserRole;
   assignedStages?: ProductionStage[];
+  customPermissions?: Partial<RolePermissions>;
   passwordHash: string;
   salt: string;
   isActive: boolean;
@@ -25,6 +26,7 @@ export interface UserProfile {
   name: string;
   role: UserRole;
   assignedStages?: ProductionStage[];
+  customPermissions?: Partial<RolePermissions>;
 }
 
 const DATA_DIR = path.resolve(process.cwd(), "server/data");
@@ -51,8 +53,14 @@ export function validatePassword(user: User, passwordAttempt: string): boolean {
   }
 }
 
-// Initial pre-seeded credentials
+// Initial pre-seeded credentials for Admin, Supervisor, and Workstation Operators
 const adminCreds = hashPassword("Admin@123");
+const supervisorCreds = hashPassword("Supervisor@123");
+const cuttingCreds = hashPassword("Cutting@123");
+const polishingCreds = hashPassword("Polish@123");
+const dguCreds = hashPassword("Dgu@123");
+const laminationCreds = hashPassword("Lami@123");
+const dispatchCreds = hashPassword("Dispatch@123");
 
 const DEFAULT_USERS: User[] = [
   {
@@ -64,6 +72,78 @@ const DEFAULT_USERS: User[] = [
     assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
     passwordHash: adminCreds.hash,
     salt: adminCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-supervisor-01",
+    username: "supervisor",
+    email: "supervisor@sejalglass.com",
+    name: "Rajesh Sharma (Plant Supervisor)",
+    role: "Supervisor",
+    assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
+    passwordHash: supervisorCreds.hash,
+    salt: supervisorCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-op-cutting-01",
+    username: "op_cutting",
+    email: "cutting@sejalglass.com",
+    name: "Deepa K (Cutting & Pairing Operator)",
+    role: "Operator",
+    assignedStages: ["Cutting", "Pairing"],
+    passwordHash: cuttingCreds.hash,
+    salt: cuttingCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-op-polishing-01",
+    username: "op_polishing",
+    email: "polishing@sejalglass.com",
+    name: "Manoj Verma (Edge Polishing Operator)",
+    role: "Operator",
+    assignedStages: ["Polishing"],
+    passwordHash: polishingCreds.hash,
+    salt: polishingCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-op-dgu-01",
+    username: "op_dgu",
+    email: "dgu@sejalglass.com",
+    name: "Suresh Patel (DGU Assembly Operator)",
+    role: "Operator",
+    assignedStages: ["DGU"],
+    passwordHash: dguCreds.hash,
+    salt: dguCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-op-lamination-01",
+    username: "op_lamination",
+    email: "lamination@sejalglass.com",
+    name: "Kiran Rathore (Lamination Autoclave Operator)",
+    role: "Operator",
+    assignedStages: ["Lamination"],
+    passwordHash: laminationCreds.hash,
+    salt: laminationCreds.salt,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "usr-op-dispatch-01",
+    username: "op_dispatch",
+    email: "dispatch@sejalglass.com",
+    name: "Amit Kumar (Warehouse & Dispatch Operator)",
+    role: "Operator",
+    assignedStages: ["Finished", "Dispatched"],
+    passwordHash: dispatchCreds.hash,
+    salt: dispatchCreds.salt,
     isActive: true,
     createdAt: new Date().toISOString(),
   },
@@ -82,17 +162,9 @@ export function loadUsersFromDisk(): void {
       if (content.trim()) {
         const loaded: User[] = JSON.parse(content);
         if (Array.isArray(loaded) && loaded.length > 0) {
-          // Filter out legacy dummy hardcoded operator accounts
-          const REMOVED_USERNAMES = new Set([
-            "operator_cutting",
-            "operator_polishing",
-            "operator_dgu",
-            "operator_lamination",
-            "operator_dispatch",
-          ]);
-          const cleaned = loaded.filter((u) => !REMOVED_USERNAMES.has(u.username.toLowerCase()));
+          const cleaned = [...loaded];
 
-          // Ensure default Admin user exists and has assigned stages
+          // Ensure default Admin, Supervisor, and Stage Operator users exist and have assigned stages
           for (const def of DEFAULT_USERS) {
             const exists = cleaned.find(
               (u) => u.username.toLowerCase() === def.username.toLowerCase() || u.id === def.id
@@ -123,8 +195,17 @@ export function saveUsersToDisk(): void {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     const tempFile = `${USERS_FILE}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(usersDatabase, null, 2), "utf-8");
-    fs.renameSync(tempFile, USERS_FILE);
+    const serialized = JSON.stringify(usersDatabase, null, 2);
+    try {
+      fs.writeFileSync(tempFile, serialized, "utf-8");
+      fs.renameSync(tempFile, USERS_FILE);
+    } catch {
+      // Fallback for Windows file locks
+      fs.writeFileSync(USERS_FILE, serialized, "utf-8");
+      try {
+        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      } catch {}
+    }
   } catch (err) {
     logger.error("Error saving users to disk", { err });
   }
@@ -221,6 +302,7 @@ export function getUserProfile(user: User): UserProfile {
     name: user.name,
     role: user.role,
     assignedStages: user.assignedStages,
+    customPermissions: user.customPermissions,
   };
 }
 
@@ -232,10 +314,25 @@ export function getAllUserRecords(): UserRecord[] {
     name: u.name,
     role: u.role,
     assignedStages: u.assignedStages,
+    customPermissions: u.customPermissions,
     isActive: u.isActive !== false,
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt,
   }));
+}
+
+export function getUserEffectivePermissions(user: User): RolePermissions {
+  const base = ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.Operator;
+  if (!user.customPermissions) return base;
+
+  return {
+    ...base,
+    ...user.customPermissions,
+    allowedModules: Array.isArray(user.customPermissions.allowedModules)
+      ? user.customPermissions.allowedModules
+      : base.allowedModules,
+    role: user.role,
+  };
 }
 
 export function createUser(data: {
@@ -288,6 +385,7 @@ export function updateUser(
     name: string;
     role: UserRole;
     assignedStages?: ProductionStage[];
+    customPermissions?: Partial<RolePermissions> | null;
     password?: string;
     isActive?: boolean;
   }>
@@ -317,6 +415,13 @@ export function updateUser(
   if (updates.role) user.role = updates.role;
   if (updates.assignedStages) user.assignedStages = updates.assignedStages;
   if (typeof updates.isActive === "boolean") user.isActive = updates.isActive;
+  if (updates.customPermissions !== undefined) {
+    if (updates.customPermissions === null) {
+      delete user.customPermissions;
+    } else {
+      user.customPermissions = updates.customPermissions;
+    }
+  }
 
   if (updates.password && updates.password.trim().length > 0) {
     const { hash, salt } = hashPassword(updates.password.trim());
@@ -333,9 +438,108 @@ export function updateUser(
     name: user.name,
     role: user.role,
     assignedStages: user.assignedStages,
+    customPermissions: user.customPermissions,
     isActive: user.isActive,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
+  };
+}
+
+export function updateUserPermission(userId: string, key: string, value: boolean): { user: UserRecord; permissions: RolePermissions } {
+  const user = findUserById(userId);
+  if (!user) throw new Error("User not found.");
+
+  const base = ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.Operator;
+  if (!user.customPermissions) {
+    user.customPermissions = {
+      ...base,
+      allowedModules: [...(base.allowedModules || [])],
+    };
+  }
+
+  if (key.startsWith("module:")) {
+    const moduleName = key.replace("module:", "");
+    const current = user.customPermissions.allowedModules ? [...user.customPermissions.allowedModules] : [...(base.allowedModules || [])];
+    if (value && !current.includes(moduleName)) {
+      current.push(moduleName);
+    } else if (!value) {
+      const idx = current.indexOf(moduleName);
+      if (idx > -1) current.splice(idx, 1);
+    }
+    user.customPermissions.allowedModules = current;
+
+    // Sync assignedStages if a workstation module is toggled
+    const stageMap: Record<string, ProductionStage> = {
+      cutting: "Cutting",
+      polishing: "Polishing",
+      pairing: "Pairing",
+      dgu: "DGU",
+      lamination: "Lamination",
+    };
+    if (stageMap[moduleName]) {
+      const stg = stageMap[moduleName];
+      const stages = new Set(user.assignedStages || []);
+      if (value) stages.add(stg);
+      else stages.delete(stg);
+      user.assignedStages = Array.from(stages);
+    }
+  } else {
+    (user.customPermissions as any)[key] = value;
+    if (key === "canDispatch") {
+      const stages = new Set(user.assignedStages || []);
+      if (value) {
+        stages.add("Finished");
+        stages.add("Dispatched");
+      } else {
+        stages.delete("Finished");
+        stages.delete("Dispatched");
+      }
+      user.assignedStages = Array.from(stages);
+    }
+  }
+
+  saveUsersToDisk();
+
+  const effective = getUserEffectivePermissions(user);
+  return {
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      assignedStages: user.assignedStages,
+      customPermissions: user.customPermissions,
+      isActive: user.isActive !== false,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    },
+    permissions: effective,
+  };
+}
+
+export function resetUserPermissions(userId: string): { user: UserRecord; permissions: RolePermissions } {
+  const user = findUserById(userId);
+  if (!user) throw new Error("User not found.");
+
+  delete user.customPermissions;
+  saveUsersToDisk();
+
+  const effective = getUserEffectivePermissions(user);
+  return {
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      assignedStages: user.assignedStages,
+      customPermissions: undefined,
+      isActive: user.isActive !== false,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    },
+    permissions: effective,
   };
 }
 

@@ -459,23 +459,7 @@ export default function LoginPage() {
                 </Button>
               </form>
 
-              {/* ── Quick Admin Login ── */}
-              <div className="pt-3 mt-1 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier("admin");
-                    setPassword("Admin@123");
-                  }}
-                  className="w-full px-3 py-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs font-bold text-slate-700 hover:text-blue-700 transition-colors flex items-center justify-between cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                    <span>Fill Administrator Credentials</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-mono">admin • Admin@123</span>
-                </button>
-              </div>
+
 
               {/* ── Card Footer ── */}
               <div className="pt-3 mt-3 border-t border-slate-100 text-[10.5px] text-slate-400 flex items-center justify-between font-medium">

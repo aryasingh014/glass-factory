@@ -76,6 +76,7 @@ import {
   exportPartialDispatchNoteToExcel,
 } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
+import { WorkstationStageBanner } from "./WorkstationStageBanner";
 
 interface ProductionStageViewProps {
   stage: ProductionStage;
@@ -1641,6 +1642,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       ? stageRows.length
       : stageItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
+  const totalStageSqm = stageItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+
   const finishedDlguCount = useMemo(() => stageRows.filter((r) => r.glassCategory === "DLGU").length, [stageRows]);
   const finishedDguCount = useMemo(() => stageRows.filter((r) => r.glassCategory === "DGU").length, [stageRows]);
   const finishedLamCount = useMemo(() => stageRows.filter((r) => r.glassCategory === "Laminated").length, [stageRows]);
@@ -2364,6 +2367,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         onReject={onReject}
         onRework={onRework}
         onPrintSticker={onPrintSticker}
+        onNavigateTab={onNavigateTab}
       />
     );
   }
@@ -2377,6 +2381,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
     return (
       <div className="space-y-4 animate-in fade-in duration-200">
+        {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
+        <WorkstationStageBanner
+          stage="Cutting"
+          totalItems={totalCuttingPending}
+          totalSqm={totalCuttingSqm}
+          onNavigateTab={onNavigateTab}
+        />
+
         {/* ── Filter Bar with FINISH Tabs (Clear / Colour / All) & Search ── */}
         <div className="ppb-panel bg-white border border-slate-100 p-5 shadow-[0_4px_20px_rgb(22,128,245,0.04)] space-y-4 mb-4">
           {/* Top Row: Queue Tabs & Finish Filter Tabs (Left) & Export Batches Button (Right) */}
@@ -2952,6 +2964,15 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
      ───────────────────────────────────────────────────────────────────────────── */
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
+      {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
+      <WorkstationStageBanner
+        stage={stage}
+        totalItems={totalStagePieces}
+        totalSqm={totalStageSqm}
+        readyCount={stage === "DGU" ? dguStandardCount + dguDlguCount : undefined}
+        onNavigateTab={onNavigateTab}
+      />
+
       {/* ── Cutting Batch Breadcrumb Header ── */}
       {stage === "Cutting" && selectedBatchId && (
         <div className="bg-white border-2 border-blue-300 rounded-2xl p-3.5 shadow-lg flex items-center justify-between flex-wrap gap-3">

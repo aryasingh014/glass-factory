@@ -224,6 +224,7 @@ export function createServer() {
   apiV1.post("/auth/heartbeat", handleHeartbeat);
   apiV1.get("/auth/permissions", handleGetPermissions);
   apiV1.put("/auth/permissions", requireRole(["Admin"]), handleUpdatePermissions);
+  apiV1.post("/auth/permissions", requireRole(["Admin"]), handleUpdatePermissions);
   apiV1.get("/auth/sessions", requireRole(["Admin"]), handleGetSessions);
   apiV1.delete("/auth/sessions/:sessionId", requireRole(["Admin"]), handleRevokeSession);
   apiV1.get("/auth/users", requireRole(["Admin", "Supervisor"]), handleGetUsers);

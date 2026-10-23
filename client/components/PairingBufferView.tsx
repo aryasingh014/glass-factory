@@ -45,6 +45,7 @@ import { toast } from "sonner";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
 import { exportStageWipToExcel } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
+import { WorkstationStageBanner } from "./WorkstationStageBanner";
 
 interface PairingBufferViewProps {
   items: GlassItem[];
@@ -55,6 +56,7 @@ interface PairingBufferViewProps {
   onReject: (item: GlassItem) => void;
   onRework: (item: GlassItem) => void;
   onPrintSticker: (item: GlassItem) => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 export interface ConsolidatedPositionRow {
@@ -104,6 +106,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   onReject,
   onRework,
   onPrintSticker,
+  onNavigateTab,
 }) => {
   // PI / Batch Filter: "ALL" or specific PI ID / PI number
   const [selectedPIFilter, setSelectedPIFilter] = useState<string>("ALL");
@@ -967,8 +970,21 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
   const selectedPIObject = pis.find((p) => p.id === selectedPIFilter || p.piNumber === selectedPIFilter);
 
+  const totalBufferItems = items.filter((i) => i.currentStage === "Pairing").length;
+  const totalBufferSqm = items.filter((i) => i.currentStage === "Pairing").reduce((acc, i) => acc + (i.sqm || 0), 0);
+  const readyPairsCount = filteredRows.reduce((acc, r) => acc + (r.readyPairsCount || 0), 0);
+
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
+      {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
+      <WorkstationStageBanner
+        stage="Pairing"
+        totalItems={totalBufferItems}
+        totalSqm={totalBufferSqm}
+        readyCount={readyPairsCount}
+        onNavigateTab={onNavigateTab}
+      />
+
       {/* ── Page Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-4 ppb-panel bg-gradient-to-br from-white/90 to-white/50 backdrop-blur-2xl border-white p-6 rounded-3xl shadow-[0_10px_40px_rgb(22,128,245,0.08)] mb-5 relative overflow-hidden ring-1 ring-slate-900/5">
         <div className="flex items-center gap-3">

@@ -14,6 +14,9 @@ import {
   deleteUser,
   updateUserLastLogin,
   ROLE_PERMISSIONS,
+  getUserEffectivePermissions,
+  updateUserPermission,
+  resetUserPermissions,
   createPasswordResetOtp,
   verifyAndResetPassword,
 } from "../lib/users";
@@ -71,7 +74,7 @@ export const handleLogin: RequestHandler = (req, res) => {
     sessionId: session.sessionId,
     user: profile,
     role: profile.role,
-    permissions: ROLE_PERMISSIONS[profile.role],
+    permissions: getUserEffectivePermissions(user),
     username: profile.username,
     name: profile.name,
     message: `Welcome back, ${profile.name}!`,
@@ -124,7 +127,7 @@ export const handleGetCurrentUser: RequestHandler = (req, res) => {
   const profile = getUserProfile(user);
   res.json({
     user: profile,
-    permissions: ROLE_PERMISSIONS[profile.role] || ROLE_PERMISSIONS.Operator,
+    permissions: getUserEffectivePermissions(user),
   });
 };
 
@@ -441,11 +444,49 @@ export const handleGetPermissions: RequestHandler = (_req, res) => {
 };
 
 /**
- * Update role permissions matrix dynamically (Admin only)
+ * Update role permissions matrix dynamically or customize specific user permissions (Admin only)
  */
 export const handleUpdatePermissions: RequestHandler = (req, res) => {
-  const { role, key, value, permissions } = req.body || {};
+  const { userId, resetUser, role, key, value, permissions } = req.body || {};
 
+  // Case 1: Granular user-specific permission overrides
+  if (userId) {
+    try {
+      if (resetUser) {
+        const result = resetUserPermissions(userId);
+        res.json({
+          success: true,
+          message: `Reset permissions to ${result.user.role} role defaults for ${result.user.name}.`,
+          user: result.user,
+          userPermissions: result.permissions,
+          rolePermissions: ROLE_PERMISSIONS,
+          permissions: ROLE_PERMISSIONS,
+        });
+        return;
+      }
+
+      if (key && typeof value === "boolean") {
+        const result = updateUserPermission(userId, key, value);
+        res.json({
+          success: true,
+          message: `Updated permission '${key}' for ${result.user.name}.`,
+          user: result.user,
+          userPermissions: result.permissions,
+          rolePermissions: ROLE_PERMISSIONS,
+          permissions: ROLE_PERMISSIONS,
+        });
+        return;
+      }
+
+      res.status(400).json({ error: "Invalid user permission update request." });
+      return;
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "Failed to update user permissions." });
+      return;
+    }
+  }
+
+  // Case 2: Base role-level permissions matrix
   if (!role || (role !== "Supervisor" && role !== "Operator")) {
     res.status(400).json({ error: "Only Supervisor and Operator permissions can be customized. Admin permissions are locked." });
     return;
@@ -475,6 +516,7 @@ export const handleUpdatePermissions: RequestHandler = (req, res) => {
     success: true,
     message: `Updated RBAC permissions for ${role}`,
     permissions: ROLE_PERMISSIONS,
+    rolePermissions: ROLE_PERMISSIONS,
   });
 };
 

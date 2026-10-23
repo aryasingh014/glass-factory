@@ -76,6 +76,9 @@ export function SettingsView() {
   // Role Permissions Matrix
   const [permissionsMatrix, setPermissionsMatrix] = useState<Record<UserRole, RolePermissions> | null>(null);
 
+  // Granular User Permission Customization
+  const [selectedUserForPermsId, setSelectedUserForPermsId] = useState<string | null>(null);
+
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
 
   // Fetch users
@@ -216,6 +219,169 @@ export function SettingsView() {
       toast.error("Error updating permissions.");
     }
   };
+
+  const getUserPermissionValue = (user: UserRecord, permKey: string): { effective: boolean; isOverridden: boolean; roleDefault: boolean } => {
+    const basePerm = permissionsMatrix?.[user.role];
+    let roleDefault = false;
+    if (user.role === "Admin") {
+      roleDefault = true;
+    } else if (basePerm) {
+      if (permKey.startsWith("module:")) {
+        const mod = permKey.replace("module:", "");
+        roleDefault = basePerm.allowedModules?.includes(mod) ?? false;
+      } else {
+        roleDefault = Boolean((basePerm as any)[permKey]);
+      }
+    }
+
+    if (user.role === "Admin") {
+      return { effective: true, isOverridden: false, roleDefault: true };
+    }
+
+    const custom = user.customPermissions;
+    let isOverridden = false;
+    let effective = roleDefault;
+
+    if (custom) {
+      if (permKey.startsWith("module:")) {
+        const mod = permKey.replace("module:", "");
+        if (Array.isArray(custom.allowedModules)) {
+          isOverridden = true;
+          effective = custom.allowedModules.includes(mod);
+        }
+      } else if (permKey in custom) {
+        isOverridden = true;
+        effective = Boolean((custom as any)[permKey]);
+      }
+    }
+
+    // Workstation assigned stages fallback if allowedModules was not explicitly overridden
+    if (!isOverridden && user.role === "Operator" && user.assignedStages && user.assignedStages.length > 0) {
+      if (permKey.startsWith("module:")) {
+        const mod = permKey.replace("module:", "");
+        const stageMap: Record<string, string> = {
+          cutting: "Cutting",
+          polishing: "Polishing",
+          pairing: "Pairing",
+          dgu: "DGU",
+          lamination: "Lamination",
+        };
+        const targetStage = stageMap[mod];
+        if (targetStage) {
+          effective = user.assignedStages.includes(targetStage as ProductionStage);
+        }
+      } else if (permKey === "canDispatch") {
+        effective = user.assignedStages.some((s) => ["finished", "dispatched", "dispatch"].includes(s.toLowerCase()));
+      }
+    }
+
+    return { effective, isOverridden, roleDefault };
+  };
+
+  const handleToggleUserPermission = async (user: UserRecord, permKey: string, currentVal: boolean) => {
+    if (!isAdmin) {
+      toast.error("Only Administrators can customize user permissions.");
+      return;
+    }
+    if (user.role === "Admin") {
+      toast.info("Super Administrator permissions cannot be restricted.");
+      return;
+    }
+
+    const newVal = !currentVal;
+
+    // Optimistically update users list
+    setUsers((prevUsers) =>
+      prevUsers.map((u) => {
+        if (u.id !== user.id) return u;
+        const currentCustom = { ...(u.customPermissions || {}) };
+        if (permKey.startsWith("module:")) {
+          const mod = permKey.replace("module:", "");
+          const baseModules = permissionsMatrix?.[u.role]?.allowedModules || [];
+          const existingModules = Array.isArray(currentCustom.allowedModules)
+            ? [...currentCustom.allowedModules]
+            : [...baseModules];
+          if (newVal && !existingModules.includes(mod)) existingModules.push(mod);
+          else if (!newVal) {
+            const idx = existingModules.indexOf(mod);
+            if (idx !== -1) existingModules.splice(idx, 1);
+          }
+          currentCustom.allowedModules = existingModules;
+        } else {
+          (currentCustom as any)[permKey] = newVal;
+        }
+        return { ...u, customPermissions: currentCustom };
+      })
+    );
+
+    try {
+      const res = await fetch("/api/auth/permissions", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          key: permKey,
+          value: newVal,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setUsers((prev) => prev.map((u) => (u.id === data.user.id ? data.user : u)));
+        }
+        toast.success(`Updated permission for ${user.name}`);
+      } else {
+        fetchUsers();
+        toast.error("Failed to update user permission.");
+      }
+    } catch {
+      fetchUsers();
+      toast.error("Error updating user permission.");
+    }
+  };
+
+  const handleResetUserPermissions = async (user: UserRecord) => {
+    if (!isAdmin) return;
+    if (!window.confirm(`Reset all custom permissions for ${user.name} back to standard ${user.role} defaults?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/permissions", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          resetUser: true,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setUsers((prev) => prev.map((u) => (u.id === data.user.id ? data.user : u)));
+        }
+        toast.success(`Reset permissions to ${user.role} defaults for ${user.name}`);
+      } else {
+        toast.error("Failed to reset permissions.");
+      }
+    } catch {
+      toast.error("Error resetting permissions.");
+    }
+  };
+
+  const userForPerms =
+    users.find((u) => u.id === selectedUserForPermsId) ||
+    users.find((u) => u.role !== "Admin") ||
+    users[0] ||
+    null;
 
   useEffect(() => {
     fetchUsers();
@@ -554,6 +720,12 @@ export function SettingsView() {
                                 }`}>
                                   {u.role}
                                 </span>
+                                {u.customPermissions && Object.keys(u.customPermissions).length > 0 && (
+                                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-indigo-50 border border-indigo-200 text-indigo-700 whitespace-nowrap inline-flex items-center gap-0.5" title="User has custom permission overrides">
+                                    <Zap className="w-2.5 h-2.5 fill-indigo-500 text-indigo-500" />
+                                    Custom RBAC
+                                  </span>
+                                )}
                               </td>
                               <td className="px-3 py-2 whitespace-nowrap">
                                 <div className="flex flex-wrap gap-1 items-center max-w-[220px]">
@@ -587,6 +759,17 @@ export function SettingsView() {
                               </td>
                               <td className="px-3 py-2 whitespace-nowrap text-right">
                                 <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedUserForPermsId(u.id);
+                                      setActiveTab("security");
+                                      toast.info(`Configuring granular permissions for ${u.name}`);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer"
+                                    title={`Customize RBAC permissions for ${u.name}`}
+                                  >
+                                    <Shield className="w-3 h-3 text-indigo-500" />
+                                  </button>
                                   <button
                                     onClick={() => openEditModal(u)}
                                     className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors cursor-pointer"
@@ -705,121 +888,217 @@ export function SettingsView() {
                 </div>
               </div>
 
-              {/* ═══ Interactive Module Access Permission Matrix ═══ */}
+              {/* ═══ Interactive User Access Permission Matrix ═══ */}
               <div className="pt-3.5 border-t border-slate-200/60">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
                   <div>
-                    <h2 className="text-sm font-extrabold text-slate-900 tracking-tight">Module Access Permission Matrix</h2>
-                    <p className="text-[10.5px] text-slate-500 font-medium">
-                      Click any standard role permission cell below to grant or revoke module access. Super Administrator permissions are locked to full system access.
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-extrabold text-slate-900 tracking-tight">Module Access Permission Matrix</h2>
+                      <span className="px-2 py-0.5 rounded-full text-[9.5px] font-black uppercase tracking-wider border shadow-2xs bg-indigo-50 text-indigo-700 border-indigo-200">
+                        Interactive User Access Control
+                      </span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-500 font-medium mt-0.5">
+                      Select any user (User A vs. User B) below to configure and customize their individual module access.
                     </p>
                   </div>
-                  <div className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/80 text-slate-700 text-[10px] font-black uppercase tracking-wider shadow-2xs self-start sm:self-auto shrink-0">
-                    Interactive RBAC Governance
-                  </div>
                 </div>
 
-                <div className="bg-white rounded-lg border border-slate-200/80 shadow-2xs overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50/80">
-                          <th className="px-3 py-2 font-extrabold text-slate-600 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[300px]">
-                            System Module
-                          </th>
-                          <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">
-                            <div className="font-black text-slate-900 text-xs">Super Administrator</div>
-                            <div className="text-[8.5px] text-slate-400 font-mono font-medium tracking-wider">SUPER_ADMIN</div>
-                          </th>
-                          <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">
-                            <div className="font-black text-slate-900 text-xs">Production Supervisor</div>
-                            <div className="text-[8.5px] text-slate-400 font-mono font-medium tracking-wider">SUPERVISOR</div>
-                          </th>
-                          <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">
-                            <div className="font-black text-slate-900 text-xs">Workstation Operator</div>
-                            <div className="text-[8.5px] text-slate-400 font-mono font-medium tracking-wider">OPERATOR</div>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {SYSTEM_MODULES.map((mod) => {
-                          const supervisorAllowed = hasPermission("Supervisor", mod.key);
-                          const operatorAllowed = hasPermission("Operator", mod.key);
+                <div className="space-y-3 animate-in fade-in duration-200">
+                    {/* User Selection & Overview Bar */}
+                    <div className="p-3 bg-gradient-to-r from-indigo-50/80 via-blue-50/50 to-slate-50 border border-indigo-200/80 rounded-xl shadow-2xs">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        
+                        {/* User Picker Dropdown */}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <label className="text-xs font-extrabold text-slate-800 whitespace-nowrap flex items-center gap-1.5">
+                            <UserCheck className="w-4 h-4 text-indigo-600" />
+                            Select User to Customize:
+                          </label>
+                          <select
+                            value={userForPerms?.id || ""}
+                            onChange={(e) => setSelectedUserForPermsId(e.target.value)}
+                            className="h-8.5 px-3 py-1 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-slate-900 shadow-2xs focus:ring-2 focus:ring-indigo-500 focus:outline-none min-w-[280px]"
+                          >
+                            {users.map((u) => {
+                              const hasOverrides = u.customPermissions && Object.keys(u.customPermissions).length > 0;
+                              return (
+                                <option key={u.id} value={u.id}>
+                                  {u.name} (@{u.username}) — {u.role} {hasOverrides ? "★ [Custom RBAC]" : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
 
-                          return (
-                            <tr key={mod.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="px-3 py-1.5 whitespace-nowrap">
-                                <div className="font-bold text-slate-900 text-[11.5px]">{mod.name}</div>
-                                <div className="text-[9.5px] text-slate-400 font-medium">{mod.category}</div>
-                              </td>
+                        {/* Selected User Info & Actions */}
+                        {userForPerms && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {/* Base Role Badge */}
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-lg border border-slate-200 shadow-2xs text-xs font-bold text-slate-800">
+                              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Base Role:</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
+                                userForPerms.role === "Admin" ? "bg-purple-50 text-purple-700 border border-purple-200" :
+                                userForPerms.role === "Supervisor" ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              }`}>
+                                {userForPerms.role}
+                              </span>
+                            </div>
 
-                              {/* Super Administrator: Locked full access */}
-                              <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                                <div 
-                                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold shadow-2xs select-none"
-                                  title="Administrator permissions are locked to full system access"
-                                >
-                                  <Lock className="w-3 h-3 text-emerald-600" />
-                                  <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
+                            {/* Overrides Status Badge */}
+                            {userForPerms.customPermissions && Object.keys(userForPerms.customPermissions).length > 0 ? (
+                              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-100 border border-indigo-300 text-indigo-800 rounded-lg text-xs font-black shadow-2xs">
+                                <Zap className="w-3 h-3 text-indigo-600 fill-indigo-600" />
+                                <span>Custom Permissions Active</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-semibold shadow-2xs">
+                                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Using Standard {userForPerms.role} Defaults</span>
+                              </div>
+                            )}
+
+                            {/* Reset Button */}
+                            {userForPerms.customPermissions && Object.keys(userForPerms.customPermissions).length > 0 && userForPerms.role !== "Admin" && (
+                              <button
+                                type="button"
+                                onClick={() => handleResetUserPermissions(userForPerms)}
+                                className="px-2.5 py-1 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                                title="Revert all customized permissions for this user back to base role defaults"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Reset to Role Defaults
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* User Permission Matrix Table */}
+                    <div className="bg-white rounded-lg border border-slate-200/80 shadow-2xs overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50/80">
+                              <th className="px-3 py-2 font-extrabold text-slate-600 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[280px]">
+                                System Module &amp; Category
+                              </th>
+                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[130px]">
+                                <div className="font-black text-slate-900 text-xs">Standard Role Default</div>
+                                <div className="text-[8.5px] text-slate-400 font-mono font-medium tracking-wider">
+                                  {userForPerms?.role?.toUpperCase()} STANDARD
                                 </div>
-                              </td>
-
-                              {/* Supervisor: Interactive Toggle */}
-                              <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleTogglePermission("Supervisor", mod.key, supervisorAllowed)}
-                                  disabled={!isAdmin}
-                                  title={isAdmin ? `Click to ${supervisorAllowed ? "revoke" : "grant"} Supervisor access` : undefined}
-                                  className={`inline-flex items-center justify-center px-3 py-1 rounded-lg text-xs font-bold transition-all duration-150 select-none ${
-                                    isAdmin ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"
-                                  } ${
-                                    supervisorAllowed
-                                      ? "bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-2xs"
-                                      : "bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-400"
-                                  }`}
-                                >
-                                  {supervisorAllowed ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                                  ) : (
-                                    <Minus className="w-3.5 h-3.5 text-slate-400 stroke-[2.5]" />
-                                  )}
-                                </button>
-                              </td>
-
-                              {/* Operator: Interactive Toggle */}
-                              <td className="px-3 py-1.5 whitespace-nowrap text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleTogglePermission("Operator", mod.key, operatorAllowed)}
-                                  disabled={!isAdmin}
-                                  title={isAdmin ? `Click to ${operatorAllowed ? "revoke" : "grant"} Operator access` : undefined}
-                                  className={`inline-flex items-center justify-center px-3 py-1 rounded-lg text-xs font-bold transition-all duration-150 select-none ${
-                                    isAdmin ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"
-                                  } ${
-                                    operatorAllowed
-                                      ? "bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-2xs"
-                                      : "bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-400"
-                                  }`}
-                                >
-                                  {operatorAllowed ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                                  ) : (
-                                    <Minus className="w-3.5 h-3.5 text-slate-400 stroke-[2.5]" />
-                                  )}
-                                </button>
-                              </td>
+                              </th>
+                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[160px]">
+                                <div className="font-black text-indigo-700 text-xs">
+                                  {userForPerms?.name ? `${userForPerms.name}'s Access` : "Individual Access"}
+                                </div>
+                                <div className="text-[8.5px] text-indigo-500 font-mono font-medium tracking-wider">
+                                  CLICK TO TOGGLE FOR THIS USER
+                                </div>
+                              </th>
+                              <th className="px-3 py-2 text-center font-extrabold text-slate-700 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">
+                                Permission Source
+                              </th>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {SYSTEM_MODULES.map((mod) => {
+                              if (!userForPerms) return null;
+                              const { effective, isOverridden, roleDefault } = getUserPermissionValue(userForPerms, mod.key);
+                              const isUserAdmin = userForPerms.role === "Admin";
+
+                              return (
+                                <tr key={mod.id} className="hover:bg-slate-50/80 transition-colors">
+                                  {/* Module info */}
+                                  <td className="px-3 py-1.5 whitespace-nowrap">
+                                    <div className="font-bold text-slate-900 text-[11.5px]">{mod.name}</div>
+                                    <div className="text-[9.5px] text-slate-400 font-medium">{mod.category}</div>
+                                  </td>
+
+                                  {/* Base role default display */}
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
+                                    <div className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-bold text-slate-600 bg-slate-100">
+                                      {roleDefault ? (
+                                        <>
+                                          <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
+                                          <span className="text-emerald-700">Allowed</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Minus className="w-3 h-3 text-slate-400 stroke-[2.5]" />
+                                          <span className="text-slate-400">Revoked</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* User's custom toggle button */}
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
+                                    {isUserAdmin ? (
+                                      <div 
+                                        className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs select-none shadow-2xs"
+                                        title="Administrator accounts are locked to full system access"
+                                      >
+                                        <Lock className="w-3 h-3 text-emerald-600" />
+                                        <span>Full Access (Admin)</span>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleUserPermission(userForPerms, mod.key, effective)}
+                                        disabled={!isAdmin}
+                                        title={isAdmin ? `Click to ${effective ? "revoke" : "grant"} access specifically for ${userForPerms.name}` : undefined}
+                                        className={`inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all duration-150 select-none ${
+                                          isAdmin ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"
+                                        } ${
+                                          effective
+                                            ? "bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 shadow-2xs"
+                                            : "bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-400"
+                                        }`}
+                                      >
+                                        {effective ? (
+                                          <>
+                                            <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
+                                            <span>Granted</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Minus className="w-3.5 h-3.5 text-slate-400 stroke-[2.5]" />
+                                            <span>Disabled</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </td>
+
+                                  {/* Source / status badge */}
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-center">
+                                    {isOverridden ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700 shadow-2xs">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse" />
+                                        Custom Override
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-medium bg-slate-100 text-slate-500">
+                                        Inherited ({userForPerms.role})
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-            </div>
-          )}
+              </div>
+            )}
 
 
 

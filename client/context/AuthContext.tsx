@@ -295,29 +295,118 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const canAccessTab = useCallback((tab: string): boolean => {
     if (isAdmin) return true;
+    const target = tab.toLowerCase();
+
+    // All roles (including Operators) can view the Dashboard overview first
+    if (target === "overview") {
+      return true;
+    }
+
+    // 1. Check effective permissions (role defaults + user-specific overrides)
+    if (permissions) {
+      if (target === "settings") {
+        return Boolean(permissions.canManageSettings || permissions.canManageUsers);
+      }
+      if (target === "pis") {
+        return Boolean(permissions.canUploadPI || permissions.canDeletePI || permissions.allowedModules?.includes("pis"));
+      }
+      if (target === "reports") {
+        return Boolean(permissions.canViewReports);
+      }
+      if (target === "analytics") {
+        return Boolean(permissions.canViewAnalytics);
+      }
+      if (target === "production-overview") {
+        return Boolean(permissions.canViewReports || permissions.canViewAnalytics || permissions.allowedModules?.includes("production-overview"));
+      }
+      if (target === "dispatched-history") {
+        return Boolean(permissions.canDispatch || permissions.canViewReports);
+      }
+      if (target === "finished") {
+        return Boolean(permissions.canDispatch || permissions.allowedModules?.includes("finished"));
+      }
+      if (target === "pairing") {
+        return Boolean(permissions.allowedModules?.includes("pairing") || permissions.allowedModules?.includes("cutting"));
+      }
+      if (["cutting", "polishing", "dgu", "lamination"].includes(target)) {
+        return Boolean(permissions.allowedModules?.includes(target));
+      }
+    }
+
+    // 2. Fallbacks if permissions not yet loaded
     if (isSupervisor) {
+      // Supervisors can access all operational modules across all 6 workstations, but not admin settings
       return tab !== "settings";
     }
     if (isOperator) {
-      if (user?.assignedStages && user.assignedStages.length > 0) {
-        const allowedTabs = user.assignedStages.map((s) => s.toLowerCase());
-        return allowedTabs.includes(tab.toLowerCase()) || tab === "finished";
+      if (["production-overview", "pis", "reports", "analytics", "settings"].includes(target)) {
+        return false;
       }
-      return ["cutting", "polishing", "pairing", "dgu", "lamination", "finished"].includes(tab);
+      if (user?.assignedStages && user.assignedStages.length > 0) {
+        const allowedTabs = new Set<string>();
+        for (const stg of user.assignedStages) {
+          const s = stg.toLowerCase();
+          if (s === "cutting") allowedTabs.add("cutting");
+          else if (s === "polishing") allowedTabs.add("polishing");
+          else if (s === "pairing") {
+            allowedTabs.add("pairing");
+            allowedTabs.add("cutting"); // Pairing can be accessed under cutting or standalone
+          }
+          else if (s === "dgu") allowedTabs.add("dgu");
+          else if (s === "lamination") allowedTabs.add("lamination");
+          else if (s === "finished" || s === "dispatched" || s === "dispatch") {
+            allowedTabs.add("finished");
+            allowedTabs.add("dispatched-history");
+          }
+        }
+        return allowedTabs.has(target);
+      }
+      return ["cutting", "polishing", "pairing", "dgu", "lamination", "finished"].includes(target);
     }
     return false;
-  }, [isAdmin, isSupervisor, isOperator, user]);
+  }, [isAdmin, isSupervisor, isOperator, user, permissions]);
 
   const canPerformAction = useCallback((action: "upload" | "delete" | "dispatch" | "rejectRework" | "reports" | "analytics" | "manageUsers" | "manageSettings" | "clearDb"): boolean => {
     if (isAdmin) return true;
+
+    // 1. Check effective permissions
+    if (permissions) {
+      switch (action) {
+        case "upload":
+          return Boolean(permissions.canUploadPI);
+        case "delete":
+          return Boolean(permissions.canDeletePI);
+        case "dispatch":
+          return Boolean(permissions.canDispatch);
+        case "rejectRework":
+          return Boolean(permissions.canRejectRework);
+        case "reports":
+          return Boolean(permissions.canViewReports);
+        case "analytics":
+          return Boolean(permissions.canViewAnalytics);
+        case "manageUsers":
+          return Boolean(permissions.canManageUsers);
+        case "manageSettings":
+          return Boolean(permissions.canManageSettings);
+        case "clearDb":
+          return Boolean(permissions.canClearData);
+      }
+    }
+
+    // 2. Fallbacks
     if (isSupervisor) {
       return ["upload", "delete", "dispatch", "rejectRework", "reports", "analytics"].includes(action);
     }
     if (isOperator) {
-      return ["dispatch", "rejectRework"].includes(action);
+      if (action === "dispatch") {
+        // Can dispatch if assigned to finished/dispatch or unassigned stage operator
+        if (!user?.assignedStages || user.assignedStages.length === 0) return true;
+        return user.assignedStages.some((s) => ["finished", "dispatched", "dispatch"].includes(s.toLowerCase()));
+      }
+      return ["rejectRework"].includes(action);
     }
     return false;
-  }, [isAdmin, isSupervisor, isOperator]);
+  }, [isAdmin, isSupervisor, isOperator, user, permissions]);
 
   return (
     <AuthContext.Provider

@@ -5,11 +5,11 @@
     "email": "gauravraj77820@gmail.com",
     "name": "Gaurav Kumar (Administrator)",
     "role": "Admin",
-    "passwordHash": "977cd337345c97ce94bfa90add0e7986b8786adee41c6565d85aed26f92bbf1c98c8af2d458448dfb6e81d7cc1b2bd50677255ef2af7ca87c40ac3ecda600e36",
-    "salt": "42d5cf8894d2f367cab77ef3faf0f042",
+    "passwordHash": "5359acc1e1fd8ef2ad8cd2616d605b89e8120b54a3dd0b775d1f675988ddff8b4a757c73fc3d8f767c67761d3578acac7a62affe513d0f86f1ca72280fb8a524",
+    "salt": "f2b10b4248ef44cc69c329e31036eba9",
     "isActive": true,
     "createdAt": "2026-10-02T10:24:53.039Z",
-    "lastLoginAt": "2026-10-23T05:34:03.488Z",
+    "lastLoginAt": "2026-10-23T19:12:40.268Z",
     "assignedStages": [
       "Cutting",
       "Polishing",
@@ -34,7 +34,24 @@
     "salt": "a61671aa6933426b85160444458d440a",
     "isActive": true,
     "createdAt": "2026-10-21T17:56:37.917Z",
-    "lastLoginAt": "2026-10-21T18:26:53.159Z"
+    "lastLoginAt": "2026-10-21T18:26:53.159Z",
+    "customPermissions": {
+      "role": "Operator",
+      "description": "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
+      "allowedModules": [
+        "finished",
+        "cutting"
+      ],
+      "canUploadPI": false,
+      "canDeletePI": false,
+      "canDispatch": false,
+      "canRejectRework": false,
+      "canViewReports": false,
+      "canViewAnalytics": false,
+      "canManageUsers": false,
+      "canManageSettings": false,
+      "canClearData": false
+    }
   },
   {
     "id": "usr-operator-mvifyuyk",
@@ -51,5 +68,117 @@
     "isActive": true,
     "createdAt": "2026-10-21T18:24:34.364Z",
     "lastLoginAt": "2026-10-21T18:48:54.639Z"
+  },
+  {
+    "id": "usr-supervisor-01",
+    "username": "supervisor",
+    "email": "supervisor@sejalglass.com",
+    "name": "Rajesh Sharma (Plant Supervisor)",
+    "role": "Supervisor",
+    "assignedStages": [
+      "Cutting",
+      "Polishing",
+      "Pairing",
+      "DGU",
+      "Lamination",
+      "Finished",
+      "Dispatched"
+    ],
+    "passwordHash": "963214342f486c999f9fe58acc44965832c980634af9a473d4c9effcd3abb9c447a5436ae051bff22cbf2c754a7dfe2dc55311fceeafcab19bc3e8ea0f734c80",
+    "salt": "284e31e8f260dbd26e25c97d9e074888",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z",
+    "lastLoginAt": "2026-10-23T18:59:27.612Z"
+  },
+  {
+    "id": "usr-op-cutting-01",
+    "username": "op_cutting",
+    "email": "cutting@sejalglass.com",
+    "name": "Deepa K (Cutting & Pairing Operator)",
+    "role": "Operator",
+    "assignedStages": [
+      "Cutting",
+      "Pairing"
+    ],
+    "passwordHash": "d3d34d4a56aba471f575415585a82a549bef8876e328fea7a2ec31391f96a939022940a29a4e62f392a0940c275dbea29dc748d23e1f7d7824cf543b3f883e8a",
+    "salt": "acc6bc3b6858eba21c5be086da42ca40",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z",
+    "lastLoginAt": "2026-10-23T19:01:46.312Z",
+    "customPermissions": {
+      "role": "Operator",
+      "description": "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
+      "allowedModules": [
+        "finished"
+      ],
+      "canUploadPI": false,
+      "canDeletePI": false,
+      "canDispatch": false,
+      "canRejectRework": false,
+      "canViewReports": false,
+      "canViewAnalytics": false,
+      "canManageUsers": false,
+      "canManageSettings": false,
+      "canClearData": false
+    }
+  },
+  {
+    "id": "usr-op-polishing-01",
+    "username": "op_polishing",
+    "email": "polishing@sejalglass.com",
+    "name": "Manoj Verma (Edge Polishing Operator)",
+    "role": "Operator",
+    "assignedStages": [
+      "Polishing"
+    ],
+    "passwordHash": "bc8a89b2c61b9a3eaa9c3e58393035d231f4074dd69d16a57bf6e3886823065225dd0d0561a58b749d3c97b740bf357259977a8c457c2bf4e0f5a9893b22911a",
+    "salt": "bb24413f4928a3a8aeb6067db541f2a6",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z",
+    "lastLoginAt": "2026-10-23T18:46:12.492Z"
+  },
+  {
+    "id": "usr-op-dgu-01",
+    "username": "op_dgu",
+    "email": "dgu@sejalglass.com",
+    "name": "Suresh Patel (DGU Assembly Operator)",
+    "role": "Operator",
+    "assignedStages": [
+      "DGU"
+    ],
+    "passwordHash": "56272035c663e85dca6e0711e6ae28329ef648f1b1eabdb2735a95210630cce1cf2c7892a53b205ebc0fc6e91da8dec70ee3f2257f5ccaa14ffc2a8c52e81998",
+    "salt": "a90e31f25553fb768acbfb4218a996b5",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z"
+  },
+  {
+    "id": "usr-op-lamination-01",
+    "username": "op_lamination",
+    "email": "lamination@sejalglass.com",
+    "name": "Kiran Rathore (Lamination Autoclave Operator)",
+    "role": "Operator",
+    "assignedStages": [
+      "Lamination"
+    ],
+    "passwordHash": "00a96dec30d9f4e978023f5c0bf26e6a3a21750992e33d0c67586797202012d38c8d40362ee9d9d58ef88c7be1c33894bc12235e3539123feb907b5e41726ccd",
+    "salt": "823ebefee0226f654e5f549aea1a2837",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z"
+  },
+  {
+    "id": "usr-op-dispatch-01",
+    "username": "op_dispatch",
+    "email": "dispatch@sejalglass.com",
+    "name": "Amit Kumar (Warehouse & Dispatch Operator)",
+    "role": "Operator",
+    "assignedStages": [
+      "Finished",
+      "Dispatched"
+    ],
+    "passwordHash": "7e3ee85fc3b90503cf8863ecaa0119bb426878dd8adcbd1e1fc0ca5365c145ed256bcb06de6f58e5675325072fd55668c950f12d5f5960627aaf247c675ea0db",
+    "salt": "f8a73831eeae935e3495c55b1bae8740",
+    "isActive": true,
+    "createdAt": "2026-10-23T18:34:21.568Z",
+    "lastLoginAt": "2026-10-23T18:46:21.863Z"
   }
 ]

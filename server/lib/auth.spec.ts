@@ -165,5 +165,74 @@ describe("Authentication & RBAC System", () => {
       updateUser(updatedAdmin.id, { password: "Admin@123" });
     });
   });
+
+  describe("Granular User Permission Customization (User A vs. User B)", () => {
+    it("should allow giving custom permissions to User A while User B retains default role permissions", async () => {
+      const { 
+        getUserEffectivePermissions, 
+        updateUserPermission, 
+        resetUserPermissions 
+      } = await import("./users");
+
+      const userA = createUser({
+        username: "operator_a",
+        email: "operator_a@sejalglass.com",
+        name: "Operator A",
+        role: "Operator",
+        password: "OperatorPass@1",
+      });
+
+      const userB = createUser({
+        username: "operator_b",
+        email: "operator_b@sejalglass.com",
+        name: "Operator B",
+        role: "Operator",
+        password: "OperatorPass@2",
+      });
+
+      try {
+        // 1. Both start with default operator permissions (canUploadPI: false)
+        const userAObj = findUserByUsernameOrEmail("operator_a")!;
+        const userBObj = findUserByUsernameOrEmail("operator_b")!;
+
+        const initialA = getUserEffectivePermissions(userAObj);
+        const initialB = getUserEffectivePermissions(userBObj);
+        expect(initialA.canUploadPI).toBe(false);
+        expect(initialB.canUploadPI).toBe(false);
+
+        // 2. Grant canUploadPI and revoke module:cutting for User A only
+        const updatedResA = updateUserPermission(userA.id, "canUploadPI", true);
+        expect(updatedResA.permissions.canUploadPI).toBe(true);
+        expect(updatedResA.user.customPermissions?.canUploadPI).toBe(true);
+
+        updateUserPermission(userA.id, "module:cutting", false);
+
+        // 3. Verify User A now has the customized permissions, but User B DOES NOT
+        const freshA = findUserByUsernameOrEmail("operator_a")!;
+        const freshB = findUserByUsernameOrEmail("operator_b")!;
+
+        const effectiveA = getUserEffectivePermissions(freshA);
+        const effectiveB = getUserEffectivePermissions(freshB);
+
+        expect(effectiveA.canUploadPI).toBe(true);
+        expect(effectiveA.allowedModules).not.toContain("cutting");
+        expect(freshA.assignedStages).not.toContain("Cutting");
+
+        // User B remains unchanged on Operator defaults
+        expect(effectiveB.canUploadPI).toBe(false);
+        expect(effectiveB.allowedModules).toContain("cutting");
+
+        // 4. Reset User A back to role defaults
+        const resetRes = resetUserPermissions(userA.id);
+        expect(resetRes.user.customPermissions).toBeUndefined();
+        expect(resetRes.permissions.canUploadPI).toBe(false);
+        expect(resetRes.permissions.allowedModules).toContain("cutting");
+      } finally {
+        // Clean up
+        deleteUser(userA.id);
+        deleteUser(userB.id);
+      }
+    });
+  });
 });
 

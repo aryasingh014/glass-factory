@@ -196,6 +196,34 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <img src="/sejal-glass-logo.png" alt="Logo" className="h-7 w-auto" />
           </div>
         )}
+
+        {sidebarOpen && (
+          <div className="mx-3.5 mb-1 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className={cn(
+                  "w-2 h-2 rounded-full shrink-0",
+                  role === "Admin" ? "bg-purple-400 shadow-purple-500/50" : role === "Supervisor" ? "bg-sky-400 shadow-sky-500/50" : "bg-emerald-400 shadow-emerald-500/50"
+                )}
+              />
+              <span className="text-[10.5px] font-bold text-slate-200 truncate">
+                {role === "Admin" ? "Administrator" : role === "Supervisor" ? "Supervisor" : user?.assignedStages && user.assignedStages.length > 0 ? user.assignedStages.join("/") : "Station Operator"}
+              </span>
+            </div>
+            <span
+              className={cn(
+                "text-[8.5px] font-black uppercase px-1.5 py-0.2 rounded shrink-0",
+                role === "Admin"
+                  ? "bg-purple-500/20 text-purple-200 border border-purple-500/30"
+                  : role === "Supervisor"
+                  ? "bg-sky-500/20 text-sky-200 border border-sky-500/30"
+                  : "bg-emerald-500/20 text-emerald-200 border border-emerald-500/30"
+              )}
+            >
+              {role}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ─── Navigation Groups (COMPACT) ─── */}
