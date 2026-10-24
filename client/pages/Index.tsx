@@ -247,7 +247,7 @@ export default function Index() {
   useEffect(() => {
     if (!canAccessTab(activeTab)) {
       setActiveTab("overview", true);
-      toast.info(`Switched to Dashboard based on ${user?.name || userRole} permissions.`);
+      toast.info(`Switched to Dashboard based on access permissions.`);
     }
   }, [userRole, user, activeTab, canAccessTab, setActiveTab]);
 
@@ -631,7 +631,7 @@ export default function Index() {
     const batchNumber = targetPI ? formatBatchNumber(targetPI.batchNo || targetPI.piNumber) : piId;
 
     if (userRole === "Operator") {
-      toast.error(`Operator role cannot delete batches`);
+      toast.error(`You do not have permission to delete batches`);
       return;
     }
     if (!window.confirm(`Are you sure you want to delete Batch ${batchNumber} and all its glass items?`)) return;
@@ -666,7 +666,7 @@ export default function Index() {
     const docLabel = isSticker ? "Sticker batch" : "PI document";
 
     if (userRole === "Operator") {
-      toast.error(`Operator role cannot release ${docLabel.toLowerCase()}s to production`);
+      toast.error(`You do not have permission to release ${docLabel.toLowerCase()}s to production`);
       return;
     }
     try {
@@ -745,7 +745,7 @@ export default function Index() {
           currentStage: currentStage,
           advanceQty: 1,
           advanceAll: false,
-          operator: user?.name || user?.username || userRole || "Operator",
+          operator: user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff"),
           remarks: `Advanced via Barcode Scanner from ${currentStage}`,
         }),
       });
@@ -987,7 +987,7 @@ export default function Index() {
             currentStage: currentStage,
             advanceQty: 1,
             advanceAll: false,
-            operator: user?.name || user?.username || userRole || "Operator",
+            operator: user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff"),
             remarks: partnerToPair
               ? `Paired & Advanced via Scanner Gun (${matchedItem.serialNumber} + ${partnerToPair.serialNumber}) at ${currentStage}`
               : `Scanned by Hardware Scanner Gun at ${currentStage}${stickerLabel}`,
@@ -2010,20 +2010,20 @@ export default function Index() {
                   className="flex items-center gap-2 pl-2 border-l border-slate-200 hover:opacity-80 transition-opacity text-left"
                 >
                   <div className="w-8 h-8 rounded-full bg-[#1a3a6b] text-white font-bold text-xs flex items-center justify-center shadow-xs">
-                    {user?.name ? user.name.charAt(0).toUpperCase() : userRole.charAt(0)}
+                    {user?.name ? user.name.charAt(0).toUpperCase() : userRole === "Admin" ? "A" : "U"}
                   </div>
                   <div className="hidden sm:block">
                     <div className="text-xs font-bold text-slate-900 leading-tight flex items-center gap-1">
-                      {user?.name || userRole} <ChevronDown className="w-3 h-3 text-slate-400" />
+                      {user?.name || (userRole === "Admin" ? "Administrator" : "User")} <ChevronDown className="w-3 h-3 text-slate-400" />
                     </div>
                     <div className="text-[10px] text-slate-500 font-medium leading-tight">
                       {userRole === "Admin"
                         ? "Administrator"
-                        : userRole === "Supervisor"
-                        ? "Production Supervisor"
                         : user?.assignedStages && user.assignedStages.length > 0
-                        ? `Station Operator (${user.assignedStages.join(", ")})`
-                        : "Station Operator"}
+                        ? user.assignedStages.join(", ")
+                        : userRole === "Supervisor"
+                        ? "Plant Floor Access"
+                        : "Workstation Access"}
                     </div>
                   </div>
                 </button>
@@ -2031,22 +2031,28 @@ export default function Index() {
                 {userMenuOpen && (
                   <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-2">
                     <div className="px-3 py-2.5 border-b border-slate-100 bg-slate-50/60 rounded-lg mb-1">
-                      <div className="font-bold text-xs text-slate-900">{user?.name || `${userRole} User`}</div>
-                      <div className="text-[11px] text-slate-500 truncate">{user?.email || `${userRole.toLowerCase()}@sejalglass.com`}</div>
+                      <div className="font-bold text-xs text-slate-900">{user?.name || (userRole === "Admin" ? "Administrator" : "User")}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{user?.email || (userRole === "Admin" ? "admin@sejalglass.com" : user?.username ? `${user.username}@sejalglass.com` : "user@sejalglass.com")}</div>
                       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold ${userRole === "Admin"
-                            ? "bg-purple-100 text-purple-900 border border-purple-200"
-                            : userRole === "Supervisor"
-                              ? "bg-blue-100 text-blue-900 border border-blue-200"
-                              : "bg-emerald-100 text-emerald-900 border border-emerald-200"
-                          }`}>
-                          <ShieldCheck className="w-2.5 h-2.5" />
-                          {userRole} Account
-                        </span>
-                        {userRole === "Operator" && user?.assignedStages && user.assignedStages.length > 0 && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            {user.assignedStages.join(" • ")}
+                        {userRole === "Admin" ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
+                            <ShieldCheck className="w-2.5 h-2.5" />
+                            Administrator Account
                           </span>
+                        ) : (
+                          <>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              Assigned Access
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {user?.assignedStages && user.assignedStages.length > 0
+                                ? user.assignedStages.join(" • ")
+                                : userRole === "Supervisor"
+                                ? "Full Plant Access"
+                                : "All Workstations"}
+                            </span>
+                          </>
                         )}
                       </div>
                     </div>
@@ -2256,66 +2262,15 @@ export default function Index() {
                   {/* HERO BANNER */}
                   <div className="ppb-welcome" style={{ backgroundImage: "url('/image copy.png')", marginBottom: '13px', borderRadius: '12px', overflow: 'hidden' }}>
                     <div>
-                      <h2>Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name || 'Administrator'} 👋</h2>
-                      <p>Keep pushing, great things are built here!</p>
+                      <h2>Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name || (userRole === "Admin" ? 'Administrator' : 'User')} 👋</h2>
+                      <p>
+                        {userRole === "Admin"
+                          ? "Admin Dashboard • Central glass plant execution & management console"
+                          : "Keep pushing, great things are built here!"}
+                      </p>
                     </div>
                     <div className="ppb-welcome-motto">Better Glass<br />Brighter Tomorrow</div>
                   </div>
-
-                  {/* OPERATOR WORKSTATION LAUNCHPAD (Shown on Dashboard for Operators) */}
-                  {userRole === "Operator" && (
-                    <div className="mb-4 p-4 rounded-2xl bg-gradient-to-r from-[#0a1e3f] via-[#0f2e62] to-[#164082] border border-blue-400/30 text-white shadow-xl flex items-center justify-between flex-wrap gap-4">
-                      <div className="flex items-center gap-3.5">
-                        <div className="w-11 h-11 rounded-xl bg-white/10 flex items-center justify-center text-white border border-white/20 shadow-inner">
-                          <Factory className="w-5 h-5 text-emerald-400" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-extrabold text-emerald-300 uppercase tracking-wider">
-                              Assigned Floor Workstation
-                            </span>
-                            <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                              Active Operator
-                            </span>
-                          </div>
-                          <p className="text-sm font-black text-white mt-0.5">
-                            {user?.assignedStages && user.assignedStages.length > 0
-                              ? user.assignedStages.join(" & ") + " Line Console"
-                              : "All Workstation Consoles"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {user?.assignedStages && user.assignedStages.length > 0 ? (
-                          user.assignedStages.map((stg) => {
-                            const tabId =
-                              stg.toLowerCase() === "finished" || stg.toLowerCase() === "dispatch" || stg.toLowerCase() === "dispatched"
-                                ? "finished"
-                                : stg.toLowerCase();
-                            return (
-                              <Button
-                                key={stg}
-                                onClick={() => setActiveTab(tabId as any)}
-                                className="bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-md gap-1.5 h-10 px-4 cursor-pointer transition-all"
-                              >
-                                <span>Go to {stg} Workstation</span>
-                                <ArrowRight className="w-4 h-4" />
-                              </Button>
-                            );
-                          })
-                        ) : (
-                          <Button
-                            onClick={() => setActiveTab("cutting")}
-                            className="bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-md gap-1.5 h-10 px-4 cursor-pointer transition-all"
-                          >
-                            <span>Go to Cutting Workstation</span>
-                            <ArrowRight className="w-4 h-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
 
                   {/* 4 METRIC CARDS */}
                   <div className="ppb-metrics-grid">
@@ -2845,9 +2800,9 @@ export default function Index() {
                   <span
                     className="hover:text-blue-600 cursor-pointer transition-colors"
                     onClick={() => setActiveTab("overview")}
-                    title="Return to Dashboard"
+                    title={userRole === "Admin" ? "Return to Admin Dashboard" : "Return to Dashboard"}
                   >
-                    Dashboard
+                    {userRole === "Admin" ? "Admin Dashboard" : "Dashboard"}
                   </span>
                   <span>/</span>
                   <span className="text-slate-800 font-extrabold">
@@ -2893,7 +2848,7 @@ export default function Index() {
                 }
                 items={items}
                 pis={pis}
-                operator={user?.name || user?.username || userRole}
+                operator={user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff")}
                 externalSearchTerm={piSearchTerm}
                 onRefresh={() => fetchData(true)}
                 onOptimisticAdvance={handleOptimisticAdvance}
@@ -2909,7 +2864,7 @@ export default function Index() {
               <DispatchedHistoryView
                 items={items}
                 pis={pis}
-                operator={userRole}
+                operator={user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff")}
                 onRefresh={() => fetchData(true)}
                 onPrintSticker={handleOpenSticker}
                 onNavigateToDispatchQueue={() => setActiveTab("finished")}
@@ -3690,7 +3645,7 @@ export default function Index() {
             <ScanLookupModal
               open={scanModalOpen}
               onOpenChange={setScanModalOpen}
-              operator={user?.username || user?.name || userRole || "Operator"}
+              operator={user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff")}
               currentStage={currentWorkstationStage}
               initialCode={scanInitialCode}
               onPrintSticker={handleOpenSticker}

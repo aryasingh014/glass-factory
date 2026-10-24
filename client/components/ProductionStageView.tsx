@@ -2376,18 +2376,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
      CUTTING STAGE: BATCH OVERVIEW VIEW (When no batch is selected)
      ───────────────────────────────────────────────────────────────────────────── */
   if (stage === "Cutting" && !selectedBatchId) {
-    const totalCuttingPending = batchSummaries.reduce((a, b) => a + b.stageItemsCount, 0);
-    const totalCuttingSqm = batchSummaries.reduce((a, b) => a + b.totalSqm, 0);
-
     return (
       <div className="space-y-4 animate-in fade-in duration-200">
-        {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
-        <WorkstationStageBanner
-          stage="Cutting"
-          totalItems={totalCuttingPending}
-          totalSqm={totalCuttingSqm}
-          onNavigateTab={onNavigateTab}
-        />
 
         {/* ── Filter Bar with FINISH Tabs (Clear / Colour / All) & Search ── */}
         <div className="ppb-panel bg-white border border-slate-100 p-5 shadow-[0_4px_20px_rgb(22,128,245,0.04)] space-y-4 mb-4">
@@ -2964,14 +2954,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
      ───────────────────────────────────────────────────────────────────────────── */
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
-      {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
-      <WorkstationStageBanner
-        stage={stage}
-        totalItems={totalStagePieces}
-        totalSqm={totalStageSqm}
-        readyCount={stage === "DGU" ? dguStandardCount + dguDlguCount : undefined}
-        onNavigateTab={onNavigateTab}
-      />
 
       {/* ── Cutting Batch Breadcrumb Header ── */}
       {stage === "Cutting" && selectedBatchId && (

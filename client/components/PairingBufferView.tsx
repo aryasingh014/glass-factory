@@ -976,15 +976,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
-      {/* ── Role-Tailored Workstation Stage Banner & Specs ── */}
-      <WorkstationStageBanner
-        stage="Pairing"
-        totalItems={totalBufferItems}
-        totalSqm={totalBufferSqm}
-        readyCount={readyPairsCount}
-        onNavigateTab={onNavigateTab}
-      />
-
       {/* ── Page Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-4 ppb-panel bg-gradient-to-br from-white/90 to-white/50 backdrop-blur-2xl border-white p-6 rounded-3xl shadow-[0_10px_40px_rgb(22,128,245,0.08)] mb-5 relative overflow-hidden ring-1 ring-slate-900/5">
         <div className="flex items-center gap-3">

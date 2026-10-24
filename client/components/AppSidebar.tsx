@@ -88,7 +88,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     {
       title: "",
       items: [
-        { id: "overview", label: "Dashboard", icon: Home },
+        { id: "overview", label: role === "Admin" ? "Admin Dashboard" : "Dashboard", icon: Home },
         { id: "production-overview", label: "Production Overview", icon: BarChart3 },
         { id: "dispatched-history", label: "Dispatched History", icon: History },
         { id: "pis", label: "Sticker & Batch", icon: Boxes },
@@ -203,25 +203,28 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               <span
                 className={cn(
                   "w-2 h-2 rounded-full shrink-0",
-                  role === "Admin" ? "bg-purple-400 shadow-purple-500/50" : role === "Supervisor" ? "bg-sky-400 shadow-sky-500/50" : "bg-emerald-400 shadow-emerald-500/50"
+                  role === "Admin" ? "bg-purple-400 shadow-purple-500/50" : "bg-emerald-400 shadow-emerald-500/50"
                 )}
               />
               <span className="text-[10.5px] font-bold text-slate-200 truncate">
-                {role === "Admin" ? "Administrator" : role === "Supervisor" ? "Supervisor" : user?.assignedStages && user.assignedStages.length > 0 ? user.assignedStages.join("/") : "Station Operator"}
+                {role === "Admin"
+                  ? "Administrator"
+                  : user?.assignedStages && user.assignedStages.length > 0
+                  ? user.assignedStages.join("/")
+                  : role === "Supervisor"
+                  ? "Plant Access"
+                  : "Workstation Access"}
               </span>
             </div>
-            <span
-              className={cn(
-                "text-[8.5px] font-black uppercase px-1.5 py-0.2 rounded shrink-0",
-                role === "Admin"
-                  ? "bg-purple-500/20 text-purple-200 border border-purple-500/30"
-                  : role === "Supervisor"
-                  ? "bg-sky-500/20 text-sky-200 border border-sky-500/30"
-                  : "bg-emerald-500/20 text-emerald-200 border border-emerald-500/30"
-              )}
-            >
-              {role}
-            </span>
+            {role === "Admin" ? (
+              <span className="text-[8.5px] font-black uppercase px-1.5 py-0.2 rounded shrink-0 bg-purple-500/20 text-purple-200 border border-purple-500/30">
+                ADMIN
+              </span>
+            ) : (
+              <span className="text-[8.5px] font-black uppercase px-1.5 py-0.2 rounded shrink-0 bg-emerald-500/20 text-emerald-200 border border-emerald-500/30">
+                ACCESS
+              </span>
+            )}
           </div>
         )}
       </div>

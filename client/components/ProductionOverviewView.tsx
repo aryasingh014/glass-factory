@@ -158,6 +158,21 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const monoActiveUnits = Math.max(0, monoTotalUnits - monoFinishedUnits);
     const monoTotalSqm = parseFloat(allMonolithicItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
+    // Live Stage Workstation Queue WIP (Current items/units waiting at each workstation)
+    const dguStageColour = dguItemsList.filter(isColour).length;
+    const dguStageClear = dguItemsList.length - dguStageColour;
+    const dguStageUnits = dguStageColour > 0 && dguStageClear > 0
+      ? Math.min(dguStageColour, dguStageClear)
+      : (dguStageColour > 0 ? dguStageColour : Math.ceil(dguItemsList.length / 2));
+
+    const pairingStageColour = pairingItemsList.filter(isColour).length;
+    const pairingStageClear = pairingItemsList.length - pairingStageColour;
+    const pairingStageUnits = pairingStageColour > 0 && pairingStageClear > 0
+      ? Math.min(pairingStageColour, pairingStageClear)
+      : Math.floor(pairingItemsList.length / 2);
+
+    const laminationStageUnits = Math.ceil(laminationItemsList.length / 2);
+
     // Overall Progress & Quality Yield
     const completionPercent = totalItems > 0 ? Math.round((finishedCount / totalItems) * 100) : 0;
     const inProgressPercent = totalItems > 0 ? Math.round((inProgressCount / totalItems) * 100) : 0;
@@ -195,6 +210,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       dguSqm,
       laminationCount,
       laminationSqm,
+      // Workstation Stage Queue WIP
+      dguStageUnits,
+      pairingStageUnits,
+      laminationStageUnits,
       // Specialty Breakdown
       dguTotalUnits,
       dguActiveUnits,
@@ -431,7 +450,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <span>Open Cutting Floor</span>
           </Button>
 
-          {/* Workstations Dropdown: DGU, DLGU, Lamination, Cutting, Dispatch */}
+          {/* Workstations Dropdown: Cutting, Polishing, DLGU, DGU, Lamination, Dispatch */}
           <div className="relative" ref={stationMenuRef}>
             <Button
               size="sm"
@@ -450,73 +469,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                   Select Workstation Line
                 </div>
 
-                {/* DGU Station */}
-                <button
-                  onClick={() => {
-                    onNavigateTab("dgu");
-                    setStationMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-teal-50 text-slate-800 hover:text-teal-900 transition-colors group cursor-pointer"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
-                      <ClipboardList className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold leading-none">DGU / IGU Station</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Double Glazed Line</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200">
-                    {metrics.dguTotalUnits} Units
-                  </span>
-                </button>
-
-                {/* DLGU / Pairing Buffer */}
-                <button
-                  onClick={() => {
-                    onNavigateTab("pairing");
-                    setStationMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-purple-50 text-slate-800 hover:text-purple-900 transition-colors group cursor-pointer"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
-                      <Layers className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold leading-none">DLGU & Pairing Buffer</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Multi-Layer Assembly</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-200">
-                    {metrics.dlguTotalUnits} Units
-                  </span>
-                </button>
-
-                {/* Lamination Line */}
-                <button
-                  onClick={() => {
-                    onNavigateTab("lamination");
-                    setStationMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-amber-50 text-slate-800 hover:text-amber-900 transition-colors group cursor-pointer"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-                      <Flame className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold leading-none">Lamination Line</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Autoclave & PVB Line</div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
-                    {metrics.lamTotalUnits} Pairs
-                  </span>
-                </button>
-
-                {/* Cutting Floor */}
+                {/* 1. Cutting Floor */}
                 <button
                   onClick={() => {
                     onNavigateTab("cutting");
@@ -538,7 +491,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                   </span>
                 </button>
 
-                {/* Polishing Workstation */}
+                {/* 2. Polishing Workstation */}
                 <button
                   onClick={() => {
                     onNavigateTab("polishing");
@@ -560,7 +513,73 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                   </span>
                 </button>
 
-                {/* Dispatch & Shipping */}
+                {/* 3. Assembly & Pairing Buffer */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("pairing");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-purple-50 text-slate-800 hover:text-purple-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Assembly &amp; Pairing Buffer</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Pane Matching &amp; Stillage Holding</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                    {metrics.pairingStageUnits > 0 ? `${metrics.pairingStageUnits} Units` : `${metrics.pairingCount} Pcs`}
+                  </span>
+                </button>
+
+                {/* 4. DGU Station */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("dgu");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-teal-50 text-slate-800 hover:text-teal-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
+                      <ClipboardList className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">DGU / IGU Station</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Double Glazed Line</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200">
+                    {metrics.dguStageUnits} Units
+                  </span>
+                </button>
+
+                {/* 5. Lamination Line */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("lamination");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-amber-50 text-slate-800 hover:text-amber-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                      <Flame className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Lamination Line</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Autoclave &amp; PVB Line</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                    {metrics.laminationStageUnits} Pairs
+                  </span>
+                </button>
+
+                {/* 6. Dispatch & Shipping */}
                 <button
                   onClick={() => {
                     onNavigateTab("finished");
@@ -573,7 +592,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                       <Truck className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold leading-none">Dispatch & Shipping</div>
+                      <div className="text-xs font-bold leading-none">Dispatch &amp; Shipping</div>
                       <div className="text-[10px] text-slate-500 mt-0.5">Completed Pieces</div>
                     </div>
                   </div>

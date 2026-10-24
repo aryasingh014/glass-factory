@@ -780,7 +780,7 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
                                         variant="ghost"
                                         onClick={() => {
                                           if (userRole === "Operator") {
-                                            toast.error("Operator role cannot delete batches");
+                                            toast.error("You do not have permission to delete batches");
                                             return;
                                           }
                                           if (group.matchedBatchId) {

@@ -5,8 +5,8 @@
     "email": "gauravraj77820@gmail.com",
     "name": "Gaurav Kumar (Administrator)",
     "role": "Admin",
-    "passwordHash": "a2d6a95f5c1eea4adc8db8ab2c3f103e11e3497bba657d6b98bb5ab5c43b3b628f21eccf552ccab5b3626bf4766e45c085dd08cf1c73a59309bf9d5eab1c698a",
-    "salt": "c11fdc9fdfad42613eada64b87ec5932",
+    "passwordHash": "67a2bd7e22e5fdfb009fa2459cb5ac1ba7f98e6964f570127b4624656ac40fa3948e0661ab876c9cb2a826654b7bae53744fd855a31f4638edd87ef06ebdcb94",
+    "salt": "2fdb5a348b1d1e565d31d374c1a01705",
     "isActive": true,
     "createdAt": "2026-10-02T10:24:53.039Z",
     "lastLoginAt": "2026-10-23T19:12:40.268Z",
@@ -21,54 +21,44 @@
     ]
   },
   {
-    "id": "usr-operator-mvieyxel",
-    "username": "cutting1",
-    "email": "gauravkumar77820@gmail.com",
-    "name": "Deepa K",
+    "id": "usr-operator-mvmnv58f",
+    "username": "arya",
+    "email": "aryasingh14600@gmail.com",
+    "name": "Arya Singh",
     "role": "Operator",
-    "assignedStages": [],
-    "passwordHash": "85d00a0042722891d5f3b5e994e8aea7e6d25d5615c2d2911c57c0c028e9c07d838f42fe6a24d3464832cfdc2dd15d649aee325cd745d1cb3d8abeab9c221a43",
-    "salt": "a61671aa6933426b85160444458d440a",
+    "assignedStages": [
+      "Pairing",
+      "Cutting"
+    ],
+    "passwordHash": "de7db56d966de1b2c088ebc91c0b536d6adec61566fd3d1ede465b6bdae4ffcc6b0d3c3bd6f9666c8eb54b57975cc390eb5bb4140e234cc9d0d793c9a4d474a4",
+    "salt": "f27e18e658ca36d79d89239f8a9eff2f",
     "isActive": true,
-    "createdAt": "2026-10-21T17:56:37.917Z",
-    "lastLoginAt": "2026-10-21T18:26:53.159Z",
+    "createdAt": "2026-10-24T17:16:42.687Z",
+    "lastLoginAt": "2026-10-24T17:17:17.703Z",
     "customPermissions": {
       "role": "Operator",
       "description": "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
-      "allowedModules": [],
+      "allowedModules": [
+        "pairing",
+        "cutting"
+      ],
       "canUploadPI": false,
       "canDeletePI": false,
-      "canDispatch": false,
-      "canRejectRework": false,
+      "canDispatch": true,
+      "canRejectRework": true,
       "canViewReports": false,
       "canViewAnalytics": false,
       "canManageUsers": false,
       "canManageSettings": false,
       "canClearData": false,
-      "canCameraScan": false,
-      "canPrintStickers": false,
-      "canScanLookup": false,
+      "canCameraScan": true,
+      "canPrintStickers": true,
+      "canScanLookup": true,
       "canUndoStageAdvance": false,
       "canCreateManualPI": false,
       "canViewPIDocuments": false,
       "canExportReports": false
     }
-  },
-  {
-    "id": "usr-operator-mvifyuyk",
-    "username": "cutting2",
-    "email": "aryasingh14600@gmail.com",
-    "name": "Arya Singh",
-    "role": "Operator",
-    "assignedStages": [
-      "Cutting",
-      "Pairing"
-    ],
-    "passwordHash": "5f8b369ad578ceb4ed7567dc35d4f9b5829d42b191d4593adfabbf79c3f9a42f083fba8565e77c9c1194179094ee1b0896c992dd967f6f8de01317c4cb37b23d",
-    "salt": "83172e9f0f2167a89157f9e5d6296d55",
-    "isActive": true,
-    "createdAt": "2026-10-21T18:24:34.364Z",
-    "lastLoginAt": "2026-10-21T18:48:54.639Z"
   },
   {
     "id": "usr-supervisor-01",
@@ -85,11 +75,10 @@
       "Finished",
       "Dispatched"
     ],
-    "passwordHash": "963214342f486c999f9fe58acc44965832c980634af9a473d4c9effcd3abb9c447a5436ae051bff22cbf2c754a7dfe2dc55311fceeafcab19bc3e8ea0f734c80",
-    "salt": "284e31e8f260dbd26e25c97d9e074888",
+    "passwordHash": "e8e418a5f600ac5a1af1b8b26aefed8409d1683c4d0798e19181f96b3dae095dc53c961dddfb435cdd50790824aa402189d35b16225838fd1e5e2ad82d485a54",
+    "salt": "8ba7e4be1277b36bb5627524ee1ba188",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z",
-    "lastLoginAt": "2026-10-23T18:59:27.612Z"
+    "createdAt": "2026-10-24T17:41:26.006Z"
   },
   {
     "id": "usr-op-cutting-01",
@@ -101,27 +90,10 @@
       "Cutting",
       "Pairing"
     ],
-    "passwordHash": "d3d34d4a56aba471f575415585a82a549bef8876e328fea7a2ec31391f96a939022940a29a4e62f392a0940c275dbea29dc748d23e1f7d7824cf543b3f883e8a",
-    "salt": "acc6bc3b6858eba21c5be086da42ca40",
+    "passwordHash": "19a28383423da36e85304841cb4463685f0f4e1f5240b3edf8077b570ab1cd2dbb0307fb719295a1ad88cb85f2ad043125f7a902c34a3cae1e8fa336c85a8ada",
+    "salt": "9ef2058813feb09c17b220fa51165e20",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z",
-    "lastLoginAt": "2026-10-23T19:01:46.312Z",
-    "customPermissions": {
-      "role": "Operator",
-      "description": "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
-      "allowedModules": [
-        "finished"
-      ],
-      "canUploadPI": false,
-      "canDeletePI": false,
-      "canDispatch": false,
-      "canRejectRework": false,
-      "canViewReports": false,
-      "canViewAnalytics": false,
-      "canManageUsers": false,
-      "canManageSettings": false,
-      "canClearData": false
-    }
+    "createdAt": "2026-10-24T17:41:26.006Z"
   },
   {
     "id": "usr-op-polishing-01",
@@ -132,11 +104,10 @@
     "assignedStages": [
       "Polishing"
     ],
-    "passwordHash": "bc8a89b2c61b9a3eaa9c3e58393035d231f4074dd69d16a57bf6e3886823065225dd0d0561a58b749d3c97b740bf357259977a8c457c2bf4e0f5a9893b22911a",
-    "salt": "bb24413f4928a3a8aeb6067db541f2a6",
+    "passwordHash": "f2d01a006c18a884138b52d0aea5f23b2a9e5266d6380c42a229ae9fbc61b7681aa16ed2eb6319c2179c9edcc190e39f21dad18188b325559173a00deec45519",
+    "salt": "7b742ee50ae10db2dbae2be50d241355",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z",
-    "lastLoginAt": "2026-10-23T18:46:12.492Z"
+    "createdAt": "2026-10-24T17:41:26.006Z"
   },
   {
     "id": "usr-op-dgu-01",
@@ -147,10 +118,10 @@
     "assignedStages": [
       "DGU"
     ],
-    "passwordHash": "56272035c663e85dca6e0711e6ae28329ef648f1b1eabdb2735a95210630cce1cf2c7892a53b205ebc0fc6e91da8dec70ee3f2257f5ccaa14ffc2a8c52e81998",
-    "salt": "a90e31f25553fb768acbfb4218a996b5",
+    "passwordHash": "0c5e482c3be661dea95bcb103388418eaf6ed776e3ec51b10bb40f5e218499635f5151abbd2c3f01c85b797682af756bddb1d7b303a98a61f68881a29fc85326",
+    "salt": "0e6c08b3616f419df6d5bb515cd736fa",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z"
+    "createdAt": "2026-10-24T17:41:26.006Z"
   },
   {
     "id": "usr-op-lamination-01",
@@ -161,10 +132,10 @@
     "assignedStages": [
       "Lamination"
     ],
-    "passwordHash": "00a96dec30d9f4e978023f5c0bf26e6a3a21750992e33d0c67586797202012d38c8d40362ee9d9d58ef88c7be1c33894bc12235e3539123feb907b5e41726ccd",
-    "salt": "823ebefee0226f654e5f549aea1a2837",
+    "passwordHash": "f179b0441cd978f2678f4d14e3693e4717de43ade5a6d385c837e0a2a8747800ea5e6cfdc487000fcd460dba662e80a7aaf6cc64d3c7679a3c857fa49d30a8a1",
+    "salt": "8dca289c0186eac6b7107f5350aa5e82",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z"
+    "createdAt": "2026-10-24T17:41:26.006Z"
   },
   {
     "id": "usr-op-dispatch-01",
@@ -176,10 +147,9 @@
       "Finished",
       "Dispatched"
     ],
-    "passwordHash": "7e3ee85fc3b90503cf8863ecaa0119bb426878dd8adcbd1e1fc0ca5365c145ed256bcb06de6f58e5675325072fd55668c950f12d5f5960627aaf247c675ea0db",
-    "salt": "f8a73831eeae935e3495c55b1bae8740",
+    "passwordHash": "bce4520ef2342e1d6dc9fad2fb57f865f9d705744e93a522264d60ec01951ec6ee119c5a14da67f3f9b90b25e48fc8bd57d4091834c01ea1913cb2d12e378aae",
+    "salt": "4c724611af5f8ff20e1388202fc9e7b2",
     "isActive": true,
-    "createdAt": "2026-10-23T18:34:21.568Z",
-    "lastLoginAt": "2026-10-23T18:46:21.863Z"
+    "createdAt": "2026-10-24T17:41:26.006Z"
   }
 ]
