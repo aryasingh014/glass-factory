@@ -7,11 +7,12 @@ import {
   exportSelectedItemsToExcel,
   exportPartialDispatchNoteToExcel,
   exportBatchProgressMatrixToExcel,
+  STANDARD_EXCEL_COLUMNS,
   excelSaver,
 } from "./excelExport";
 import { ProductionStage } from "@shared/api";
 
-describe("Stage Export Functionality & Sticker Fields Verification", () => {
+describe("Stage Export Functionality & Exact 31 Required Columns Verification", () => {
   const db = JSON.parse(fs.readFileSync("./server/data/db.json", "utf8"));
   const fallbackItems = Array.from({ length: 5 }, (_, i) => ({
     id: `item-test-0${i + 1}`,
@@ -65,7 +66,44 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
 
   const stages: ProductionStage[] = ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"];
 
-  it("should export Stage WIP for all stages with all sticker and ERP details", () => {
+  it("should have exactly the 31 required columns specified by user", () => {
+    expect(STANDARD_EXCEL_COLUMNS).toEqual([
+      "Sr. No.",
+      "Order",
+      "OB",
+      "SFO",
+      "Batch",
+      "POS",
+      "Barcode",
+      "Customer Name",
+      "Project Name",
+      "Glass Code",
+      "Outer Glass (OP)",
+      "Spacer / PVB",
+      "Inner Glass (IG)",
+      "Glass Makeup / Buildup",
+      "Product Category",
+      "Glass Finish",
+      "Width",
+      "Height",
+      "Order Qty",
+      "Stage Qty",
+      "Unit",
+      "Total SQM",
+      "Process Route",
+      "Delivery Date",
+      "OPT Date",
+      "Origin",
+      "Delivery Location",
+      "Current Stage",
+      "Status",
+      "Last Updated",
+      "Remarks",
+    ]);
+    expect(STANDARD_EXCEL_COLUMNS.length).toBe(31);
+  });
+
+  it("should export Stage WIP for all stages with only the exact 31 details in order", () => {
     stages.forEach((st) => {
       const sampleItems = items.slice(0, 15);
       exportStageWipToExcel(st, sampleItems, `${st}_Test_WIP`, pis);
@@ -81,48 +119,15 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
       expect(rows.length).toBeGreaterThan(0);
 
       const firstRow = rows[0];
+      const keys = Object.keys(firstRow);
 
-      // Verify all sticker details are present in the exported file:
-      expect(firstRow).toHaveProperty("Order #");
-      expect(firstRow).toHaveProperty("OB #");
-      expect(firstRow).toHaveProperty("SFO #");
-      expect(firstRow).toHaveProperty("Batch #");
-      expect(firstRow).toHaveProperty("POS #");
-      expect(firstRow).toHaveProperty("Barcode");
-      expect(firstRow).toHaveProperty("Serial Number");
-      expect(firstRow).toHaveProperty("Customer Name");
-      expect(firstRow).toHaveProperty("Project Name");
-      expect(firstRow).toHaveProperty("Glass Code");
-      expect(firstRow).toHaveProperty("Glass Description");
-      expect(firstRow).toHaveProperty("Glass Makeup / Buildup");
-      expect(firstRow).toHaveProperty("Outer Glass (OP)");
-      expect(firstRow).toHaveProperty("Spacer / Cavity");
-      expect(firstRow).toHaveProperty("Inner Glass (IP)");
-      expect(firstRow).toHaveProperty("Product Category");
-      expect(firstRow).toHaveProperty("Glass Finish");
-      expect(firstRow).toHaveProperty("Width (mm)");
-      expect(firstRow).toHaveProperty("Height (mm)");
-      expect(firstRow).toHaveProperty("Order Qty (Line Qty)");
-      expect(firstRow).toHaveProperty("Stage Qty");
-      expect(firstRow).toHaveProperty("Unit");
-      expect(firstRow).toHaveProperty("Total SQM");
-      expect(firstRow).toHaveProperty("Sheet / Rack No");
-      expect(firstRow).toHaveProperty("Process Route");
-      expect(firstRow).toHaveProperty("Delivery Date");
-      expect(firstRow).toHaveProperty("OPT Date");
-      expect(firstRow).toHaveProperty("Origin");
+      expect(keys.length).toBe(31);
+      expect(keys).toEqual([...STANDARD_EXCEL_COLUMNS]);
       expect(firstRow["Origin"]).toBe("MADE IN UAE");
-      expect(firstRow).toHaveProperty("Delivery Location");
-      expect(firstRow).toHaveProperty("Current Stage");
-      expect(firstRow).toHaveProperty("Completed Stages");
-      expect(firstRow).toHaveProperty("Stage Specific Details");
-      expect(firstRow).toHaveProperty("Status");
-      expect(firstRow).toHaveProperty("Last Updated");
-      expect(firstRow).toHaveProperty("Remarks");
     });
   });
 
-  it("should export Stage History Logs with all sticker and audit details", () => {
+  it("should export Stage History Logs with only the exact 31 details in order", () => {
     stages.forEach((st) => {
       const stageHist = history.slice(0, 10).map((h: any) => ({ ...h, stage: st }));
       exportStageHistoryToExcel(st, stageHist, items, pis);
@@ -136,36 +141,15 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
       expect(rows.length).toBeGreaterThan(0);
 
       const firstRow = rows[0];
-      expect(firstRow).toHaveProperty("Log ID");
-      expect(firstRow).toHaveProperty("Workstation Stage");
-      expect(firstRow).toHaveProperty("Operator");
-      expect(firstRow).toHaveProperty("Order #");
-      expect(firstRow).toHaveProperty("OB #");
-      expect(firstRow).toHaveProperty("SFO #");
-      expect(firstRow).toHaveProperty("Batch #");
-      expect(firstRow).toHaveProperty("POS #");
-      expect(firstRow).toHaveProperty("Barcode");
-      expect(firstRow).toHaveProperty("Customer Name");
-      expect(firstRow).toHaveProperty("Project Name");
-      expect(firstRow).toHaveProperty("Glass Code");
-      expect(firstRow).toHaveProperty("Glass Description");
-      expect(firstRow).toHaveProperty("Glass Makeup / Buildup");
-      expect(firstRow).toHaveProperty("Width (mm)");
-      expect(firstRow).toHaveProperty("Height (mm)");
-      expect(firstRow).toHaveProperty("Order Qty (Line Qty)");
-      expect(firstRow).toHaveProperty("Processed QTY");
-      expect(firstRow).toHaveProperty("Total SQM");
-      expect(firstRow).toHaveProperty("Sheet / Rack No");
-      expect(firstRow).toHaveProperty("Process Route");
-      expect(firstRow).toHaveProperty("Delivery Date");
-      expect(firstRow).toHaveProperty("OPT Date");
-      expect(firstRow).toHaveProperty("Origin");
+      const keys = Object.keys(firstRow);
+
+      expect(keys.length).toBe(31);
+      expect(keys).toEqual([...STANDARD_EXCEL_COLUMNS]);
       expect(firstRow["Origin"]).toBe("MADE IN UAE");
-      expect(firstRow).toHaveProperty("Scan Status");
     });
   });
 
-  it("should export Selected Items with all sticker fields", () => {
+  it("should export Selected Items with only the exact 31 details in order", () => {
     exportSelectedItemsToExcel("Cutting", items.slice(0, 3), "Selected_Items_Verification", pis);
 
     const foundFilename = Object.keys(capturedFiles).find((f) => f.includes("Selected_Items_Verification"));
@@ -175,16 +159,16 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
     const sheet = wb.Sheets["Selected Items (Combined)"];
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
     expect(rows.length).toBe(3);
-    expect(rows[0]).toHaveProperty("Order #");
-    expect(rows[0]).toHaveProperty("Barcode");
-    expect(rows[0]).toHaveProperty("Customer Name");
-    expect(rows[0]).toHaveProperty("Project Name");
-    expect(rows[0]).toHaveProperty("Delivery Date");
-    expect(rows[0]).toHaveProperty("OPT Date");
-    expect(rows[0]["Origin"]).toBe("MADE IN UAE");
+
+    const firstRow = rows[0];
+    const keys = Object.keys(firstRow);
+
+    expect(keys.length).toBe(31);
+    expect(keys).toEqual([...STANDARD_EXCEL_COLUMNS]);
+    expect(firstRow["Origin"]).toBe("MADE IN UAE");
   });
 
-  it("should export Delivery Note with all required sticker details", () => {
+  it("should export Delivery Note with only the exact 31 details in order", () => {
     exportPartialDispatchNoteToExcel(pis[0], items.slice(0, 5));
 
     const foundFilename = Object.keys(capturedFiles).find((f) => f.includes("Delivery_Note"));
@@ -192,29 +176,18 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
 
     const wb = capturedFiles[foundFilename!];
     const sheet = wb.Sheets["Delivery_Note"];
-    const tableData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
+    expect(rows.length).toBe(5);
 
-    const headerRow = tableData[7];
-    expect(headerRow).toContain("Order #");
-    expect(headerRow).toContain("OB #");
-    expect(headerRow).toContain("SFO #");
-    expect(headerRow).toContain("Batch #");
-    expect(headerRow).toContain("POS #");
-    expect(headerRow).toContain("Barcode");
-    expect(headerRow).toContain("Glass Code");
-    expect(headerRow).toContain("Glass Description");
-    expect(headerRow).toContain("Glass Makeup / Buildup");
-    expect(headerRow).toContain("Width (mm)");
-    expect(headerRow).toContain("Height (mm)");
-    expect(headerRow).toContain("Order Qty");
-    expect(headerRow).toContain("Dispatched QTY");
-    expect(headerRow).toContain("Total SQM");
-    expect(headerRow).toContain("Rack No");
-    expect(headerRow).toContain("Delivery Date");
-    expect(headerRow).toContain("Origin");
+    const firstRow = rows[0];
+    const keys = Object.keys(firstRow);
+
+    expect(keys.length).toBe(31);
+    expect(keys).toEqual([...STANDARD_EXCEL_COLUMNS]);
+    expect(firstRow["Origin"]).toBe("MADE IN UAE");
   });
 
-  it("should export Batch Progress Matrix with all sticker and workstation columns", () => {
+  it("should export Batch Progress Matrix with only the exact 31 details in order", () => {
     exportBatchProgressMatrixToExcel(pis[0], items.slice(0, 5));
 
     const foundFilename = Object.keys(capturedFiles).find((f) => f.includes("Batch_Matrix"));
@@ -226,28 +199,14 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
     expect(rows.length).toBe(5);
 
     const firstRow = rows[0];
-    expect(firstRow).toHaveProperty("Order #");
-    expect(firstRow).toHaveProperty("OB #");
-    expect(firstRow).toHaveProperty("SFO #");
-    expect(firstRow).toHaveProperty("Batch Number");
-    expect(firstRow).toHaveProperty("POS #");
-    expect(firstRow).toHaveProperty("Barcode");
-    expect(firstRow).toHaveProperty("Customer");
-    expect(firstRow).toHaveProperty("Project");
-    expect(firstRow).toHaveProperty("Glass Code");
-    expect(firstRow).toHaveProperty("Glass Description");
-    expect(firstRow).toHaveProperty("Glass Makeup / Buildup");
-    expect(firstRow).toHaveProperty("Order QTY (Line Qty)");
-    expect(firstRow).toHaveProperty("Order SQM");
-    expect(firstRow).toHaveProperty("Sheet / Rack No");
-    expect(firstRow).toHaveProperty("Process Route");
-    expect(firstRow).toHaveProperty("Delivery Date");
-    expect(firstRow).toHaveProperty("OPT Date");
-    expect(firstRow).toHaveProperty("Origin");
+    const keys = Object.keys(firstRow);
+
+    expect(keys.length).toBe(31);
+    expect(keys).toEqual([...STANDARD_EXCEL_COLUMNS]);
     expect(firstRow["Origin"]).toBe("MADE IN UAE");
   });
 
-  it("should accurately resolve 3-layer glass buildup: Outer Glass, Spacer, and Inner Glass", () => {
+  it("should accurately resolve 3-layer glass buildup: Outer Glass (OP), Spacer / PVB, and Inner Glass (IG)", () => {
     const colourItem = {
       id: "test-col-1",
       piId: "batch-test",
@@ -293,8 +252,8 @@ describe("Stage Export Functionality & Sticker Fields Verification", () => {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
 
     expect(rows[0]["Outer Glass (OP)"]).toBe("8MM EMICOOL DSR III ON CLEAR");
-    expect(rows[0]["Spacer / Cavity"]).toBe("16MM BLACK SPACER");
-    expect(rows[0]["Inner Glass (IP)"]).toBe("8MM CLEAR");
+    expect(rows[0]["Spacer / PVB"]).toBe("16MM BLACK SPACER");
+    expect(rows[0]["Inner Glass (IG)"]).toBe("8MM CLEAR");
     expect(rows[0]["Glass Makeup / Buildup"]).toBe("8MM EMICOOL DSR III ON CLEAR + 16MM BLACK SPACER + 8MM CLEAR");
   });
 });

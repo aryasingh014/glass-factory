@@ -2985,7 +2985,7 @@ export default function Index() {
                           type="button"
                           onClick={() => {
                             setIsBatchExportOpen(false);
-                            exportStageWipToExcel("Cutting", items, "All_Batch_Items_Full");
+                            exportStageWipToExcel("Cutting", items, "All_Batch_Items_Full", pis);
                           }}
                           className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2 cursor-pointer"
                         >

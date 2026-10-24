@@ -49,7 +49,7 @@ import {
   isDlguGlass,
   formatDubaiDateTime,
 } from "@/lib/utils";
-import { exportPartialDispatchNoteToExcel, resolveGlassMakeupDetails } from "@/lib/excelExport";
+import { exportPartialDispatchNoteToExcel, resolveGlassMakeupDetails, buildItemExportRows, standardColWidths } from "@/lib/excelExport";
 
 interface DispatchedHistoryViewProps {
   items: GlassItem[];
@@ -736,72 +736,12 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
           ? filteredUnitRows.filter((r) => selectedRowIds.includes(r.id))
           : filteredUnitRows;
 
-      const excelRows = rowsToExport.map((r, idx) => {
-        const it = r.item;
-        const partner = r.partnerItem;
-        const parentPI = pis.find(
-          (p) => p.id === it.piId || p.piNumber === it.piNumber || (it.batchNo && p.batchNo === it.batchNo)
-        );
-        const dispDate = r.dispatchedTimestamp
-          ? formatDubaiDateTime(r.dispatchedTimestamp)
-          : formatPlatformDate(new Date());
-
-        const routeText = Array.isArray(it.processRoute)
-          ? it.processRoute.join(" → ")
-          : String(it.processRoute || "—");
-
-        const makeupDetails = resolveGlassMakeupDetails(it, items, pis);
-
-        return {
-          "Sr No": idx + 1,
-          "Order #": it.orderNo || parentPI?.jobOrderNumber || "—",
-          "OB #": it.obNo || parentPI?.obNo || "—",
-          "SFO #": it.sfoNo || parentPI?.sfoNo || "—",
-          "Batch #": it.batchNo || formatBatchNumber(it.piNumber) || parentPI?.batchNo || "—",
-          "POS #": it.posNo || "—",
-          "Barcode": it.barcode || "—",
-          "Unit / Sticker Serial": it.serialNumber,
-          "Customer Name": r.customerName || parentPI?.customerName || "—",
-          "Project Name": r.projectName || parentPI?.projectName || "—",
-          "Glass Code": it.glassCode || it.itemCode || "—",
-          "Glass Description": it.glassType || it.itemCode || "—",
-          "Glass Makeup / Buildup": makeupDetails.makeup,
-          "Outer Glass (OP)": makeupDetails.outerGlass,
-          "Spacer / Cavity": makeupDetails.spacer,
-          "Inner Glass (IP)": makeupDetails.innerGlass,
-          "Glass Category": r.glassCategory,
-          "Finish Type": getItemFinish(it),
-          "Width (mm)": it.width,
-          "Height (mm)": it.height,
-          "Order Qty (Line Qty)": it.lineQty || it.qty || 1,
-          "Dispatched QTY (Units)": r.effectiveQty,
-          "Area (SQM)": parseFloat(r.effectiveSqm.toFixed(2)),
-          "Sheet / Rack No": it.rackNo || "—",
-          "Process Route": routeText,
-          "Delivery Date": it.delDate || parentPI?.deliveryDate || "—",
-          "OPT Date": it.optDate || parentPI?.sfoDate || parentPI?.issueDate || "—",
-          "Origin": "MADE IN UAE",
-          "Delivery Location": it.delLocation || "FACTORY",
-          "Dispatch Note No": it.dispatchNoteNo || "—",
-          "Dispatched Date": dispDate,
-          "Dispatched By": r.operatorName || "Dispatch Desk",
-          "Partner Pane Serials":
-            r.allSerials.length > 1 ? r.allSerials.filter((s) => s !== it.serialNumber).join(", ") : "Single Lite",
-          "IP Glass Details": partner
-            ? `${partner.serialNumber} (${partner.glassType || "Inner Pane"})`
-            : "—",
-          "Status": "Dispatched",
-        };
-      });
+      const excelRows = buildItemExportRows(rowsToExport.map((r) => r.item), "Finished", pis);
 
       const worksheet = XLSX.utils.json_to_sheet(excelRows);
       const workbook = XLSX.utils.book_new();
+      worksheet["!cols"] = standardColWidths;
       XLSX.utils.book_append_sheet(workbook, worksheet, "Dispatched History");
-
-      const colWidths = Object.keys(excelRows[0] || {}).map((key) => ({
-        wch: Math.max(key.length, 14),
-      }));
-      worksheet["!cols"] = colWidths;
 
       const dateTag = new Date().toISOString().split("T")[0];
       XLSX.writeFile(workbook, `Sejal_Dispatched_History_${dateTag}.xlsx`);

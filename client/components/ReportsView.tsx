@@ -49,7 +49,7 @@ import {
   getDisplayStage,
 } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { resolveGlassMakeupDetails } from "@/lib/excelExport";
+import { resolveGlassMakeupDetails, buildItemExportRows, standardColWidths } from "@/lib/excelExport";
 import { ReportsResponse, PIMaster, GlassItem, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage } from "@shared/api";
 
 interface BatchSheetGroup<T> {
@@ -1174,99 +1174,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         toast.error("No items to export in current filtered view");
         return;
       }
-      const exportRows = filteredItems.map((item, idx) => {
-        const eff = getDguEffectiveQtyAndSqm(item);
-        const finish = getItemFinish(item);
-        const cust = getCustomerNameForItem(item);
-        const matchingPI = (reportData?.pis || []).find(
-          (p) => p.id === item.piId || p.piNumber === item.piNumber || (item.batchNo && p.batchNo === item.batchNo)
-        );
-
-        const productType = isDlguGlass(item) || (item as any).glassCategory === "DLGU"
-          ? "DLGU Unit"
-          : isDguGlass(item) || (item as any).glassCategory === "DGU"
-          ? "DGU / IGU Unit"
-          : isLaminatedGlass(item) || (item as any).glassCategory === "Lamination"
-          ? "Laminated Glass"
-          : "General Monolithic";
-
-        const routeText = Array.isArray(item.processRoute)
-          ? item.processRoute.join(" → ")
-          : String(item.processRoute || "—");
-
-        const makeupDetails = resolveGlassMakeupDetails(item, filteredItems, reportData?.pis || []);
-
-        return {
-          "Sr No": idx + 1,
-          "Order #": item.orderNo || matchingPI?.jobOrderNumber || matchingPI?.proformaInvNo || "—",
-          "OB #": item.obNo || matchingPI?.obNo || "—",
-          "SFO #": item.sfoNo || matchingPI?.sfoNo || matchingPI?.jobOrderNumber || "—",
-          "Batch #": item.batchNo || formatBatchNumber(item.piNumber) || matchingPI?.batchNo || "—",
-          "POS #": item.posNo || "—",
-          "Barcode": item.barcode,
-          "Serial Number": item.serialNumber,
-          "Customer Name": cust,
-          "Project Name": item.projectName || matchingPI?.projectName || "—",
-          "Glass Code": item.glassCode || item.itemCode || "—",
-          "Glass Description": item.glassType,
-          "Glass Makeup / Buildup": makeupDetails.makeup,
-          "Outer Glass (OP)": makeupDetails.outerGlass,
-          "Spacer / Cavity": makeupDetails.spacer,
-          "Inner Glass (IP)": makeupDetails.innerGlass,
-          "Product Category": productType,
-          "Glass Finish": finish,
-          "Width (mm)": item.width,
-          "Height (mm)": item.height,
-          "Order Qty (Line Qty)": item.lineQty || item.qty || 1,
-          "Stage Qty": eff.qty,
-          "Unit": eff.unitLabel,
-          "Total SQM": eff.sqm,
-          "Sheet / Rack No": item.rackNo || "—",
-          "Process Route": routeText,
-          "Delivery Date": item.delDate || matchingPI?.deliveryDate || "—",
-          "OPT Date": item.optDate || matchingPI?.sfoDate || matchingPI?.issueDate || "—",
-          "Origin": "MADE IN UAE",
-          "Delivery Location": item.delLocation || "FACTORY",
-          "Current Stage": getDisplayStage(item, item.currentStage),
-          "Status": item.status || "Pending",
-          "Last Updated": formatDubaiDateTime(item.updatedAt || item.createdAt),
-          "Remarks": item.remarks || "",
-        };
-      });
+      const exportRows = buildItemExportRows(filteredItems, undefined, reportData?.pis || []);
       const ws = XLSX.utils.json_to_sheet(exportRows);
-      ws["!cols"] = [
-        { wch: 6 },  // Sr No
-        { wch: 12 }, // Order #
-        { wch: 12 }, // OB #
-        { wch: 12 }, // SFO #
-        { wch: 14 }, // Batch #
-        { wch: 8 },  // POS #
-        { wch: 22 }, // Barcode
-        { wch: 14 }, // Serial Number
-        { wch: 30 }, // Customer Name
-        { wch: 22 }, // Project Name
-        { wch: 22 }, // Glass Code
-        { wch: 36 }, // Glass Description
-        { wch: 30 }, // Glass Makeup
-        { wch: 18 }, // Product Category
-        { wch: 12 }, // Glass Finish
-        { wch: 12 }, // Width
-        { wch: 12 }, // Height
-        { wch: 14 }, // Order Qty
-        { wch: 10 }, // Stage Qty
-        { wch: 10 }, // Unit
-        { wch: 12 }, // Total SQM
-        { wch: 14 }, // Sheet / Rack No
-        { wch: 26 }, // Process Route
-        { wch: 14 }, // Delivery Date
-        { wch: 14 }, // OPT Date
-        { wch: 14 }, // Origin
-        { wch: 16 }, // Delivery Location
-        { wch: 16 }, // Current Stage
-        { wch: 14 }, // Status
-        { wch: 22 }, // Last Updated
-        { wch: 25 }, // Remarks
-      ];
+      ws["!cols"] = standardColWidths;
       XLSX.utils.book_append_sheet(wb, ws, "Glass Items");
       XLSX.writeFile(wb, `Sejal_Glass_Items_Report_${dateStr}.xlsx`);
       toast.success("Glass items report exported to Excel");

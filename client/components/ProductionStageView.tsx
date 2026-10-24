@@ -3530,7 +3530,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => {
                         setIsExportMenuOpen(false);
                         const exportItems = displayedRows.map((r) => r.item);
-                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`);
+                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`, pis);
                       }}
                       className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2 cursor-pointer"
                     >
@@ -3549,7 +3549,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           toast.info(`Fetching completed ${stage} stage logs...`);
                           const res = await fetch("/api/reports");
                           const data = await res.json();
-                          exportStageHistoryToExcel(stage, data.history || [], items);
+                          exportStageHistoryToExcel(stage, data.history || [], items, pis);
                         } catch {
                           toast.error("Failed to fetch stage completion history.");
                         }
@@ -3569,7 +3569,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
+                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item), undefined, pis);
                         }}
                         className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2 cursor-pointer"
                       >
@@ -3926,7 +3926,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                       onClick={() => {
                         setIsExportMenuOpen(false);
                         const exportItems = displayedRows.map((r) => r.item);
-                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`);
+                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`, pis);
                       }}
                       className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2"
                     >
@@ -3945,7 +3945,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                           toast.info(`Fetching completed ${stage} stage logs...`);
                           const res = await fetch("/api/reports");
                           const data = await res.json();
-                          exportStageHistoryToExcel(stage, data.history || [], items);
+                          exportStageHistoryToExcel(stage, data.history || [], items, pis);
                         } catch {
                           toast.error("Failed to fetch stage completion history.");
                         }
@@ -3965,7 +3965,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         onClick={() => {
                           setIsExportMenuOpen(false);
                           const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item));
+                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item), undefined, pis);
                         }}
                         className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2"
                       >
