@@ -24,8 +24,8 @@ import { getAllUserRecords } from "../lib/users";
 function isDlguGlass(item: any): boolean {
   if (item.glassCategory === "DLGU") return true;
   const desc = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""}`.toLowerCase();
-  const hasInterlayer = /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(desc);
-  const hasSpacer = /spacer|dgu|igu/i.test(desc);
+  const hasInterlayer = /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(desc);
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(desc);
   return hasInterlayer && hasSpacer;
 }
 
@@ -34,10 +34,7 @@ function isDguGlass(item: any): boolean {
   const desc = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
   return (
     item.processRoute?.includes("DGU") ||
-    desc.includes("dgu") ||
-    desc.includes("igu") ||
-    desc.includes("double") ||
-    desc.includes("spacer")
+    /\b(dgu|igu|double|spacer)\b/i.test(desc)
   );
 }
 
@@ -46,10 +43,7 @@ function isLaminatedGlass(item: any): boolean {
   const desc = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
   return (
     item.processRoute?.includes("Lamination") ||
-    desc.includes("lam") ||
-    desc.includes("pvb") ||
-    desc.includes("sgp") ||
-    desc.includes("eva")
+    /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(desc)
   );
 }
 

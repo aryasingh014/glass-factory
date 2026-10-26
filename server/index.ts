@@ -1,4 +1,5 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ override: true });
 import "./lib/env";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
@@ -6,7 +7,8 @@ import compression from "compression";
 import { UserRole } from "@shared/api";
 import { generateToken, verifyToken } from "./lib/auth";
 import { logger } from "./lib/logger";
-import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk } from "./routes/pi";
+import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk, syncDatabaseWithMongo } from "./routes/pi";
+import { syncUsersWithMongo } from "./lib/users";
 import {
   handleScanLookup,
   handleAdvanceStage,
@@ -143,6 +145,15 @@ function rateLimiter(options: { windowMs?: number; max?: number } = {}) {
 
 export function createServer() {
   loadDatabaseFromDisk(true);
+
+  // Background non-blocking sync with MongoDB Atlas
+  syncDatabaseWithMongo().catch((err) => {
+    logger.error("Failed to sync database with MongoDB Atlas", { error: err?.message || String(err) });
+  });
+  syncUsersWithMongo().catch((err) => {
+    logger.error("Failed to sync users with MongoDB Atlas", { error: err?.message || String(err) });
+  });
+
   const app = express();
 
   // Compression middleware - Compresses JSON payloads and static assets by 70-85% over remote/ngrok connections

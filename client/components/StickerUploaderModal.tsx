@@ -697,8 +697,8 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       // Check full text corpus from PDF and makeup lines to distinguish Lamination from DGU
       const fileNameStr = uploadedFile?.name || file?.name || "";
       const corpusLower = (fileNameStr + " " + fullCorpusText).toLowerCase();
-      const hasSpacer = corpusLower.includes("spacer") || corpusLower.includes("dgu") || corpusLower.includes("igu");
-      const hasInterlayer = corpusLower.includes("pvb") || corpusLower.includes("sgp") || corpusLower.includes("eva") || corpusLower.includes("lamination") || corpusLower.includes("laminated") || corpusLower.includes("lam");
+      const hasSpacer = /\b(spacer|dgu|igu|double\s*glaz)\b/i.test(corpusLower);
+      const hasInterlayer = /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(corpusLower);
 
       let detectedCategory: "DGU" | "Lamination" | "DLGU" = "DGU";
       if (hasSpacer && hasInterlayer) {

@@ -1078,9 +1078,9 @@ export function isDlguItem(item: any): boolean {
     if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("laminated") || str.includes("pvb") || str.includes("sgp");
-  return hasSpacer && hasLam;
+  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
+  return (hasSpacer && hasLam) || str.includes("dlgu");
 }
 
 export function isDguItem(item: any): boolean {
@@ -1093,8 +1093,8 @@ export function isDguItem(item: any): boolean {
     if (item.processRoute.includes("Lamination")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("dgu") || str.includes("igu") || str.includes("double") || str.includes("spacer");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("lgu") || str.includes("pvb") || str.includes("sgp");
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
   return hasSpacer && !hasLam;
 }
 
@@ -1108,8 +1108,8 @@ export function isLaminationItem(item: any): boolean {
     if (item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("dgu") || str.includes("igu") || str.includes("double") || str.includes("spacer");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("lgu") || str.includes("pvb") || str.includes("sgp");
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
   return hasLam && !hasSpacer;
 }
 
@@ -3493,8 +3493,8 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
     " " +
     items.map((raw: any) => `${raw.glassType || ""} ${raw.glassCode || ""} ${raw.category || ""} ${raw.remarks || ""} ${raw.makeup || ""}`).join(" ")
   ).toLowerCase();
-  const hasInterlayerKeyword = itemsText.includes("pvb") || itemsText.includes("sgp") || itemsText.includes("eva") || itemsText.includes("lamination") || itemsText.includes("laminated") || itemsText.includes("lam");
-  const hasSpacerKeyword = itemsText.includes("spacer") || itemsText.includes("dgu") || itemsText.includes("igu");
+  const hasInterlayerKeyword = /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(itemsText);
+  const hasSpacerKeyword = /\b(spacer|dgu|igu|double\s*glaz)\b/i.test(itemsText);
 
   let defaultGlassCategory: "DGU" | "Lamination" | "DLGU" = "DGU";
   if (glassCategory === "DLGU") {

@@ -4,6 +4,7 @@ import path from "path";
 import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification, BARCODE_PREFIX, formatGenericBarcode } from "../../shared/api";
 import { broadcastUpdate } from "./production";
 import { logger } from "../lib/logger";
+import { loadProductionFromMongo, saveProductionToMongo } from "../lib/mongodb";
 
 const DATA_DIR = path.resolve(process.cwd(), "server/data");
 const DATA_FILE = path.join(DATA_DIR, "db.json");
@@ -528,6 +529,11 @@ export function saveDatabaseToDisk(immediate = false): void {
           logger.error("Failed to save database to disk asynchronously", { error: err.message });
         }
       });
+
+      // Also persist to MongoDB Atlas in background
+      saveProductionToMongo(data).catch((err) => {
+        logger.error("[MongoDB] Failed to async save to MongoDB Atlas", { error: err?.message || String(err) });
+      });
     } catch (err: any) {
       logger.error("Failed to save database to disk", { error: err?.message || String(err) });
     }
@@ -542,6 +548,54 @@ export function saveDatabaseToDisk(immediate = false): void {
   } else {
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(executeSave, 100);
+  }
+}
+
+/**
+ * Synchronize in-memory database with MongoDB Atlas.
+ * If MongoDB has data, load it and update local cache.
+ * If MongoDB is empty, seed it from local database.
+ */
+export async function syncDatabaseWithMongo(): Promise<void> {
+  try {
+    const mongoData = await loadProductionFromMongo();
+    if (mongoData && Array.isArray(mongoData.piDatabase) && mongoData.piDatabase.length > 0) {
+      piDatabase.splice(0, piDatabase.length, ...mongoData.piDatabase);
+      glassItemsDatabase.splice(0, glassItemsDatabase.length, ...(Array.isArray(mongoData.glassItemsDatabase) ? mongoData.glassItemsDatabase : []));
+      productionHistoryDatabase.splice(0, productionHistoryDatabase.length, ...(Array.isArray(mongoData.productionHistoryDatabase) ? mongoData.productionHistoryDatabase : []));
+      rejectDatabase.splice(0, rejectDatabase.length, ...(Array.isArray(mongoData.rejectDatabase) ? mongoData.rejectDatabase : []));
+      reworkDatabase.splice(0, reworkDatabase.length, ...(Array.isArray(mongoData.reworkDatabase) ? mongoData.reworkDatabase : []));
+      notificationsDatabase.splice(0, notificationsDatabase.length, ...(Array.isArray(mongoData.notificationsDatabase) ? mongoData.notificationsDatabase : []));
+
+      // Save local backup snapshot to disk
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(DATA_FILE, JSON.stringify({
+        piDatabase,
+        glassItemsDatabase,
+        productionHistoryDatabase,
+        rejectDatabase,
+        reworkDatabase,
+        notificationsDatabase,
+      }), "utf-8");
+
+      broadcastUpdate();
+      logger.info(`[MongoDB] Successfully loaded ${piDatabase.length} batches and ${glassItemsDatabase.length} items from MongoDB Atlas.`);
+    } else if (piDatabase.length > 0) {
+      // Seed MongoDB with current local database
+      await saveProductionToMongo({
+        piDatabase,
+        glassItemsDatabase,
+        productionHistoryDatabase,
+        rejectDatabase,
+        reworkDatabase,
+        notificationsDatabase,
+      });
+      logger.info(`[MongoDB] Seeded MongoDB Atlas with current ${piDatabase.length} batches and ${glassItemsDatabase.length} items.`);
+    }
+  } catch (err: any) {
+    logger.error("[MongoDB] Error syncing database with MongoDB", { error: err?.message || String(err) });
   }
 }
 

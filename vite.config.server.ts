@@ -32,6 +32,10 @@ export default defineConfig({
         // External dependencies that should not be bundled
         "express",
         "cors",
+        "mongodb",
+        "compression",
+        "nodemailer",
+        "dotenv",
       ],
       output: {
         format: "es",

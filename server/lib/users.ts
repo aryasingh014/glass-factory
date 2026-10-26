@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage } from "@shared/api";
 import { logger } from "./logger";
+import { loadUsersFromMongo, saveUsersToMongo } from "./mongodb";
 
 export interface User {
   id: string;
@@ -206,8 +207,32 @@ export function saveUsersToDisk(): void {
         if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
       } catch {}
     }
+
+    // Also persist to MongoDB Atlas in background
+    saveUsersToMongo(usersDatabase).catch((err) => {
+      logger.error("[MongoDB] Failed to async save users to MongoDB Atlas", { error: err?.message || String(err) });
+    });
   } catch (err) {
     logger.error("Error saving users to disk", { err });
+  }
+}
+
+/**
+ * Synchronize users with MongoDB Atlas
+ */
+export async function syncUsersWithMongo(): Promise<void> {
+  try {
+    const mongoUsers = await loadUsersFromMongo();
+    if (mongoUsers && Array.isArray(mongoUsers) && mongoUsers.length > 0) {
+      usersDatabase.splice(0, usersDatabase.length, ...mongoUsers);
+      saveUsersToDisk();
+      logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas.`);
+    } else if (usersDatabase.length > 0) {
+      await saveUsersToMongo(usersDatabase);
+      logger.info(`[MongoDB] Seeded MongoDB Atlas with ${usersDatabase.length} users.`);
+    }
+  } catch (err: any) {
+    logger.error("[MongoDB] Error syncing users with MongoDB", { error: err?.message || String(err) });
   }
 }
 

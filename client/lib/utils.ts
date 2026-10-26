@@ -267,8 +267,8 @@ export function isDlguGlass(item: { processRoute?: string[]; glassType?: string;
     if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("spacer") || str.includes("dgu") || str.includes("igu") || str.includes("dlgu");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("laminated") || str.includes("pvb") || str.includes("sgp") || str.includes("dlgu");
+  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
   return (hasSpacer && hasLam) || str.includes("dlgu");
 }
 
@@ -303,8 +303,8 @@ export function isDguGlass(item: { processRoute?: string[]; glassType?: string; 
     if (item.processRoute.includes("Lamination")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("dgu") || str.includes("igu") || str.includes("double") || str.includes("spacer");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("lgu") || str.includes("pvb") || str.includes("sgp");
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
   return hasSpacer && !hasLam;
 }
 
@@ -321,8 +321,8 @@ export function isLaminatedGlass(item: { processRoute?: string[]; glassType?: st
     if (item.processRoute.includes("DGU")) return false;
   }
   const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = str.includes("dgu") || str.includes("igu") || str.includes("double") || str.includes("spacer");
-  const hasLam = str.includes("lam") || str.includes("lamination") || str.includes("lgu") || str.includes("pvb") || str.includes("sgp");
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
   return hasLam && !hasSpacer;
 }
 
