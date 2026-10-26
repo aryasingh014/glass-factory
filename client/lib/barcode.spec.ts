@@ -410,13 +410,35 @@ describe("Generic Sticker & A1.pdf Barcode Scanning Support", () => {
         glassCategory: "DLGU",
         currentStage: "Cutting",
         processRoute: ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"],
-        completedStages: [],
-        status: "Pending",
       };
       const res = evaluateScanStatus([dlguItem], "]I01012627016100032", "Cutting");
       expect(res.status).toBe("can_advance");
       expect(res.item.serialNumber).toBe("S149");
       expect(res.item.posNo).toBe("11");
+    });
+
+    it("evaluates scan status for item with quantity of 5 (piece 1 of 5, 5 total, 5 in stage)", () => {
+      const itemWithQty5 = {
+        id: "item-qty5-1",
+        serialNumber: "S246",
+        barcode: "1812627016610063",
+        posNo: "32",
+        orderNo: "5846",
+        batchNo: "5846",
+        sfoNo: "15227",
+        width: 1788,
+        height: 2890,
+        qty: 5,
+        currentStage: "Cutting",
+        processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+        completedStages: [],
+        status: "In Production",
+      };
+      const res = evaluateScanStatus([itemWithQty5], "1812627016610063", "Cutting");
+      expect(res.status).toBe("can_advance");
+      expect(res.item.serialNumber).toBe("S246");
+      expect(res.totalMatching).toBe(5);
+      expect(res.remainingInStage).toBe(5);
     });
   });
 });

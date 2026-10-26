@@ -6,7 +6,7 @@ import {
   Power, Smartphone, Laptop, Globe, ShieldCheck, UserCheck, Zap, Activity,
   Search, Filter, Scissors, Sparkles, Layers, Boxes, Box, PackageCheck,
   Truck, Camera, Tag, ScanLine, RotateCcw, ClipboardList, FileSpreadsheet,
-  FileText, Eye, AlertOctagon, SlidersHorizontal, Calendar, AlertTriangle
+  FileText, Eye, EyeOff, AlertOctagon, SlidersHorizontal, Calendar, AlertTriangle
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -50,6 +50,8 @@ export function SettingsView() {
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [isEditUserOpen, setIsEditUserOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
 
   // Add/Edit Form fields
   const [formData, setFormData] = useState<{
@@ -767,6 +769,7 @@ export function SettingsView() {
       assignedStages: u.assignedStages && u.assignedStages.length > 0 ? u.assignedStages : ["Cutting"],
     });
     setFormError(null);
+    setShowEditPassword(false);
     setIsEditUserOpen(true);
   };
 
@@ -809,6 +812,7 @@ export function SettingsView() {
             onClick={() => {
               setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true, assignedStages: ["Cutting"] });
               setFormError(null);
+              setShowPassword(false);
               setIsAddUserOpen(true);
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-2xs transition-all h-7 px-3 text-xs flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap"
@@ -1598,14 +1602,25 @@ export function SettingsView() {
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 block">Initial Password</label>
-                  <Input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="••••••••"
-                    className="h-10 rounded-xl"
-                    required
-                  />
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      placeholder="••••••••"
+                      className="h-10 rounded-xl pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer transition-colors p-1"
+                      title={showPassword ? "Hide password" : "Show password"}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 {/* SMTP Welcome Email Checkbox */}
@@ -1769,13 +1784,24 @@ export function SettingsView() {
                   <label className="text-xs font-bold text-slate-700 block">
                     New Password <span className="text-slate-400 font-normal">(Leave blank to keep current)</span>
                   </label>
-                  <Input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="New password (optional)"
-                    className="h-10 rounded-xl"
-                  />
+                  <div className="relative">
+                    <Input
+                      type={showEditPassword ? "text" : "password"}
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      placeholder="New password (optional)"
+                      className="h-10 rounded-xl pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowEditPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer transition-colors p-1"
+                      title={showEditPassword ? "Hide password" : "Show password"}
+                      tabIndex={-1}
+                    >
+                      {showEditPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/60">

@@ -499,14 +499,16 @@ export function evaluateScanStatus(
 
     if (stageItems.length > 0) {
       const itemToAdvance = stageItems[0];
+      const totalPieces = matches.reduce((sum, i) => sum + (parseInt(String(i.qty || 1), 10) || 1), 0);
+      const remainingPieces = stageItems.reduce((sum, i) => sum + (parseInt(String(i.qty || 1), 10) || 1), 0);
       return {
         status: "can_advance",
         item: itemToAdvance,
         matchingItems: matches,
         stageItems,
         completedStageItems: [],
-        totalMatching: matches.length,
-        remainingInStage: stageItems.length,
+        totalMatching: Math.max(matches.length, totalPieces),
+        remainingInStage: Math.max(stageItems.length, remainingPieces),
         stageName: preferredStage,
         message: `Ready to advance ${itemToAdvance.serialNumber} at ${preferredStage}`,
       };
@@ -530,7 +532,8 @@ export function evaluateScanStatus(
     if (completedStageItems.length > 0) {
       const firstItem = completedStageItems[0];
       const posLabel = firstItem.posNo ? `POS #${firstItem.posNo}` : (firstItem.itemCode || firstItem.serialNumber);
-      const totalCount = matches.length;
+      const totalPieces = matches.reduce((sum, i) => sum + (parseInt(String(i.qty || 1), 10) || 1), 0);
+      const totalCount = Math.max(matches.length, totalPieces);
       const currentLoc = firstItem.currentStage || "Next Stage";
 
       const message = totalCount > 1
@@ -543,7 +546,7 @@ export function evaluateScanStatus(
         matchingItems: matches,
         stageItems: [],
         completedStageItems,
-        totalMatching: matches.length,
+        totalMatching: totalCount,
         remainingInStage: 0,
         stageName: preferredStage,
         message,
@@ -590,14 +593,16 @@ export function evaluateScanStatus(
     });
 
     const itemToAdvance = activeMatches[0];
+    const totalPieces = matches.reduce((sum, i) => sum + (parseInt(String(i.qty || 1), 10) || 1), 0);
+    const remainingPieces = activeMatches.reduce((sum, i) => sum + (parseInt(String(i.qty || 1), 10) || 1), 0);
     return {
       status: "can_advance",
       item: itemToAdvance,
       matchingItems: matches,
       stageItems: activeMatches,
       completedStageItems: [],
-      totalMatching: matches.length,
-      remainingInStage: activeMatches.length,
+      totalMatching: Math.max(matches.length, totalPieces),
+      remainingInStage: Math.max(activeMatches.length, remainingPieces),
       message: `Ready to advance ${itemToAdvance.serialNumber} from ${itemToAdvance.currentStage}`,
     };
   }

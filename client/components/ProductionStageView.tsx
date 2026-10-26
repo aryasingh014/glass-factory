@@ -2007,7 +2007,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   const handleAdvanceSheet = async (groupRows: StageRowItem[]) => {
     const serials = groupRows.flatMap((r) => r.allSerials);
-    await completeStage(serials);
+    await completeStage(serials, undefined, true);
   };
 
   const goToPrevSheet = () => {
@@ -2042,7 +2042,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
   const handleAdvanceSelectedSheets = async () => {
     const serials = displayedRows.flatMap((r) => r.allSerials);
-    await completeStage(serials);
+    await completeStage(serials, undefined, true);
   };
 
   // Apply custom direct range inputs (e.g. from Sheet 1 to 25)
@@ -2237,12 +2237,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       scannerAudio.playSuccess();
       // Single piece advance: each valid sticker scan advances 1 piece individually
       const remainingPieces = (targetItem.qty || 1) - 1;
+      const destination = nextStage === "Pairing" ? "Glass Pairing Buffer" : nextStage === "Finished" ? "Finished Warehouse" : nextStage;
       toast.success(
         remainingPieces > 0
-          ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo}). Count reduced by 1 (${remainingPieces} pcs remaining in ${stage}).`
-          : `Scanned & Completed piece ${targetItem.serialNumber}. Advancing to ${nextStage}...`
+          ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advanced to ${destination} (${remainingPieces} pcs remaining in ${stage}).`
+          : `Scanned & Completed piece ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`
       );
-      await completeStage(scanRow.allSerials, 1, false);
+      await completeStage(scanRow.allSerials, 1, false, true);
     } else {
       scannerAudio.playError();
       toast.error(`Barcode mismatch: scanned "${val}". Expected: ${scanRow.displayBarcode} or #${scanRow.displaySerial}`);
@@ -2261,7 +2262,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     },
   });
 
-  const completeStage = async (serialNumbers: string[], advanceQty?: number, advanceAll?: boolean) => {
+  const completeStage = async (serialNumbers: string[], advanceQty?: number, advanceAll?: boolean, skipSuccessToast?: boolean) => {
     // 1. Instant optimistic local UI transition (0 ms)
     onOptimisticAdvance?.(serialNumbers, stage);
     setSelectedRowIds([]);
@@ -2277,6 +2278,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         body: JSON.stringify({
           serialNumbers,
           advanceQty: advanceQty ?? 1,
+          advanceAll: advanceAll ?? false,
           stage,
           currentStage: stage,
           operator: effectiveOperator,
@@ -2285,10 +2287,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       });
       if (!res.ok) throw new Error("Failed to advance stage");
       const data = await res.json();
-      if (data.skippedCount > 0) {
-        toast.warning(`Advanced ${data.items.length} item(s). ${data.skippedCount} skipped.`);
-      } else {
-        toast.success(data.message || `Advanced ${data.items.length} item(s) from ${stage}!`);
+      if (!skipSuccessToast) {
+        if (data.skippedCount > 0) {
+          toast.warning(`Advanced ${data.items.length} item(s). ${data.skippedCount} skipped.`);
+        } else {
+          toast.success(data.message || `Advanced ${data.items.length} item(s) from ${stage}!`);
+        }
       }
       onRefresh();
     } catch (err: any) {
@@ -4455,7 +4459,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       <Button
                                         type="button"
                                         size="sm"
-                                        onClick={() => completeStage(row.allSerials)}
+                                        onClick={() => completeStage(row.allSerials, 1, false)}
                                         className="h-7 px-2.5 text-xs font-bold bg-gradient-to-r from-teal-500 to-teal-700 hover:bg-teal-700 text-white gap-1 rounded-lg"
                                       >
                                         <Play className="w-3 h-3 fill-current" /> Scan

@@ -258,6 +258,7 @@ export default function Index() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationFilter, setNotificationFilter] = useState<"all" | "unread" | "alerts">("all");
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
+  const recentLocalScansRef = React.useRef<Map<string, number>>(new Map());
 
   const unreadNotifications = notifications.filter((n) => !n.read).length;
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -506,6 +507,7 @@ export default function Index() {
   };
 
   const handleOptimisticAdvance = (serialNumbers: string[], fromStage: ProductionStage) => {
+    serialNumbers.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
     const serialSet = new Set(serialNumbers.map((s) => String(s).toLowerCase().trim()));
     setItems((prev) =>
       prev.map((item) => {
@@ -558,7 +560,11 @@ export default function Index() {
             } else if (notif.type === "warning") {
               toast.warning(`${notif.title}: ${notif.message}`);
             } else if (notif.type === "success") {
-              toast.success(`${notif.title}`);
+              const lastLocalTime = notif.serialNumber ? recentLocalScansRef.current.get(notif.serialNumber) : undefined;
+              const isRecentLocalAction = lastLocalTime && (Date.now() - lastLocalTime < 3500);
+              if (!isRecentLocalAction) {
+                toast.success(notif.message || notif.title);
+              }
             }
           }
         } catch (err) {
@@ -751,7 +757,8 @@ export default function Index() {
       });
       if (res.ok) {
         scannerAudio.playSuccess();
-        toast.success(`Advanced item ${item.serialNumber} (POS #${item.posNo || item.itemCode}) from ${currentStage} ➔ ${nextStage}!`);
+        const data = await res.json().catch(() => ({}));
+        toast.success(data.message || `Advanced item ${item.serialNumber} (POS #${item.posNo || item.itemCode}) from ${currentStage} ➔ ${nextStage}!`);
         fetchData(true);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -875,19 +882,20 @@ export default function Index() {
       const nextStage: ProductionStage = currentIndex >= 0 && currentIndex < route.length - 1 ? route[currentIndex + 1] : "Finished";
 
       // Calculate sticker piece progression notes for multi-sticker positions (e.g. Glass1.pdf POS 17, Glass2.pdf POS 15)
-      const totalMatching = scanEval.totalMatching || 1;
-      const remainingBeforeAdvance = scanEval.remainingInStage || 1;
+      const currentQty = parseInt(String(matchedItem.qty || 1), 10) || 1;
+      const totalMatching = Math.max(scanEval.totalMatching || 1, currentQty);
+      const remainingBeforeAdvance = Math.max(scanEval.remainingInStage || 1, currentQty);
       const remainingAfter = Math.max(0, remainingBeforeAdvance - 1);
       const stickerIndex = totalMatching > 1 ? totalMatching - remainingAfter : 1;
 
       const stickerLabel = totalMatching > 1
-        ? ` (Sticker ${stickerIndex} of ${totalMatching})`
+        ? ` (Piece ${stickerIndex} of ${totalMatching})`
         : "";
 
       const remainingNote = remainingAfter > 0
-        ? ` (${remainingAfter} sticker${remainingAfter > 1 ? "s" : ""} remaining in ${currentStage})`
+        ? ` (${remainingAfter} piece${remainingAfter > 1 ? "s" : ""} remaining in ${currentStage})`
         : totalMatching > 1
-          ? ` (All ${totalMatching} stickers completed ${currentStage})`
+          ? ` (All ${totalMatching} pieces completed in ${currentStage})`
           : "";
 
       // ── Pairing Guard: Cannot advance from Pairing without partner pane ──
@@ -972,6 +980,8 @@ export default function Index() {
 
       // Optimistic UI update
       handleOptimisticAdvance(idsToAdvance, currentStage);
+      idsToAdvance.forEach((id) => recentLocalScansRef.current.set(id, Date.now()));
+      serialsToAdvance.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
 
       try {
         const res = await fetch("/api/production/stage-complete", {

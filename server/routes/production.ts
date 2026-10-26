@@ -396,6 +396,15 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   const skippedItems: { serialNumber: string; reason: string }[] = [];
   const affectedPiIds = new Set<string>();
   const alreadyProcessedIds = new Set<string>();
+  const advanceDetails: {
+    serialNumber: string;
+    posNo?: string;
+    advancedQty: number;
+    remainingQty: number;
+    fromStage: string;
+    toStage: string;
+    isPieceScan: boolean;
+  }[] = [];
   let hasPairingItems = false;
 
   // Build fast O(1) index map: Pass 1 prioritizes active in-production items
@@ -753,6 +762,16 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         timestamp: new Date().toISOString(),
         remarks: `${cleanRemarks} (${qtyToAdvance} pc scanned • ${remainingQty} pcs remaining in ${currentStage})`,
       });
+
+      advanceDetails.push({
+        serialNumber: item.serialNumber,
+        posNo: item.posNo || item.itemCode,
+        advancedQty: qtyToAdvance,
+        remainingQty,
+        fromStage: currentStage,
+        toStage: nextStage,
+        isPieceScan: true,
+      });
     } else {
       // Full line item quantity advanced
       // DGU Stage Rule: After cutting process, standard DGU glass quantity is reduced to actual DGU unit quantity
@@ -893,6 +912,16 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       });
 
       updatedItems.push(item);
+
+      advanceDetails.push({
+        serialNumber: item.serialNumber,
+        posNo: item.posNo || item.itemCode,
+        advancedQty: currentQty,
+        remainingQty: 0,
+        fromStage: currentStage,
+        toStage: nextStage,
+        isPieceScan: false,
+      });
     }
 
     if (item.piId) {
@@ -943,13 +972,49 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   saveDatabaseToDisk(false);
   broadcastUpdate("stage_advanced", { count: updatedItems.length });
 
+  const formatStageDisplay = (stg: string) => {
+    if (!stg) return "";
+    const s = stg.trim().toLowerCase();
+    if (s === "pairing") return "Glass Pairing Buffer";
+    if (s === "finished") return "Finished Warehouse";
+    if (s === "dgu") return "DGU Assembly Line";
+    if (s === "lamination") return "Lamination Workstation";
+    if (s === "cutting") return "Cutting Workstation";
+    if (s === "polishing") return "Polishing Workstation";
+    return stg;
+  };
+
+  let richMessage = "";
+  if (advanceDetails.length === 1) {
+    const d = advanceDetails[0];
+    const humanTo = formatStageDisplay(d.toStage);
+    const humanFrom = formatStageDisplay(d.fromStage);
+    const posText = d.posNo ? ` (POS #${d.posNo})` : "";
+    if (d.remainingQty > 0) {
+      richMessage = `${d.advancedQty} pc of #${d.serialNumber}${posText} advanced from ${humanFrom} ➔ ${humanTo} • ${d.remainingQty} pcs remaining in ${humanFrom}`;
+    } else if (d.isPieceScan) {
+      richMessage = `Completed #${d.serialNumber}${posText} — Advanced ${d.advancedQty} pc from ${humanFrom} ➔ ${humanTo} (All pieces completed)`;
+    } else {
+      richMessage = `Advanced #${d.serialNumber}${posText} from ${humanFrom} ➔ ${humanTo}${d.advancedQty > 1 ? ` (${d.advancedQty} pcs)` : ""}`;
+    }
+  } else if (advanceDetails.length > 1) {
+    const firstDetail = advanceDetails[0];
+    const secondDetail = advanceDetails[1];
+    if (advanceDetails.length === 2 && firstDetail.toStage === secondDetail.toStage && firstDetail.posNo && firstDetail.posNo === secondDetail.posNo) {
+      richMessage = `Paired & Advanced #${firstDetail.serialNumber} + #${secondDetail.serialNumber} (POS #${firstDetail.posNo}) ➔ ${formatStageDisplay(firstDetail.toStage)}`;
+    } else {
+      const targetStageName = formatStageDisplay(updatedItems[0]?.currentStage || "Next Stage");
+      richMessage = `${updatedItems.length} items advanced to ${targetStageName}`;
+    }
+  }
+
   if (updatedItems.length > 0) {
     const firstItem = updatedItems[0];
     const targetStageName = firstItem?.currentStage || "Next Stage";
     const operatorName = (req as any).user?.username || req.body?.operator || "Operator";
     createAndBroadcastNotification({
       title: `${targetStageName} Stage Advanced`,
-      message: `${updatedItems.length} item(s) advanced to ${targetStageName}${firstItem?.serialNumber ? ` (Item #${firstItem.serialNumber})` : ""} by ${operatorName}`,
+      message: richMessage || `${updatedItems.length} item(s) advanced to ${formatStageDisplay(targetStageName)}${firstItem?.serialNumber ? ` (Item #${firstItem.serialNumber})` : ""} by ${operatorName}`,
       category: "STAGE_ADVANCE",
       type: "success",
       stage: targetStageName,
@@ -996,10 +1061,11 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   }
 
   res.json({
-    message: updatedItems.length > 0 ? "Item(s) advanced successfully" : "No items were advanced",
+    message: richMessage || (updatedItems.length > 0 ? "Item(s) advanced successfully" : "No items were advanced"),
     items: updatedItems,
     skippedItems,
     skippedCount: skippedItems.length,
+    advanceDetails,
   });
 };
 
