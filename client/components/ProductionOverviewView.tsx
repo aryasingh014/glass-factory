@@ -690,12 +690,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           </div>
         </div>
 
-        {/* 5. Rejected Items */}
+        {/* 5. Rejected Glass */}
         <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rejection Reports & Quality Logs">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
-              <h3>Rejected Items</h3>
+              <h3>Rejected Glass</h3>
               <strong>{metrics.rejectedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span style={{color: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>{metrics.rejectedCount === 0 ? "Quality" : "Audit"}</small></div>
             </div>
@@ -706,12 +706,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           </div>
         </div>
 
-        {/* 6. Rework Items */}
+        {/* 6. Rework Glass */}
         <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rework Routing & History">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-purple"><RotateCw className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
-              <h3>Rework Items</h3>
+              <h3>Rework Glass</h3>
               <strong>{metrics.reworkCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
               <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>{metrics.reworkCount === 0 ? "Normal" : "Active"}</span><small>Routing</small></div>
             </div>

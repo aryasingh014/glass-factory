@@ -95,7 +95,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       ],
     },
     {
-      title: "FACTORY WORKSTATIONS",
+      title: "FACTORY LINES",
       items: [
         {
           id: "cutting",
@@ -109,14 +109,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         { id: "polishing", label: "Polishing Workstation", icon: Sparkles, badge: stats?.pendingPolishing ?? 0 },
         { id: "dgu", label: "DGU/IGU Assembly", icon: PackageCheck, badge: stats?.pendingDGU ?? 0 },
         { id: "lamination", label: "Lamination Line", icon: Layers, badge: stats?.pendingLamination ?? 0 },
-        { id: "finished", label: "Finished Warehouse", icon: CheckCircle, badge: stats?.finishedItems ?? 0 },
+        { id: "finished", label: "Finished Glass", icon: CheckCircle, badge: stats?.finishedItems ?? 0 },
       ],
     },
     {
       title: "INTELLIGENCE & AUDIT",
       items: [
         { id: "reports", label: "Reports & Analytics", icon: BarChart3 },
-        { id: "analytics", label: "Performance Analytics", icon: Gauge },
+        { id: "analytics", label: "Daily Reports", icon: Gauge },
         { id: "settings", label: "System Settings", icon: FileEdit },
       ],
     },

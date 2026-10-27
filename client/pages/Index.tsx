@@ -2288,7 +2288,7 @@ export default function Index() {
                       <div className="ppb-metric-main">
                         <span className="ppb-metric-icon ppb-metric-icon-blue"><Upload className="w-6 h-6" /></span>
                         <div className="ppb-metric-copy">
-                          <h3>Total PDFs Uploaded</h3>
+                          <h3>Total Orders Uploaded</h3>
                           <strong>{totalUploadedPdfs}</strong>
                         </div>
                         <div className="ppb-sparkline">{[20, 25, 24, 34, 30, 48, 51, 72].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#3b82f6' }} />)}</div>
@@ -2300,7 +2300,7 @@ export default function Index() {
                       <div className="ppb-metric-main">
                         <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-6 h-6" /></span>
                         <div className="ppb-metric-copy">
-                          <h3>Finished Glass Items</h3>
+                          <h3>Completed Glass</h3>
                           <strong>{effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems}</strong>
                         </div>
                         <div className="ppb-sparkline">{[12, 21, 27, 35, 41, 50, 64, 78].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#10b981' }} />)}</div>
@@ -2312,7 +2312,7 @@ export default function Index() {
                       <div className="ppb-metric-main">
                         <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-6 h-6" /></span>
                         <div className="ppb-metric-copy">
-                          <h3>Rejected Items</h3>
+                          <h3>Rejected Glass</h3>
                           <strong>{effectiveStats.rejectItems}</strong>
                         </div>
                         <div className="ppb-sparkline">{[15, 23, 32, 45, 59, 72, 86, 100].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#ef4444' }} />)}</div>
@@ -2324,12 +2324,12 @@ export default function Index() {
                       <div className="ppb-metric-main">
                         <span className="ppb-metric-icon ppb-metric-icon-yellow"><RotateCw className="w-6 h-6" /></span>
                         <div className="ppb-metric-copy">
-                          <h3>Rework Items</h3>
+                          <h3>Rework Glass</h3>
                           <strong>{effectiveStats.reworkItems}</strong>
                         </div>
                         <div className="ppb-sparkline">{[16, 28, 46, 18, 37, 25, 51, 68].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#f59e0b' }} />)}</div>
                       </div>
-                      <div className="ppb-metric-note ppb-note-yellow"><RotateCw className="w-3.5 h-3.5" />Re-routed to Workstations</div>
+                      <div className="ppb-metric-note ppb-note-yellow"><RotateCw className="w-3.5 h-3.5" />Sent to Line</div>
                     </div>
                   </div>
 
@@ -2337,45 +2337,45 @@ export default function Index() {
                   <div className="ppb-dashboard-columns">
                     {/* LEFT COLUMN */}
                     <div className="ppb-left-col">
-                      {/* Live Stage Production Queues */}
+                      {/* Live Production Line */}
                       <section className="ppb-panel">
                         <div className="ppb-panel-heading">
-                          <div><Zap className="ppb-heading-icon" size={20} fill="currentColor" /><h3>Live Stage Production Queues</h3></div>
+                          <div><Zap className="ppb-heading-icon" size={20} fill="currentColor" /><h3>Live Production Line</h3></div>
                           <button onClick={() => setActiveTab("production-overview")}>View All <ChevronRight size={15} /></button>
                         </div>
                         <div className="ppb-queue-list">
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => setActiveTab("cutting")}>
                               <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={20} /></span>
-                              <div><strong>Cutting Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Items</span></div>
+                              <div><strong>Cutting Line</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Items</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => setActiveTab("polishing")}>
                               <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={20} /></span>
-                              <div><strong>Polishing Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Panes</span></div>
+                              <div><strong>Polishing Line</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Panes</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-green" onClick={() => setActiveTab("dgu")}>
                               <span className="ppb-queue-icon ppb-queue-icon-green"><Boxes size={20} /></span>
-                              <div><strong>DGU Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingDGU ?? 0}</b> Units</span></div>
+                              <div><strong>DGU Line</strong><span className="ppb-count"><b>{effectiveStats.pendingDGU ?? 0}</b> Units</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => setActiveTab("lamination")}>
                               <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
-                              <div><strong>Lamination Queue</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Items</span></div>
+                              <div><strong>Lamination Line</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Items</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => setActiveTab("finished")}>
                               <span className="ppb-queue-icon ppb-queue-icon-emerald"><CheckCircle size={20} /></span>
-                              <div><strong>Finished Warehouse</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Items</span></div>
+                              <div><strong>Finished Glass</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Items</span></div>
                             </div>
                           </div>
                         </div>
@@ -2419,20 +2419,20 @@ export default function Index() {
                         </div>
                       </section>
 
-                      {/* Workstation User Output (Stickers & SQM) */}
+                      {/* Worker Daily Progress (Stickers & SQM) */}
                       <section className="ppb-panel">
                         <div className="ppb-panel-heading">
                           <div className="flex items-center gap-2">
                             <Factory className="ppb-heading-icon" size={20} />
-                            <h3>User &amp; Machine Output (Stickers &amp; SQM)</h3>
+                            <h3>Worker Daily Progress</h3>
                           </div>
                           <button
                             type="button"
                             onClick={() => setActiveTab("analytics")}
                             className="flex items-center gap-1 font-bold text-xs text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                            title="Open detailed performance analytics and leaderboard"
+                            title="Open daily reports and leaderboard"
                           >
-                            Detailed Analytics <ArrowRight size={14} />
+                            Daily Reports <ArrowRight size={14} />
                           </button>
                         </div>
 
@@ -2470,10 +2470,10 @@ export default function Index() {
                           <table className="ppb-table">
                             <thead>
                               <tr>
-                                <th>User / Machine ID</th>
+                                <th>Worker Name</th>
                                 <th>Stage</th>
-                                <th style={{ textAlign: "center" }}>Stickers Processed</th>
-                                <th style={{ textAlign: "right" }}>Volume (m²)</th>
+                                <th style={{ textAlign: "center" }}>Pieces Done</th>
+                                <th style={{ textAlign: "right" }}>Total Area (m²)</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2824,9 +2824,9 @@ export default function Index() {
                               activeTab === "pairing" ? "Glass Pairing" :
                                 activeTab === "dgu" ? "DGU/IGU Assembly" :
                                   activeTab === "lamination" ? "Lamination Line" :
-                                    activeTab === "finished" ? "Finished Warehouse" :
+                                    activeTab === "finished" ? "Finished Glass" :
                                       activeTab === "reports" ? "Reports & Analytics" :
-                                        activeTab === "analytics" ? "Performance Analytics" :
+                                        activeTab === "analytics" ? "Daily Reports" :
                                           activeTab === "settings" ? "System Settings" : activeTab}
                   </span>
                 </div>
