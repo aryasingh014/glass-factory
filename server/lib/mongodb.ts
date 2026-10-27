@@ -17,7 +17,35 @@ let isConnected = false;
 let connectPromise: Promise<Db | null> | null = null;
 
 const MONGODB_URI = process.env.MONGODB_URI || "";
-const DB_NAME = process.env.MONGODB_DB_NAME || "glass_production_erp";
+
+/**
+ * Determine the target database name based on the runtime environment.
+ * Ensures local development and automated testing NEVER touch the live production database.
+ */
+export function getTargetDbName(): string {
+  const isProd = process.env.NODE_ENV === "production";
+  const configured = (process.env.MONGODB_DB_NAME || "").trim();
+
+  if (isProd) {
+    // In production (Render, Netlify, Cloud), enforce 'glass_production_erp'
+    if (!configured || configured === "glass_production_dev") {
+      return "glass_production_erp";
+    }
+    return configured;
+  }
+
+  // In development / local / test environments:
+  // If configured to a dedicated test/dev DB, use it
+  if (configured && configured !== "glass_production_erp") {
+    return configured;
+  }
+  // Safeguard: even if .env has glass_production_erp, do not touch production locally
+  // unless explicitly forced via ALLOW_LOCAL_PROD_DB="true"
+  if (process.env.ALLOW_LOCAL_PROD_DB === "true") {
+    return "glass_production_erp";
+  }
+  return "glass_production_dev";
+}
 
 /**
  * Get or initialize MongoDB database instance.
@@ -55,9 +83,10 @@ export async function getMongoDb(): Promise<Db | null> {
         });
 
         await client.connect();
-        dbInstance = client.db(DB_NAME);
+        const targetDbName = getTargetDbName();
+        dbInstance = client.db(targetDbName);
         isConnected = true;
-        logger.info(`[MongoDB] Connected successfully to database: ${DB_NAME}`);
+        logger.info(`[MongoDB] Connected successfully to database: ${targetDbName} (env: ${process.env.NODE_ENV || "development"})`);
         return dbInstance;
       } catch (err: any) {
         if (attempt === 1) {

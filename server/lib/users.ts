@@ -146,18 +146,12 @@ export async function syncUsersWithMongo(): Promise<void> {
   try {
     const mongoUsers = await loadUsersFromMongo();
     if (mongoUsers && Array.isArray(mongoUsers) && mongoUsers.length > 0) {
-      // If Mongo has older multi-user data while current database is admin-only, persist admin-only to Mongo
-      const hasOnlyAdmin = usersDatabase.length === 1 && usersDatabase[0].role === "Admin";
-      if (hasOnlyAdmin && mongoUsers.length > 1) {
-        await saveUsersToMongo(usersDatabase);
-        logger.info(`[MongoDB] Synced admin-only user database to MongoDB Atlas.`);
-        return;
-      }
-
+      // MongoDB Atlas has users; use MongoDB as the canonical source of truth
       usersDatabase.splice(0, usersDatabase.length, ...mongoUsers);
       saveUsersToDisk();
       logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas.`);
     } else if (usersDatabase.length > 0) {
+      // Seed MongoDB Atlas only if MongoDB collection is empty
       const saved = await saveUsersToMongo(usersDatabase);
       if (saved) {
         logger.info(`[MongoDB] Seeded MongoDB Atlas with ${usersDatabase.length} users.`);
