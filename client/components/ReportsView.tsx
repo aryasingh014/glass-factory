@@ -40,6 +40,7 @@ import {
   formatAENumber,
   formatPlatformDate,
   formatBatchNumber,
+  getDistinctPiDisplay,
   getItemFinish,
   getGlassPaneRole,
   getDguEffectiveQtyAndSqm,
@@ -56,6 +57,7 @@ interface BatchSheetGroup<T> {
   key: string;
   batchNo: string;
   piNumber: string;
+  distinctPi?: string | null;
   rackNo: string | number;
   sheetTitle: string;
   sfoList: string[];
@@ -118,6 +120,8 @@ function groupItemsByBatchAndSheet<
     const sfoSet = new Set<string>();
     const obSet = new Set<string>();
 
+    const orderSet = new Set<string>();
+
     sheetItems.forEach((si) => {
       const it = si.item;
       const pieces = it.qty || 1;
@@ -130,6 +134,16 @@ function groupItemsByBatchAndSheet<
       else clearCount += pieces;
       if (it.sfoNo) sfoSet.add(it.sfoNo);
       if (it.obNo) obSet.add(it.obNo);
+      if (it.orderNo && it.orderNo !== it.batchNo && formatBatchNumber(it.orderNo) !== formatBatchNumber(it.batchNo)) {
+        orderSet.add(it.orderNo);
+      }
+    });
+
+    const distinctPi = getDistinctPiDisplay({
+      orderList: Array.from(orderSet),
+      orderNo: first.orderNo,
+      piNumber: first.piNumber,
+      batchNo: first.batchNo,
     });
 
     const finish: "Colour" | "Clear" | "Mixed" =
@@ -145,6 +159,7 @@ function groupItemsByBatchAndSheet<
       key,
       batchNo,
       piNumber,
+      distinctPi,
       rackNo: rackNo || 1,
       sheetTitle,
       sfoList: Array.from(sfoSet),
@@ -2893,9 +2908,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                               )}
                                                             </div>
                                                             <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
-                                                              {sheetGroup.piNumber && (
+                                                              {sheetGroup.distinctPi && (
                                                                 <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-bold">
-                                                                  PI: {formatBatchNumber(sheetGroup.piNumber)}
+                                                                  PI: {sheetGroup.distinctPi}
                                                                 </span>
                                                               )}
                                                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
@@ -3603,9 +3618,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                               )}
                                                             </div>
                                                             <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
-                                                              {sheetGroup.piNumber && (
+                                                              {sheetGroup.distinctPi && (
                                                                 <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-bold">
-                                                                  PI: {formatBatchNumber(sheetGroup.piNumber)}
+                                                                  PI: {sheetGroup.distinctPi}
                                                                 </span>
                                                               )}
                                                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">

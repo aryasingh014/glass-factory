@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn, formatBatchNumber, isLaminatedGlass, isDguGlass, isDguStickerPairMatch, getItemFinish, getGlassPaneRole } from "./utils";
+import { cn, formatBatchNumber, getDistinctPiDisplay, isLaminatedGlass, isDguGlass, isDguStickerPairMatch, getItemFinish, getGlassPaneRole } from "./utils";
 
 describe("cn function", () => {
   it("should merge classes correctly", () => {
@@ -45,6 +45,51 @@ describe("formatBatchNumber", () => {
     expect(formatBatchNumber("5846-MERAKI-HAVEN_BY_A")).toBe("5846");
     expect(formatBatchNumber("5826-MERAKI")).toBe("5826");
     expect(formatBatchNumber("5826-ASHBILIA")).toBe("5826");
+  });
+});
+
+describe("getDistinctPiDisplay", () => {
+  it("should return distinct order numbers when piNumber equals batchNo", () => {
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "6243",
+        batchNo: "6243",
+        orderNo: "03146",
+      })
+    ).toBe("03146");
+
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "6243",
+        batchNo: "6243",
+        orderList: ["03146", "03145"],
+      })
+    ).toBe("03146, 03145");
+  });
+
+  it("should return null if piNumber equals batchNo and no distinct orderNo exists", () => {
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "6243",
+        batchNo: "6243",
+      })
+    ).toBeNull();
+
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "B6243",
+        batchNo: "6243",
+      })
+    ).toBeNull();
+  });
+
+  it("should return genuine PI number if it differs from batchNo", () => {
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "PI-2026-001",
+        batchNo: "1",
+      })
+    ).toBe("PI-2026-001");
   });
 });
 

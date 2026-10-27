@@ -3632,6 +3632,8 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
       };
     });
 
+    const distinctOrderNo = items.find((i: any) => i.orderNo && i.orderNo !== batchIdentifier && String(i.orderNo).trim() !== String(batchNo).trim())?.orderNo || "";
+
     const batchRecord: PIMaster = {
       id: batchId,
       piNumber: batchIdentifier,
@@ -3644,7 +3646,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
       sfoNo: sfoNo || "",
       sfoDate: finalOptDate,
       deliveryDate: finalDelDate,
-      proformaInvNo: batchIdentifier,
+      proformaInvNo: distinctOrderNo || batchIdentifier,
       soNoDate: `Batch #${batchNo || "1"} / ${finalOptDate}`,
       refContact: "",
       dispatchType: "FACTORY",
@@ -3818,7 +3820,7 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
         sfoNo: firstRaw.sfoNo || sfoNo || "",
         sfoDate: firstRaw.optDate || optDate || new Date().toLocaleDateString("en-GB"),
         deliveryDate: firstRaw.delDate || deliveryDate || new Date().toLocaleDateString("en-GB"),
-        proformaInvNo: subBatchPiNumber,
+        proformaInvNo: group.rawItems.find((i: any) => i.orderNo && i.orderNo !== subBatchPiNumber)?.orderNo || subBatchPiNumber,
         soNoDate: `Batch #${firstRaw.batchNo || batchNo || baseBatchClean} / ${firstRaw.optDate || optDate || new Date().toLocaleDateString("en-GB")}`,
         refContact: "",
         dispatchType: "FACTORY",

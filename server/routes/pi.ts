@@ -164,6 +164,16 @@ export function loadDatabaseFromDisk(force = false): void {
               dataChanged = true;
             }
           });
+
+          // Ensure proformaInvNo is distinct from batchNo if items have a distinct orderNo
+          const distinctOrder = batchItems.find(
+            (i) => i.orderNo && i.orderNo !== pi.batchNo && i.orderNo !== pi.piNumber
+          )?.orderNo;
+          if (distinctOrder && (!pi.proformaInvNo || pi.proformaInvNo === pi.piNumber || pi.proformaInvNo === pi.batchNo)) {
+            pi.proformaInvNo = distinctOrder;
+            dataChanged = true;
+          }
+
           // Normalize glass category (Lamination vs DGU)
           // Interlayer specs (PVB, SGP, EVA, LAM) without spacers belong strictly to Lamination
           const batchText = (

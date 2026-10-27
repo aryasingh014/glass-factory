@@ -379,6 +379,51 @@ export function formatBatchNumber(batchIdentifier?: string): string {
 }
 
 /**
+ * Resolves the genuine Proforma Invoice (PI) or Order reference for display.
+ * If the provided piNumber is identical to the batch number (e.g. both are "6243"),
+ * it checks for an explicit orderNo or orderList (e.g. "03146").
+ * If neither is distinct from the batch number, it returns null to prevent duplicate badges.
+ */
+export function getDistinctPiDisplay(
+  itemOrSheet?: { orderNo?: string; piNumber?: string; batchNo?: string; orderList?: string[] } | null,
+  fallbackBatch?: string
+): string | null {
+  if (!itemOrSheet) return null;
+  const batch = fallbackBatch || itemOrSheet.batchNo || "";
+  const fmtBatch = formatBatchNumber(batch);
+
+  // 1. If explicit orderList is available and has non-batch order numbers
+  if (Array.isArray(itemOrSheet.orderList) && itemOrSheet.orderList.length > 0) {
+    const validOrders = itemOrSheet.orderList.filter(
+      (ord) => Boolean(ord) && ord !== batch && formatBatchNumber(ord) !== fmtBatch
+    );
+    if (validOrders.length > 0) {
+      return validOrders.join(", ");
+    }
+  }
+
+  // 2. If orderNo is present and distinct from batch
+  if (
+    itemOrSheet.orderNo &&
+    itemOrSheet.orderNo !== batch &&
+    formatBatchNumber(itemOrSheet.orderNo) !== fmtBatch
+  ) {
+    return itemOrSheet.orderNo;
+  }
+
+  // 3. If piNumber is present and distinct from batch
+  if (
+    itemOrSheet.piNumber &&
+    itemOrSheet.piNumber !== batch &&
+    formatBatchNumber(itemOrSheet.piNumber) !== fmtBatch
+  ) {
+    return String(itemOrSheet.piNumber).replace(/^STK-/i, "").trim();
+  }
+
+  return null;
+}
+
+/**
  * Validates if two glass sticker panes
  * form an exact 1+1 DGU, Lamination, or DLGU Pair based on factory sticker specifications:
  * - Order No / PI #

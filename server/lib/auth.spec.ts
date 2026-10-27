@@ -174,6 +174,11 @@ describe("Authentication & RBAC System", () => {
         resetUserPermissions 
       } = await import("./users");
 
+      const existingA = findUserByUsernameOrEmail("operator_a");
+      if (existingA) deleteUser(existingA.id);
+      const existingB = findUserByUsernameOrEmail("operator_b");
+      if (existingB) deleteUser(existingB.id);
+
       const userA = createUser({
         username: "operator_a",
         email: "operator_a@sejalglass.com",

@@ -14,7 +14,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { getDguEffectiveQtyAndSqm, formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { getDguEffectiveQtyAndSqm, formatBatchNumber, getDistinctPiDisplay, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
 import { formatSejalBarcode, isItemMatchingCode } from "@/lib/barcode";
 import { scannerAudio } from "@/lib/audioBeep";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -395,6 +395,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         id: b.id,
         piNumber: b.piNumber,
         batchNo: (b as any).batchNo || parentPI?.batchNo || "",
+        proformaInvNo: parentPI?.proformaInvNo || (b as any).proformaInvNo || "",
         customerName: b.customerName,
         projectName: b.projectName,
         jobOrderNumber: b.jobOrderNumber,
@@ -1892,6 +1893,19 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         const totalSqm = groupRows.reduce((acc, curr) => acc + (curr.effectiveSqm || 0), 0);
         const sfoSet = Array.from(new Set(groupRows.map((r) => r.item.sfoNo || r.item.piNumber).filter(Boolean)));
         const obSet = Array.from(new Set(groupRows.map((r) => r.item.obNo).filter(Boolean)));
+        const orderSet = Array.from(
+          new Set(
+            groupRows
+              .map((r) => r.item.orderNo)
+              .filter((ord): ord is string => Boolean(ord && ord !== groupRows[0].item.batchNo && formatBatchNumber(ord) !== formatBatchNumber(groupRows[0].item.batchNo)))
+          )
+        );
+        const distinctPi = getDistinctPiDisplay({
+          orderList: orderSet,
+          orderNo: groupRows[0].item.orderNo,
+          piNumber: groupRows[0].item.piNumber,
+          batchNo: groupRows[0].item.batchNo,
+        });
         const finish = getItemFinish(groupRows[0].item);
         return {
           rackNo,
@@ -1900,6 +1914,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           totalSqm,
           sfoList: sfoSet,
           obList: obSet,
+          orderList: orderSet,
+          distinctPi,
           finish,
         };
       })
@@ -3013,6 +3029,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <p className="text-[11px] text-slate-500 font-medium leading-tight mt-0.5">
                 {selectedBatch?.customerName || "Customer"} • {selectedBatch?.projectName || "Project"}
                 {selectedBatch?.jobOrderNumber ? ` • JO: ${selectedBatch.jobOrderNumber}` : ""}
+                {(selectedBatch as any)?.proformaInvNo &&
+                (selectedBatch as any).proformaInvNo !== (selectedBatch as any).batchNo &&
+                formatBatchNumber((selectedBatch as any).proformaInvNo) !== formatBatchNumber((selectedBatch as any).batchNo)
+                  ? ` • PI: ${(selectedBatch as any).proformaInvNo}`
+                  : ""}
               </p>
             </div>
           </div>
@@ -4259,9 +4280,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               </span>
                             </div>
                             <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
-                              {group.items[0]?.piNumber && (
+                              {group.distinctPi && (
                                 <span className="px-2 py-0.5 rounded-full bg-blue-50/50 text-[#1680f5] border border-blue-200 font-bold">
-                                  PI: {formatBatchNumber(group.items[0].piNumber)}
+                                  PI: {group.distinctPi}
                                 </span>
                               )}
                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
