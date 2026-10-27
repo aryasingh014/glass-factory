@@ -54,14 +54,8 @@ export function validatePassword(user: User, passwordAttempt: string): boolean {
   }
 }
 
-// Initial pre-seeded credentials for Admin, Supervisor, and Workstation Operators
+// Initial pre-seeded credentials for Admin
 const adminCreds = hashPassword("Admin@123");
-const supervisorCreds = hashPassword("Supervisor@123");
-const cuttingCreds = hashPassword("Cutting@123");
-const polishingCreds = hashPassword("Polish@123");
-const dguCreds = hashPassword("Dgu@123");
-const laminationCreds = hashPassword("Lami@123");
-const dispatchCreds = hashPassword("Dispatch@123");
 
 const DEFAULT_USERS: User[] = [
   {
@@ -73,78 +67,6 @@ const DEFAULT_USERS: User[] = [
     assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
     passwordHash: adminCreds.hash,
     salt: adminCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-supervisor-01",
-    username: "supervisor",
-    email: "supervisor@sejalglass.com",
-    name: "Rajesh Sharma (Plant Supervisor)",
-    role: "Supervisor",
-    assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
-    passwordHash: supervisorCreds.hash,
-    salt: supervisorCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-op-cutting-01",
-    username: "op_cutting",
-    email: "cutting@sejalglass.com",
-    name: "Deepa K (Cutting & Pairing Operator)",
-    role: "Operator",
-    assignedStages: ["Cutting", "Pairing"],
-    passwordHash: cuttingCreds.hash,
-    salt: cuttingCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-op-polishing-01",
-    username: "op_polishing",
-    email: "polishing@sejalglass.com",
-    name: "Manoj Verma (Edge Polishing Operator)",
-    role: "Operator",
-    assignedStages: ["Polishing"],
-    passwordHash: polishingCreds.hash,
-    salt: polishingCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-op-dgu-01",
-    username: "op_dgu",
-    email: "dgu@sejalglass.com",
-    name: "Suresh Patel (DGU Assembly Operator)",
-    role: "Operator",
-    assignedStages: ["DGU"],
-    passwordHash: dguCreds.hash,
-    salt: dguCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-op-lamination-01",
-    username: "op_lamination",
-    email: "lamination@sejalglass.com",
-    name: "Kiran Rathore (Lamination Autoclave Operator)",
-    role: "Operator",
-    assignedStages: ["Lamination"],
-    passwordHash: laminationCreds.hash,
-    salt: laminationCreds.salt,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "usr-op-dispatch-01",
-    username: "op_dispatch",
-    email: "dispatch@sejalglass.com",
-    name: "Amit Kumar (Warehouse & Dispatch Operator)",
-    role: "Operator",
-    assignedStages: ["Finished", "Dispatched"],
-    passwordHash: dispatchCreds.hash,
-    salt: dispatchCreds.salt,
     isActive: true,
     createdAt: new Date().toISOString(),
   },
@@ -165,7 +87,7 @@ export function loadUsersFromDisk(): void {
         if (Array.isArray(loaded) && loaded.length > 0) {
           const cleaned = [...loaded];
 
-          // Ensure default Admin, Supervisor, and Stage Operator users exist and have assigned stages
+          // Ensure default Admin user exists and has assigned stages
           for (const def of DEFAULT_USERS) {
             const exists = cleaned.find(
               (u) => u.username.toLowerCase() === def.username.toLowerCase() || u.id === def.id
@@ -224,6 +146,14 @@ export async function syncUsersWithMongo(): Promise<void> {
   try {
     const mongoUsers = await loadUsersFromMongo();
     if (mongoUsers && Array.isArray(mongoUsers) && mongoUsers.length > 0) {
+      // If Mongo has older multi-user data while current database is admin-only, persist admin-only to Mongo
+      const hasOnlyAdmin = usersDatabase.length === 1 && usersDatabase[0].role === "Admin";
+      if (hasOnlyAdmin && mongoUsers.length > 1) {
+        await saveUsersToMongo(usersDatabase);
+        logger.info(`[MongoDB] Synced admin-only user database to MongoDB Atlas.`);
+        return;
+      }
+
       usersDatabase.splice(0, usersDatabase.length, ...mongoUsers);
       saveUsersToDisk();
       logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas.`);

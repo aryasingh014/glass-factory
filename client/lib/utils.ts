@@ -511,4 +511,45 @@ export function isDispatchedItem(item: any): boolean {
   );
 }
 
+/**
+ * Calculates assembled glass units for a collection of glass items.
+ * Distinguishes between raw piece/pane count (pcs) and assembled multi-pane units:
+ * - DGU: 2 panes (1 Colour + 1 Clear, or 2 clear panes) = 1 DGU Unit
+ * - DLGU: 3 panes (1 Colour + 2 Clear Laminated) = 1 DLGU Unit
+ * - Lamination: 2 panes = 1 Laminated Unit
+ * - Monolithic: 1 pane = 1 Monolithic Unit
+ */
+export function calculateAssembledUnits(itemList: any[]): { totalUnits: number; totalSqm: number } {
+  if (!Array.isArray(itemList) || itemList.length === 0) {
+    return { totalUnits: 0, totalSqm: 0 };
+  }
+
+  const isColour = (i: any) => getItemFinish(i) === "Colour";
+  const dlguList = itemList.filter((i) => isDlguGlass(i));
+  const pureDguList = itemList.filter((i) => isDguGlass(i) && !isDlguGlass(i));
+  const nonDguList = itemList.filter((i) => !isDguGlass(i) && !isDlguGlass(i));
+
+  const dlguCol = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+  const dlguClr = dlguList.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+  const dlguU = dlguCol > 0 && dlguClr > 0 ? Math.min(dlguCol, Math.floor(dlguClr / 2)) : Math.floor((dlguCol + dlguClr) / 3);
+
+  const dguColPanes = pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+  const dguClrPanes = pureDguList.filter((i) => !isColour(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+  const pureDguU = dguColPanes > 0 && dguClrPanes > 0 ? Math.min(dguColPanes, dguClrPanes) : (dguColPanes > 0 ? dguColPanes : Math.ceil(pureDguList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2));
+
+  const lamList = nonDguList.filter((i) => isLaminatedGlass(i) || i.glassCategory === "Lamination" || i.processRoute?.includes("Lamination"));
+  const monoList = nonDguList.filter((i) => !isLaminatedGlass(i) && i.glassCategory !== "Lamination" && !i.processRoute?.includes("Lamination"));
+  const lamU = Math.ceil(lamList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+  const monoU = monoList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+  const dguSqmTotal = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0) +
+    pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+  const nonDguSqmTotal = nonDguList.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+
+  return {
+    totalUnits: dlguU + pureDguU + lamU + monoU,
+    totalSqm: parseFloat((dguSqmTotal + nonDguSqmTotal).toFixed(2)),
+  };
+}
+
 

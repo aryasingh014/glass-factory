@@ -78,7 +78,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/context/AuthContext";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, calculateAssembledUnits } from "@/lib/utils";
 import { exportStageWipToExcel, exportBatchProgressMatrixToExcel } from "@/lib/excelExport";
 
 import { StickerUploaderModal } from "@/components/StickerUploaderModal";
@@ -1333,6 +1333,8 @@ export default function Index() {
       projectName: string;
       batches: PIMaster[];
       totalBatches: number;
+      totalUnits: number;
+      completedUnits: number;
       totalPieces: number;
       completedPieces: number;
       totalSqm: number;
@@ -1368,9 +1370,24 @@ export default function Index() {
       const pdfFilesSet = new Set<string>();
       if (projectName) projectsSet.add(projectName);
 
+      const customerItems: GlassItem[] = [];
+
       batches.forEach((pi) => {
         const rawFileName = pi.fileName || (pi.jobOrderNumber ? `${pi.jobOrderNumber}.pdf` : `${pi.piNumber}.pdf`);
         if (rawFileName) pdfFilesSet.add(rawFileName);
+
+        const cleanId = (pi.id || "").replace(/^STK-/i, "").toLowerCase().trim();
+        const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "").toLowerCase().trim();
+        const piIdLower = (pi.id || "").toLowerCase().trim();
+        const piNoLower = (pi.piNumber || "").toLowerCase().trim();
+
+        const bItems =
+          (piIdLower && batchItemsLookup.get(piIdLower)) ||
+          (cleanId && batchItemsLookup.get(cleanId)) ||
+          (piNoLower && batchItemsLookup.get(piNoLower)) ||
+          (cleanPiNo && batchItemsLookup.get(cleanPiNo)) ||
+          [];
+        customerItems.push(...bItems);
 
         const metrics = getBatchMetrics(pi);
         totalPieces += metrics.totalPieces;
@@ -1391,8 +1408,16 @@ export default function Index() {
         if (pi.projectName) projectsSet.add(pi.projectName);
       });
 
-      const progressPct = totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0;
-      const isCompleted = totalPieces > 0 && completedPieces >= totalPieces;
+      const uniqueCustItems = Array.from(new Map(customerItems.map((i) => [i.id, i])).values());
+      const custUnitMetrics = calculateAssembledUnits(uniqueCustItems);
+      const totalUnits = custUnitMetrics.totalUnits > 0 ? custUnitMetrics.totalUnits : totalPieces;
+      const completedCustItems = uniqueCustItems.filter(
+        (i) => i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i)
+      );
+      const completedUnits = calculateAssembledUnits(completedCustItems).totalUnits;
+
+      const progressPct = totalUnits > 0 ? Math.round((completedUnits / totalUnits) * 100) : (totalPieces > 0 ? Math.round((completedPieces / totalPieces) * 100) : 0);
+      const isCompleted = (totalUnits > 0 && completedUnits >= totalUnits) || (totalPieces > 0 && completedPieces >= totalPieces);
       const isPending = completedPieces === 0 && inCutting === totalPieces;
       const status: "Completed" | "In Production" | "Pending" = isCompleted ? "Completed" : isPending ? "Pending" : "In Production";
 
@@ -1403,6 +1428,8 @@ export default function Index() {
         batches,
         pdfFiles: Array.from(pdfFilesSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
         totalBatches: batches.length,
+        totalUnits,
+        completedUnits,
         totalPieces,
         completedPieces,
         totalSqm,
@@ -1545,6 +1572,10 @@ export default function Index() {
       };
     };
 
+    const allUnitsMetrics = calculateAssembledUnits(items);
+    const totalUnits = allUnitsMetrics.totalUnits;
+    const effectiveTotalSqm = allUnitsMetrics.totalSqm;
+
     const finishedMetrics = calculateAssembledUnits(finishedItems);
     const dispatchedMetrics = calculateAssembledUnits(dispatchedList);
 
@@ -1559,6 +1590,8 @@ export default function Index() {
 
     return {
       totalItems,
+      totalUnits,
+      effectiveTotalSqm,
       totalSqm,
       cuttingItems: cuttingCount,
       cuttingSqm,
@@ -3046,9 +3079,11 @@ export default function Index() {
                     <div className="ppb-metric-main">
                       <div className="ppb-metric-copy">
                         <h3>Glass Units</h3>
-                        <strong>{items.length} <span style={{ fontSize: '16px' }}>Items</span></strong>
+                        <strong>{pipelineMetrics.totalUnits} <span style={{ fontSize: '16px' }}>Units</span></strong>
                         <div className="ppb-metric-change">
-                          <span className="ppb-metric-change-up">Being tracked</span>
+                          <span className="ppb-metric-change-up">
+                            {items.length} {items.length === 1 ? "Piece" : "Pieces"} Being Tracked
+                          </span>
                         </div>
                       </div>
                       <div className="ppb-metric-icon ppb-metric-icon-green"><Boxes size={24} /></div>
@@ -3387,7 +3422,14 @@ export default function Index() {
                                   </span>
                                   <span className="text-slate-400">•</span>
                                   <span className={isCompleted ? "text-emerald-900 font-bold" : ""}>
-                                    {customer.completedPieces}/{customer.totalPieces} pcs
+                                    {customer.totalUnits && customer.totalUnits !== customer.totalPieces ? (
+                                      <>
+                                        <span className="font-extrabold text-blue-700">{customer.completedUnits}/{customer.totalUnits} units</span>
+                                        <span className="text-slate-500 font-medium text-[11px]"> ({customer.completedPieces}/{customer.totalPieces} pcs)</span>
+                                      </>
+                                    ) : (
+                                      <>{customer.completedPieces}/{customer.totalPieces} pcs</>
+                                    )}
                                   </span>
                                   <span className="text-slate-400">•</span>
                                   <span className="text-slate-600">{customer.totalSqm.toFixed(2)} m²</span>
