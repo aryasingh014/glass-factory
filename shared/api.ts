@@ -388,5 +388,16 @@ export function formatGenericBarcode(
 
 export const formatSejalBarcode = formatGenericBarcode;
 
+// ==========================================
+// Glass Finish & Coated / Colour Detection
+// ==========================================
+
+export const COLOURED_COATED_GLASS_REGEX = /emicool|sunguard|stopray|syp|ykn|ybr|ybe|cardinal|low[- ]?e\b|lowe\b|c340|c-340|cg366|c272|c180|i89|guardian|\bsn\b|\bsn\s*\d+|skn|xtreme|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|optitherm|planitherm|climaguard|climagard|suncool|eclipse|tint|coated|coat\b|frosted|ceramic|frit|colour|color|grey|gray|bronze|bronz|blue|green/i;
+
+export function isGlassTypeColour(glassType?: string, glassColor?: string, category?: string): boolean {
+  const combined = `${glassType || ""} ${glassColor || ""} ${category || ""}`.toLowerCase();
+  return COLOURED_COATED_GLASS_REGEX.test(combined);
+}
+
 
 

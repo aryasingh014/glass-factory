@@ -12,6 +12,8 @@ import {
   KNOWN_BARCODE_PREFIXES,
   formatGenericBarcode,
   formatSejalBarcode,
+  COLOURED_COATED_GLASS_REGEX,
+  isGlassTypeColour,
 } from "../../shared/api";
 import { piDatabase, glassItemsDatabase, productionHistoryDatabase, rejectDatabase, reworkDatabase, notificationsDatabase, createAndBroadcastNotification, saveDatabaseToDisk, loadDatabaseFromDisk } from "./pi";
 import { logger } from "../lib/logger";
@@ -797,7 +799,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         if ((item.glassCategory === "DLGU" || item.glassCategory === "DGU" || item.processRoute.includes("DGU")) && isSingleTargetScan) {
           const itemDguPairId = (item as any).dguPairId;
           const itemLamPairId = (item as any).lamPairId;
-          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
           const isDlgu = isDlguItem(item) || item.glassCategory === "DLGU";
 
           let unitPartners: GlassItem[] = [];
@@ -843,7 +845,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
               } else {
                 // Clear pane scanned: find at most 1 Colour pane + at most 1 sibling Clear pane
                 const colPartner = dguSiblings.find(
-                  (other) => other.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${other.glassType || ""} ${other.category || ""}`)
+                  (other) => other.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${other.glassType || ""} ${other.category || ""}`)
                 );
                 const clrPartner = itemLamPairId
                   ? dguSiblings.find((other) => (other as any).lamPairId === itemLamPairId && other.id !== item.id)
@@ -855,7 +857,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
               // Standard DGU: find at most ONE opposite-finish partner pane for this 1 unit
               const oppPartner = dguSiblings.find(
                 (other) => {
-                  const isOtherColour = other.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${other.glassType || ""} ${other.category || ""}`);
+                  const isOtherColour = other.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${other.glassType || ""} ${other.category || ""}`);
                   return isOtherColour !== isItemColour;
                 }
               );
@@ -1243,30 +1245,7 @@ export function autoAdvancePairedDguItems(): number {
 
   const isColour = (i: any) => {
     const typeStr = String(i.glassType || "").toLowerCase();
-    const colorStr = String(i.glassColor || "").toLowerCase();
-    const catStr = String(i.category || "").toLowerCase();
-
-    const hasColourKeyword =
-      typeStr.includes("emicool") ||
-      typeStr.includes("grey") ||
-      typeStr.includes("gray") ||
-      typeStr.includes("bronze") ||
-      typeStr.includes("blue") ||
-      typeStr.includes("green") ||
-      typeStr.includes("stopray") ||
-      typeStr.includes("sunguard") ||
-      typeStr.includes("sn grey") ||
-      typeStr.includes("syp") ||
-      typeStr.includes("tint") ||
-      typeStr.includes("coated") ||
-      colorStr.includes("colour") ||
-      colorStr.includes("color") ||
-      colorStr.includes("grey") ||
-      colorStr.includes("bronze") ||
-      colorStr.includes("blue") ||
-      colorStr.includes("green") ||
-      catStr.includes("colour") ||
-      catStr.includes("color");
+    const hasColourKeyword = isGlassTypeColour(i.glassType, i.glassColor, i.category);
 
     if (typeStr.includes("clear") && !hasColourKeyword) return false;
     if (hasColourKeyword) return true;
@@ -1998,7 +1977,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       );
       if (match) itemsToReject = [match];
     } else if (defectivePane === "OP") {
-      const op = targetItems.find((t) => t.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      const op = targetItems.find((t) => t.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${t.glassType || ""} ${t.category || ""}`));
       if (op) itemsToReject = [op];
     } else if (defectivePane === "IP" || defectivePane === "IP_PLY1" || defectivePane === "IP_PLY2") {
       const ip = targetItems.find((t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`));
@@ -2038,11 +2017,11 @@ export const handleRejectItem: RequestHandler = (req, res) => {
               if (!dlguPartners.some((p) => p.id === dp.id)) dlguPartners.push(dp);
             });
           }
-          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
           const neededClearCount = isItemColour ? 2 : 1;
           const neededColourCount = isItemColour ? 0 : 1;
           const currentClearCount = dlguPartners.filter((p) => p.colorOrClear === "Clear" || /clear/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
-          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
+          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${p.glassType || ""} ${p.category || ""}`)).length;
 
           if (currentClearCount < neededClearCount || currentColourCount < neededColourCount) {
             const siblings = glassItemsDatabase.filter(
@@ -2072,7 +2051,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
             }
             if (currentColourCount < neededColourCount) {
               const missingColour = siblings.find(
-                (s) => s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)
+                (s) => s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`)
               );
               if (missingColour) dlguPartners.push(missingColour);
             }
@@ -2164,7 +2143,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       const partners: GlassItem[] = [];
 
       if (isDlguItem(item)) {
-        const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+        const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
         if (isItemColour) {
           // Rejection on Colour pane (OP): un-link at most 2 Clear partner panes (IP 1 + IP 2)
           const dguPairId = (item as any).dguPairId;
@@ -2249,7 +2228,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
           if (!partnerColour) {
             partnerColour = siblings.find(
               (s) =>
-                (s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                (s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`)) &&
                 !partners.some((p) => p.id === s.id) &&
                 !itemsToReject.some((t) => t.id === s.id)
             );
@@ -2292,7 +2271,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
           );
           if (p) partners.push(p);
         } else {
-          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
           const siblings = glassItemsDatabase.filter(
             (other) =>
               other.id !== item.id &&
@@ -2309,7 +2288,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
               )
           );
           const oppositePartner = siblings.find((s) => {
-            const isOtherColour = s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`);
+            const isOtherColour = s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`);
             return isOtherColour !== isItemColour;
           });
           if (oppositePartner) partners.push(oppositePartner);
@@ -2318,7 +2297,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
 
       const isOpRejectionContext = defectivePane === "OP" ||
         (itemsToReject.length > 0 && (itemsToReject[0].colorOrClear === "Colour" ||
-          /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(
+          COLOURED_COATED_GLASS_REGEX.test(
             `${itemsToReject[0].glassType || ""} ${itemsToReject[0].category || ""}`
           )));
       partners.forEach((partner) => {
@@ -2335,7 +2314,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
         partner.status = "Pending";
         partner.updatedAt = new Date().toISOString();
         if (isDlguItem(partner)) {
-          const isColour = partner.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${partner.glassType || ""} ${partner.category || ""}`);
+          const isColour = partner.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${partner.glassType || ""} ${partner.category || ""}`);
           if (isColour) {
             partner.dlguPhase = "DguPairing";
             partner.completedStages = (partner.completedStages || []).filter(
@@ -2406,7 +2385,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
       targetItem.updatedAt = new Date().toISOString();
       if (isDlguItem(targetItem)) {
-        const isColour = targetItem.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
+        const isColour = targetItem.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
         if (!isColour) {
           targetItem.dlguPhase = "LamPairing";
         }
@@ -2695,7 +2674,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       );
       if (match) itemsToRework = [match];
     } else if (defectivePane === "OP") {
-      const op = targetItems.find((t) => t.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${t.glassType || ""} ${t.category || ""}`));
+      const op = targetItems.find((t) => t.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${t.glassType || ""} ${t.category || ""}`));
       if (op) itemsToRework = [op];
     } else if (defectivePane === "IP" || defectivePane === "IP_PLY1" || defectivePane === "IP_PLY2") {
       const ip = targetItems.find((t) => t.colorOrClear === "Clear" || /clear/i.test(`${t.glassType || ""} ${t.category || ""}`));
@@ -2734,11 +2713,11 @@ export const handleReworkItem: RequestHandler = (req, res) => {
               if (!dlguPartners.some((p) => p.id === dp.id)) dlguPartners.push(dp);
             });
           }
-          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
           const neededClearCount = isItemColour ? 2 : 1;
           const neededColourCount = isItemColour ? 0 : 1;
           const currentClearCount = dlguPartners.filter((p) => p.colorOrClear === "Clear" || /clear/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
-          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${p.glassType || ""} ${p.category || ""}`)).length;
+          const currentColourCount = dlguPartners.filter((p) => p.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${p.glassType || ""} ${p.category || ""}`)).length;
 
           if (currentClearCount < neededClearCount || currentColourCount < neededColourCount) {
             const siblings = glassItemsDatabase.filter(
@@ -2768,7 +2747,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
             }
             if (currentColourCount < neededColourCount) {
               const missingColour = siblings.find(
-                (s) => s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)
+                (s) => s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`)
               );
               if (missingColour) dlguPartners.push(missingColour);
             }
@@ -2838,7 +2817,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       const partners: GlassItem[] = [];
 
       if (isDlguItem(item)) {
-        const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+        const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
         if (isItemColour) {
           // Rework on Colour pane (OP): un-link at most 2 Clear partner panes (IP 1 + IP 2)
           const dguPairId = (item as any).dguPairId;
@@ -2923,7 +2902,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
           if (!partnerColour) {
             partnerColour = siblings.find(
               (s) =>
-                (s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`)) &&
+                (s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`)) &&
                 !partners.some((p) => p.id === s.id) &&
                 !itemsToRework.some((t) => t.id === s.id)
             );
@@ -2966,7 +2945,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
           );
           if (p) partners.push(p);
         } else {
-          const isItemColour = item.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${item.glassType || ""} ${item.category || ""}`);
+          const isItemColour = item.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${item.glassType || ""} ${item.category || ""}`);
           const siblings = glassItemsDatabase.filter(
             (other) =>
               other.id !== item.id &&
@@ -2983,7 +2962,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
               )
           );
           const oppositePartner = siblings.find((s) => {
-            const isOtherColour = s.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${s.glassType || ""} ${s.category || ""}`);
+            const isOtherColour = s.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${s.glassType || ""} ${s.category || ""}`);
             return isOtherColour !== isItemColour;
           });
           if (oppositePartner) partners.push(oppositePartner);
@@ -2997,7 +2976,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
         partner.status = "Pending";
         partner.updatedAt = new Date().toISOString();
         if (isDlguItem(partner)) {
-          const isColour = partner.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${partner.glassType || ""} ${partner.category || ""}`);
+          const isColour = partner.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${partner.glassType || ""} ${partner.category || ""}`);
           if (isColour) {
             partner.dlguPhase = "DguPairing";
             partner.completedStages = (partner.completedStages || []).filter(
@@ -3038,7 +3017,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
     targetItem.status = "Reworking";
     targetItem.updatedAt = new Date().toISOString();
     if (isDlguItem(targetItem)) {
-      const isColour = targetItem.colorOrClear === "Colour" || /grey|gray|bronze|blue|green|sn|stopray|sunguard|tint|colour|coated/i.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
+      const isColour = targetItem.colorOrClear === "Colour" || COLOURED_COATED_GLASS_REGEX.test(`${targetItem.glassType || ""} ${targetItem.category || ""}`);
       if (!isColour) {
         targetItem.dlguPhase = "LamPairing";
       }
@@ -3470,19 +3449,22 @@ export const handleStickerUpload: RequestHandler = (req, res) => {
   let totalQty = 0;
 
   // In one PDF, it is strictly 100% full Colour or 100% Clear (never Mixed)
-  const colourRegex = /emicool|colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
+  const colourRegex = COLOURED_COATED_GLASS_REGEX;
+  const rawColourCount = items.filter((raw: any) => raw.colorOrClear === "Colour" || raw.colorOrClear === "Color" || colourRegex.test(raw.glassType || "") || colourRegex.test(raw.glassColor || "")).length;
+  const rawClearCount = items.filter((raw: any) => (raw.colorOrClear === "Clear" || /clear/i.test(raw.glassType || "")) && !colourRegex.test(raw.glassType || "")).length;
+
   let isColourBatch = false;
   if (colorOrClear === "Colour" || colorOrClear === "Color" || (req.body as any).finish === "Colour") {
+    isColourBatch = true;
+  } else if (rawColourCount > 0 && rawColourCount >= items.length / 2) {
+    // If items are predominantly coloured/coated (e.g. CARDINAL LOW-E), enforce Colour
     isColourBatch = true;
   } else if (colorOrClear === "Clear" || (req.body as any).finish === "Clear") {
     isColourBatch = false;
   } else if (glassColor && colourRegex.test(glassColor) && !/clear/i.test(glassColor)) {
     isColourBatch = true;
   } else {
-    // Determine from items' explicit colorOrClear property or glassColor / glassType
-    const clearItemCount = items.filter((raw: any) => raw.colorOrClear === "Clear" || (/clear/i.test(raw.glassColor || "") && !colourRegex.test(raw.glassType || ""))).length;
-    const colourItemCount = items.filter((raw: any) => raw.colorOrClear === "Colour" || raw.colorOrClear === "Color" || ((colourRegex.test(raw.glassColor || "") || colourRegex.test(raw.glassType || "")) && !/clear/i.test(raw.glassColor || ""))).length;
-    isColourBatch = colourItemCount > clearItemCount;
+    isColourBatch = rawColourCount > rawClearCount;
   }
 
   const defaultColorOrClear: "Clear" | "Colour" = isColourBatch ? "Colour" : "Clear";
@@ -3946,29 +3928,7 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   const dguItems = glassItemsDatabase.filter((i) => isUndispatched(i) && i.currentStage === "DGU" && i.status !== "Completed" && i.status !== "Rejected");
   const isColour = (i: any) => {
     const typeStr = String(i.glassType || "").toLowerCase();
-    const colorStr = String(i.glassColor || "").toLowerCase();
-    const catStr = String(i.category || "").toLowerCase();
-
-    const hasColourKeyword =
-      typeStr.includes("grey") ||
-      typeStr.includes("gray") ||
-      typeStr.includes("bronze") ||
-      typeStr.includes("blue") ||
-      typeStr.includes("green") ||
-      typeStr.includes("stopray") ||
-      typeStr.includes("sunguard") ||
-      typeStr.includes("sn grey") ||
-      typeStr.includes("syp") ||
-      typeStr.includes("tint") ||
-      typeStr.includes("coated") ||
-      colorStr.includes("colour") ||
-      colorStr.includes("color") ||
-      colorStr.includes("grey") ||
-      colorStr.includes("bronze") ||
-      colorStr.includes("blue") ||
-      colorStr.includes("green") ||
-      catStr.includes("colour") ||
-      catStr.includes("color");
+    const hasColourKeyword = isGlassTypeColour(i.glassType, i.glassColor, i.category);
 
     if (typeStr.includes("clear") && !hasColourKeyword) return false;
     if (hasColourKeyword) return true;

@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
 import fs from "fs";
 import path from "path";
-import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification, BARCODE_PREFIX, formatGenericBarcode } from "../../shared/api";
+import { GlassItem, PIMaster, ProductionHistory, RejectRecord, ReworkRecord, ProductionStage, SystemNotification, BARCODE_PREFIX, formatGenericBarcode, COLOURED_COATED_GLASS_REGEX, isGlassTypeColour } from "../../shared/api";
 import { broadcastUpdate } from "./production";
 import { logger } from "../lib/logger";
 import { loadProductionFromMongo, saveProductionToMongo } from "../lib/mongodb";
@@ -94,7 +94,7 @@ export function loadDatabaseFromDisk(force = false): void {
         });
 
         // Normalize batches: 1 PDF is strictly 100% Colour or 100% Clear (never Mixed)
-        const colourRegex = /emicool|colour|color|sunguard|\bsn\b|\bsn\s*\d+|stopray|syp|ykn|ybr|grey|gray|bronze|bronz|blue|green|tint|sunergy|cool[- ]lite|solar|reflective|antelio|planibel|frosted|ceramic|frit/i;
+        const colourRegex = COLOURED_COATED_GLASS_REGEX;
         let dataChanged = false;
 
         // Auto-heal invalid barcodes (e.g. "WIDTHHEIGHT" or non-digit header artifacts)
@@ -170,7 +170,7 @@ export function loadDatabaseFromDisk(force = false): void {
             (pi.fileName || "") + " " +
             (pi.glassDescription || "") + " " +
             ((pi as any).remarks || "") + " " +
-            batchItems.map((i) => `${i.glassType || ""} ${i.glassCode || ""} ${i.category || ""} ${i.remarks || ""}`).join(" ")
+            batchItems.map((i) => `${i.glassType || ""} ${i.glassCode || ""} ${i.category || ""} ${i.remarks || ""} ${i.makeup || ""}`).join(" ")
           ).toLowerCase();
 
           const isKnownLamBatch =
@@ -180,7 +180,7 @@ export function loadDatabaseFromDisk(force = false): void {
             (pi as any).batchNo === "1620" ||
             (pi.fileName || "").toLowerCase().includes("10 mm clear") ||
             (pi.fileName || "").toLowerCase().includes("12 mm clear");
-          const hasInterlayer = isKnownLamBatch || /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(batchText);
+          const hasInterlayer = isKnownLamBatch || /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(batchText);
           const hasSpacer = !isKnownLamBatch && /spacer|dgu|igu/i.test(batchText);
 
           let batchCat: "DGU" | "Lamination" | "DLGU" = pi.glassCategory === "DLGU" ? "DLGU" : (pi.glassCategory === "Lamination" ? "Lamination" : "DGU");
@@ -200,8 +200,8 @@ export function loadDatabaseFromDisk(force = false): void {
           batchItems.forEach((item) => {
             // Preserve explicit category if set; otherwise use batch category
             const itemText = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""} ${item.makeup || ""} ${(item as any).stickerRoute || ""}`.toLowerCase();
-            const isItemDlgu = item.glassCategory === "DLGU" || batchCat === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText));
-            const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
+            const isItemDlgu = item.glassCategory === "DLGU" || batchCat === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(itemText));
+            const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
             const isItemDgu = !isItemDlgu && (item.glassCategory === "DGU" || /spacer|dgu|igu/i.test(itemText));
             const resolvedCat: "DGU" | "Lamination" | "DLGU" = isItemDlgu ? "DLGU" : (isItemLam && !isItemDgu ? "Lamination" : (isItemDgu ? "DGU" : batchCat));
 
@@ -290,8 +290,8 @@ export function loadDatabaseFromDisk(force = false): void {
             }
 
             const itemText = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""} ${item.makeup || ""} ${(item as any).stickerRoute || ""}`.toLowerCase();
-            const isItemDlgu = item.glassCategory === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText));
-            const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/pvb|sgp|eva|lamination|laminated|\blam\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
+            const isItemDlgu = item.glassCategory === "DLGU" || (/spacer|dgu|igu/i.test(itemText) && /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(itemText));
+            const isItemLam = !isItemDlgu && (item.glassCategory === "Lamination" || (/\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(itemText) && !/spacer|dgu|igu/i.test(itemText)));
             const isItemDgu = !isItemDlgu && (item.glassCategory === "DGU" || /spacer|dgu|igu/i.test(itemText));
             const resolvedCat: "DGU" | "Lamination" | "DLGU" = isItemDlgu ? "DLGU" : (isItemLam && !isItemDgu ? "Lamination" : (isItemDgu ? "DGU" : (item.glassCategory || "DGU")));
 
@@ -584,7 +584,7 @@ export async function syncDatabaseWithMongo(): Promise<void> {
       logger.info(`[MongoDB] Successfully loaded ${piDatabase.length} batches and ${glassItemsDatabase.length} items from MongoDB Atlas.`);
     } else if (piDatabase.length > 0) {
       // Seed MongoDB with current local database
-      await saveProductionToMongo({
+      const saved = await saveProductionToMongo({
         piDatabase,
         glassItemsDatabase,
         productionHistoryDatabase,
@@ -592,7 +592,9 @@ export async function syncDatabaseWithMongo(): Promise<void> {
         reworkDatabase,
         notificationsDatabase,
       });
-      logger.info(`[MongoDB] Seeded MongoDB Atlas with current ${piDatabase.length} batches and ${glassItemsDatabase.length} items.`);
+      if (saved) {
+        logger.info(`[MongoDB] Seeded MongoDB Atlas with current ${piDatabase.length} batches and ${glassItemsDatabase.length} items.`);
+      }
     }
   } catch (err: any) {
     logger.error("[MongoDB] Error syncing database with MongoDB", { error: err?.message || String(err) });

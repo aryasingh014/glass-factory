@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn, formatBatchNumber, isLaminatedGlass, isDguGlass, isDguStickerPairMatch } from "./utils";
+import { cn, formatBatchNumber, isLaminatedGlass, isDguGlass, isDguStickerPairMatch, getItemFinish, getGlassPaneRole } from "./utils";
 
 describe("cn function", () => {
   it("should merge classes correctly", () => {
@@ -168,5 +168,58 @@ describe("isDguStickerPairMatch Category Isolation", () => {
     };
     expect(isDguStickerPairMatch(laminatedUnit, outerGrey)).toBe(true);
   });
+
+  it("should correctly identify 6MM CARDINAL ADVANCED LOW-E C340 (Z1.pdf) as Colour finish and OP (Outer Pane)", () => {
+    const z1Item = {
+      glassType: "6MM CARDINAL ADVANCED LOW-E C340",
+      glassCategory: "DGU" as const,
+      colorOrClear: "Colour" as const,
+    };
+    expect(getItemFinish(z1Item)).toBe("Colour");
+    const role = getGlassPaneRole(z1Item);
+    expect(role.code).toBe("OP");
+    expect(role.name).toBe("Outer Pane");
+  });
+
+  it("should correctly identify 6MM CLEAR (Z2.pdf) as Clear finish and IP (Inner Pane)", () => {
+    const z2Item = {
+      glassType: "6MM CLEAR",
+      glassCategory: "DGU" as const,
+      colorOrClear: "Clear" as const,
+    };
+    expect(getItemFinish(z2Item)).toBe("Clear");
+    const role = getGlassPaneRole(z2Item);
+    expect(role.code).toBe("IP");
+    expect(role.name).toBe("Inner Pane");
+  });
+
+  it("should match Z1.pdf (Colour Low-E) with Z2.pdf (Clear) in DGU Pairing Buffer", () => {
+    const z1Pane = {
+      orderNo: "03145",
+      obNo: "05863",
+      posNo: "4",
+      width: 1690,
+      height: 1703,
+      glassCode: "CW 13 C2 S 121",
+      glassType: "6MM CARDINAL ADVANCED LOW-E C340",
+      colorOrClear: "Colour" as const,
+      glassCategory: "DGU" as const,
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+    const z2Pane = {
+      orderNo: "03145",
+      obNo: "05863",
+      posNo: "4",
+      width: 1690,
+      height: 1703,
+      glassCode: "CW 13 C2 S 121",
+      glassType: "6MM CLEAR",
+      colorOrClear: "Clear" as const,
+      glassCategory: "DGU" as const,
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+    expect(isDguStickerPairMatch(z1Pane, z2Pane)).toBe(true);
+  });
 });
+
 

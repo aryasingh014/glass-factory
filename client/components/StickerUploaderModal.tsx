@@ -37,6 +37,7 @@ import { toast } from "sonner";
 import { formatPlatformDateTime, formatBatchNumber } from "@/lib/utils";
 import * as pdfjsLib from "pdfjs-dist";
 import { formatGenericBarcode, formatSejalBarcode, KNOWN_BARCODE_PREFIXES, BARCODE_PREFIX } from "@/lib/barcode";
+import { isGlassTypeColour } from "@shared/api";
 import { useAuth } from "@/context/AuthContext";
 
 // Configure pdf.js worker URL served cleanly from /pdf.worker.min.js (public folder)
@@ -178,7 +179,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       colorOrClear: finish,
       glassColor: finish === "Colour" ? "Coloured Glass" : "Clear Float",
       glassType: r.glassType
-        ? (finish === "Colour" && !r.glassType.toLowerCase().includes("colour") && !r.glassType.toLowerCase().includes("tint") && !r.glassType.toLowerCase().includes("syp") && !r.glassType.toLowerCase().includes("stopray")
+        ? (finish === "Colour" && !isGlassTypeColour(r.glassType)
             ? r.glassType.replace(/clear/gi, "COLOURED")
             : (finish === "Clear" && (r.glassType.toLowerCase().includes("coloured") || r.glassType.toLowerCase().includes("color"))
                 ? r.glassType.replace(/coloured|color/gi, "CLEAR")
@@ -192,7 +193,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       colorOrClear: finish,
       glassColor: finish === "Colour" ? "Coloured Glass" : "Clear Float",
       glassType: r.glassType
-        ? (finish === "Colour" && !r.glassType.toLowerCase().includes("colour") && !r.glassType.toLowerCase().includes("tint") && !r.glassType.toLowerCase().includes("syp") && !r.glassType.toLowerCase().includes("stopray")
+        ? (finish === "Colour" && !isGlassTypeColour(r.glassType)
             ? r.glassType.replace(/clear/gi, "COLOURED")
             : (finish === "Clear" && (r.glassType.toLowerCase().includes("coloured") || r.glassType.toLowerCase().includes("color"))
                 ? r.glassType.replace(/coloured|color/gi, "CLEAR")
@@ -524,7 +525,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
 
         if (!primaryPane) {
           const directPane = textBlocks.find(
-            (b) => b.text.trim().length > 0 && b.y >= 70 && b.y <= 110 && b.x < 80 && /\b(\d+MM|CLEAR|STOPRAY|SUNGUARD|SN\b|SYP|YKN|YBR|TINT|TEMPERED|LAM|FLOAT)\b/i.test(b.text)
+            (b) => b.text.trim().length > 0 && b.y >= 70 && b.y <= 110 && b.x < 80 && /\b(\d+MM|CLEAR|CARDINAL|LOW[- ]?E|STOPRAY|SUNGUARD|SN\b|SYP|YKN|YBR|TINT|TEMPERED|LAM|FLOAT)\b/i.test(b.text)
           );
           primaryPane = directPane?.text?.trim() || "";
         }
@@ -536,40 +537,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           primaryPane = "CLEAR FLOAT";
         }
 
-        const primaryLower = primaryPane.toLowerCase();
-        const isPrimaryColour =
-          primaryLower.includes("emicool") ||
-          primaryLower.includes("stopray") ||
-          primaryLower.includes("sunguard") ||
-          primaryLower.includes("sn ") ||
-          primaryLower.includes("sn40") ||
-          primaryLower.includes("sn50") ||
-          primaryLower.includes("sn70") ||
-          primaryLower.includes("syp") ||
-          primaryLower.includes("ykn") ||
-          primaryLower.includes("ybr") ||
-          primaryLower.includes("guardian") ||
-          primaryLower.includes("grey") ||
-          primaryLower.includes("gray") ||
-          primaryLower.includes("bronze") ||
-          primaryLower.includes("bronz") ||
-          primaryLower.includes("blue") ||
-          primaryLower.includes("green") ||
-          primaryLower.includes("tint") ||
-          primaryLower.includes("sunergy") ||
-          primaryLower.includes("cool-lite") ||
-          primaryLower.includes("cool lite") ||
-          primaryLower.includes("solar") ||
-          primaryLower.includes("reflective") ||
-          primaryLower.includes("antelio") ||
-          primaryLower.includes("planibel") ||
-          primaryLower.includes("coat") ||
-          primaryLower.includes("frosted") ||
-          primaryLower.includes("ceramic") ||
-          primaryLower.includes("frit") ||
-          primaryLower.includes("colour") ||
-          primaryLower.includes("color");
-
+        const isPrimaryColour = isGlassTypeColour(primaryPane);
         const itemColorType: "Clear" | "Colour" = isPrimaryColour ? "Colour" : "Clear";
         const itemColorName = isPrimaryColour ? "Coloured Glass" : "Clear Float";
         const glassType = primaryPane;

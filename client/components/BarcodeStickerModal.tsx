@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, Tag, Info } from "lucide-react";
-import { GlassItem, PIMaster } from "@shared/api";
+import { GlassItem, PIMaster, isGlassTypeColour } from "@shared/api";
 import { generateBarcodeSVG, generateITFBarcodeSVG, formatSejalBarcode } from "@/lib/barcode";
 
 interface BarcodeStickerModalProps {
@@ -87,7 +87,7 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
     const cat = (itm.glassCategory || itm.category || "").toUpperCase();
 
     if (cat.includes("DGU") || cat.includes("IGU")) {
-      const isCoatedOrTint = /sunguard|stopray|sn\s*\d|syp|ykn|ybr|emicool|cool-lite|tint/i.test(glassType);
+      const isCoatedOrTint = isGlassTypeColour(glassType);
       const outerPane = glassType;
       const spacer = "16MM BLACK SPACER";
       const innerPane = isCoatedOrTint ? "6MM CLEAR" : (glassType.replace(/with\s+sand\s+blasting/gi, "").trim() || "6MM CLEAR");

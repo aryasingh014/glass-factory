@@ -228,8 +228,10 @@ export async function syncUsersWithMongo(): Promise<void> {
       saveUsersToDisk();
       logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas.`);
     } else if (usersDatabase.length > 0) {
-      await saveUsersToMongo(usersDatabase);
-      logger.info(`[MongoDB] Seeded MongoDB Atlas with ${usersDatabase.length} users.`);
+      const saved = await saveUsersToMongo(usersDatabase);
+      if (saved) {
+        logger.info(`[MongoDB] Seeded MongoDB Atlas with ${usersDatabase.length} users.`);
+      }
     }
   } catch (err: any) {
     logger.error("[MongoDB] Error syncing users with MongoDB", { error: err?.message || String(err) });

@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { GlassItem, ProductionStage, ProductionHistory, PIMaster } from "@shared/api";
+import { GlassItem, ProductionStage, ProductionHistory, PIMaster, isGlassTypeColour } from "@shared/api";
 import { formatPlatformDateTime, formatBatchNumber, getItemFinish, getDguEffectiveQtyAndSqm, isDlguGlass, isDguGlass, isLaminatedGlass, getDisplayStage } from "./utils";
 import { toast } from "sonner";
 
@@ -172,7 +172,7 @@ export function resolveGlassMakeupDetails(
   }
 
   const finish = getItemFinish(item);
-  const isColour = finish === "Colour" || /emicool|syp|stopray|tint|sunguard|dsr/i.test(item.glassType);
+  const isColour = finish === "Colour" || isGlassTypeColour(item.glassType);
 
   let outerGlass = "";
   let innerGlass = "";

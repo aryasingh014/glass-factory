@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+dotenv.config();
 import dns from "dns";
 import type { MongoClient, Db } from "mongodb";
 import { logger } from "./logger";

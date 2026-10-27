@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { isGlassTypeColour } from "@shared/api";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -135,47 +136,7 @@ export function getItemFinish(item: { finish?: string; colorOrClear?: string; ca
   if (!item) return "Clear";
 
   const typeStr = (item.glassType || "").toLowerCase();
-  const colorStr = (item.glassColor || "").toLowerCase();
-  const catStr = (item.category || "").toLowerCase();
-
-  const hasColourKeyword =
-    typeStr.includes("grey") ||
-    typeStr.includes("gray") ||
-    typeStr.includes("bronze") ||
-    typeStr.includes("bronz") ||
-    typeStr.includes("blue") ||
-    typeStr.includes("green") ||
-    typeStr.includes("stopray") ||
-    typeStr.includes("sunguard") ||
-    typeStr.includes("sn ") ||
-    typeStr.includes("sn40") ||
-    typeStr.includes("sn50") ||
-    typeStr.includes("sn70") ||
-    typeStr.includes("syp") ||
-    typeStr.includes("ykn") ||
-    typeStr.includes("ybr") ||
-    typeStr.includes("guardian") ||
-    typeStr.includes("sunergy") ||
-    typeStr.includes("cool-lite") ||
-    typeStr.includes("cool lite") ||
-    typeStr.includes("solar") ||
-    typeStr.includes("reflective") ||
-    typeStr.includes("antelio") ||
-    typeStr.includes("planibel") ||
-    typeStr.includes("tint") ||
-    typeStr.includes("coated") ||
-    typeStr.includes("frosted") ||
-    typeStr.includes("ceramic") ||
-    typeStr.includes("frit") ||
-    colorStr.includes("colour") ||
-    colorStr.includes("color") ||
-    colorStr.includes("grey") ||
-    colorStr.includes("gray") ||
-    colorStr.includes("bronze") ||
-    colorStr.includes("blue") ||
-    colorStr.includes("green") ||
-    catStr.includes("colour") ||
-    catStr.includes("color");
+  const hasColourKeyword = isGlassTypeColour(item.glassType, item.glassColor, item.category);
 
   if (typeStr.includes("clear") && !hasColourKeyword) {
     return "Clear";
