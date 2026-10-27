@@ -40,6 +40,7 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasScannedRef = useRef<boolean>(false);
   const containerId = "sejal-html5-camera-scanner";
 
   // Check if browser is blocking live camera due to HTTP on mobile
@@ -59,6 +60,7 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
 
   // Start scanner after DOM is mounted
   useEffect(() => {
+    hasScannedRef.current = false;
     if (!open) {
       stopScanner();
       return;
@@ -158,9 +160,11 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
   };
 
   const handleDecodedText = (decodedText: string) => {
+    if (hasScannedRef.current) return;
     const clean = cleanScannedBarcode(decodedText) || decodedText.trim();
     if (!clean) return;
 
+    hasScannedRef.current = true;
     scannerAudio.playSuccess();
     if (typeof navigator !== "undefined" && navigator.vibrate) {
       navigator.vibrate([80, 50, 80]);
@@ -179,7 +183,8 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
   // Instant photo snap fallback (works 100% on all mobile devices even over plain HTTP)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || hasScannedRef.current) return;
+    hasScannedRef.current = true;
 
     setFileProcessing(true);
     try {

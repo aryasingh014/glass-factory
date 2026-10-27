@@ -322,6 +322,8 @@ export default function Index() {
   });
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
   const [lastScannedTime, setLastScannedTime] = useState<Date | null>(null);
+  const isGlobalScanningRef = useRef<boolean>(false);
+  const lastGlobalScanRef = useRef<{ code: string; time: number }>({ code: "", time: 0 });
 
   const handleToggleAutoAdvance = (val: boolean) => {
     setAutoAdvanceMode(val);
@@ -778,14 +780,27 @@ export default function Index() {
       const cleanCode = cleanScannedBarcode(code);
       if (!cleanCode) return;
 
-      setLastScannedCode(cleanCode);
-      setLastScannedTime(new Date());
+      // Debounce rapid repeat triggers for the exact same code (<800ms)
+      const now = Date.now();
+      if (lastGlobalScanRef.current.code === cleanCode && now - lastGlobalScanRef.current.time < 800) {
+        return;
+      }
+      // Concurrency lock: prevent multiple scans running at the exact same moment
+      if (isGlobalScanningRef.current) {
+        return;
+      }
+      lastGlobalScanRef.current = { code: cleanCode, time: now };
+      isGlobalScanningRef.current = true;
 
-      // If Scan Lookup Modal is already open, do not trigger background global scan
-      if (scanModalOpen) return;
+      try {
+        setLastScannedCode(cleanCode);
+        setLastScannedTime(new Date());
 
-      // 1. Evaluate scan status against active production state & current workstation stage
-      const scanEval = evaluateScanStatus(items, cleanCode, currentWorkstationStage);
+        // If Scan Lookup Modal or any dialog/modal is already open, do not trigger background global scan
+        if (scanModalOpen || (typeof document !== "undefined" && Boolean(document.querySelector('[role="dialog"]')))) return;
+
+        // 1. Evaluate scan status against active production state & current workstation stage
+        const scanEval = evaluateScanStatus(items, cleanCode, currentWorkstationStage);
 
       // Handle duplicate scan in the same stage (all stickers have completed this stage)
       if (scanEval.status === "already_scanned") {
@@ -983,8 +998,7 @@ export default function Index() {
       idsToAdvance.forEach((id) => recentLocalScansRef.current.set(id, Date.now()));
       serialsToAdvance.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
 
-      try {
-        const res = await fetch("/api/production/stage-complete", {
+      const res = await fetch("/api/production/stage-complete", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1036,6 +1050,8 @@ export default function Index() {
         scannerAudio.playError();
         toast.error(err.message || `Error advancing scanned item`);
         fetchData(true);
+      } finally {
+        isGlobalScanningRef.current = false;
       }
     },
     [scanModalOpen, items, autoAdvanceMode, user, userRole, currentWorkstationStage, getAuthHeaders, handleOptimisticAdvance, fetchData]

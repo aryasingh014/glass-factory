@@ -237,6 +237,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const [scanInput, setScanInput] = useState("");
   const [stageCameraOpen, setStageCameraOpen] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
+  const isVerifyingScanRef = useRef<boolean>(false);
 
   const isFinished = stage === "Finished";
 
@@ -2270,10 +2271,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   // Hardware barcode scanner gun listener for verification modal
   useBarcodeScanner({
     enabled: Boolean(scanRow),
+    duplicateCooldownMs: 800,
     onScan: (scanned) => {
+      if (isVerifyingScanRef.current) return;
+      isVerifyingScanRef.current = true;
       setScanInput(scanned);
-      setTimeout(() => {
-        handleScanVerify(scanned);
+      setTimeout(async () => {
+        try {
+          await handleScanVerify(scanned);
+        } finally {
+          isVerifyingScanRef.current = false;
+        }
       }, 50);
     },
   });

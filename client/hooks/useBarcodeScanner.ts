@@ -8,6 +8,8 @@ export interface UseBarcodeScannerOptions {
   minLen?: number;
   /** Maximum inter-character arrival time in milliseconds for hardware scanner detection (default: 150ms) */
   maxIntervalMs?: number;
+  /** Cooldown time in ms between duplicate scans of the exact same barcode (default: 800ms) */
+  duplicateCooldownMs?: number;
   /** Whether the scanner listener is currently enabled (default: true) */
   enabled?: boolean;
   /** If true, prevents scanner input from being captured when a normal input element is focused unless it's a scanner burst (default: true) */
@@ -24,6 +26,7 @@ export function useBarcodeScanner({
   onScan,
   minLen = 3,
   maxIntervalMs = 150,
+  duplicateCooldownMs = 800,
   enabled = true,
   ignoreWhenInputFocused = true,
   validate,
@@ -33,6 +36,7 @@ export function useBarcodeScanner({
   const isScannerBurstRef = useRef<boolean>(false);
   const charCountBurstRef = useRef<number>(0);
   const resetTimerRef = useRef<any>(null);
+  const lastScanCandidateRef = useRef<{ code: string; time: number }>({ code: "", time: 0 });
   const onScanRef = useRef(onScan);
 
   useEffect(() => {
@@ -85,6 +89,17 @@ export function useBarcodeScanner({
           if (validate && !validate(candidate)) {
             return;
           }
+
+          // Debounce hardware trigger repeat bursts on the same barcode
+          const nowEpoch = Date.now();
+          const cooldown = duplicateCooldownMs ?? 800;
+          if (
+            lastScanCandidateRef.current.code === candidate &&
+            nowEpoch - lastScanCandidateRef.current.time < cooldown
+          ) {
+            return;
+          }
+          lastScanCandidateRef.current = { code: candidate, time: nowEpoch };
 
           // Stop default form submission/newline
           e.preventDefault();
