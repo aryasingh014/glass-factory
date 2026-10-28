@@ -14,6 +14,7 @@ import {
   formatSejalBarcode,
   COLOURED_COATED_GLASS_REGEX,
   isGlassTypeColour,
+  isBatchUploadHistory,
 } from "../../shared/api";
 import { piDatabase, glassItemsDatabase, productionHistoryDatabase, rejectDatabase, reworkDatabase, notificationsDatabase, createAndBroadcastNotification, saveDatabaseToDisk, loadDatabaseFromDisk } from "./pi";
 import { logger } from "../lib/logger";
@@ -4019,7 +4020,7 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   });
 
   productionHistoryDatabase.forEach((h) => {
-    if (h.status === "Completed") {
+    if (h.status === "Completed" && !isBatchUploadHistory(h)) {
       const rawStage = String(h.stage || "General");
       const stg = rawStage === "Finished" ? "Dispatched" : rawStage;
       const rawOp = h.user || h.operator || "Production Line";

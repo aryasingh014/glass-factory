@@ -2365,5 +2365,75 @@ describe("Barcode Scanner Sticker Matching & Stage Advancement Workflow", () => 
   });
 });
 
+describe("Batch Upload History & Worker Daily Progress Calculation", () => {
+  it("should accurately distinguish batch upload audit records from individual glass item history", async () => {
+    const { isBatchUploadHistory } = await import("../../shared/api");
 
+    const batchUploadRecord1 = {
+      serialNumber: "BATCH-1360",
+      action: "Batch Uploaded (Sticker PDF)",
+      stage: "Cutting",
+      status: "Completed",
+    };
+    const batchUploadRecord2 = {
+      serialNumber: "BATCH-6243",
+      action: "Batch Uploaded (Excel)",
+      stage: "Cutting",
+      status: "Completed",
+    };
+    const cutGlassItemRecord = {
+      serialNumber: "S579",
+      action: "Advanced to Polishing",
+      stage: "Cutting",
+      status: "Completed",
+    };
 
+    expect(isBatchUploadHistory(batchUploadRecord1)).toBe(true);
+    expect(isBatchUploadHistory(batchUploadRecord2)).toBe(true);
+    expect(isBatchUploadHistory(cutGlassItemRecord)).toBe(false);
+    expect(isBatchUploadHistory(null)).toBe(false);
+  });
+
+  it("should NOT count batch upload history as cut glass items in handleGetDashboardStats", async () => {
+    const { handleGetDashboardStats } = await import("./production");
+    const { productionHistoryDatabase } = await import("./pi");
+
+    // Measure baseline stats before adding batch upload record
+    let statsBefore: any = null;
+    const reqBefore: any = {};
+    const resBefore: any = {
+      json: (data: any) => { statsBefore = data; return resBefore; },
+    };
+    handleGetDashboardStats(reqBefore, resBefore, () => {});
+    const initialCutting = statsBefore.userThroughputByStage?.["Cutting"]?.["Operator"]?.stickers || 0;
+
+    // Add a batch upload history record
+    const testBatchRecord = {
+      id: "hist-test-batch-upload",
+      serialNumber: "BATCH-TEST-999",
+      piNumber: "TEST-999",
+      action: "Batch Uploaded (Sticker PDF)",
+      stage: "Cutting",
+      status: "Completed",
+      operator: "Operator",
+      user: "Operator",
+      timestamp: new Date().toISOString(),
+    };
+    productionHistoryDatabase.unshift(testBatchRecord);
+
+    let statsAfter: any = null;
+    const reqAfter: any = {};
+    const resAfter: any = {
+      json: (data: any) => { statsAfter = data; return resAfter; },
+    };
+    handleGetDashboardStats(reqAfter, resAfter, () => {});
+
+    // Clean up test record
+    const idx = productionHistoryDatabase.findIndex((h) => h.id === "hist-test-batch-upload");
+    if (idx !== -1) productionHistoryDatabase.splice(idx, 1);
+
+    // Operator in cutting should NOT have stickers count incremented by the batch upload record
+    const afterCutting = statsAfter.userThroughputByStage?.["Cutting"]?.["Operator"]?.stickers || 0;
+    expect(afterCutting).toBe(initialCutting);
+  });
+});

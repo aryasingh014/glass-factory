@@ -239,5 +239,79 @@ describe("Authentication & RBAC System", () => {
       }
     });
   });
-});
 
+  describe("Deleted User Deactivation & Access Invalidation", () => {
+    it("should immediately invalidate JWT token and purge active sessions when user is deleted", async () => {
+      const { createSession, activeSessions, isUserRevoked } = await import("./users");
+      const { handleGetCurrentUser, handleHeartbeat, handleLogin } = await import("../routes/auth");
+
+      // 1. Create a temporary operator
+      const tempOp = createUser({
+        username: "deleted_operator_test",
+        email: "deleted_op@sejalglass.com",
+        name: "Temporary Operator",
+        role: "Operator",
+        password: "OperatorPass@123",
+      });
+
+      // 2. Simulate login: session created & token generated
+      const session = createSession(tempOp, "192.168.1.50", "TestBrowser");
+      const token = generateUserToken(tempOp, session.sessionId);
+
+      expect(verifyToken(token)).not.toBeNull();
+      expect(activeSessions.has(session.sessionId)).toBe(true);
+
+      // 3. Admin deletes the user
+      const deleted = deleteUser(tempOp.id);
+      expect(deleted).not.toBeNull();
+      expect(deleted?.username).toBe("deleted_operator_test");
+
+      // 4. Token must be immediately rejected
+      expect(isUserRevoked(tempOp.id, tempOp.username)).toBe(true);
+      expect(verifyToken(token)).toBeNull();
+
+      // 5. Active session must be pruned
+      expect(activeSessions.has(session.sessionId)).toBe(false);
+
+      // 6. /api/auth/me must reject with 401 Unauthorized
+      let meStatus = 0;
+      let meBody: any = null;
+      const meReq: any = {
+        headers: { authorization: `Bearer ${token}` },
+      };
+      const meRes: any = {
+        status: (s: number) => { meStatus = s; return meRes; },
+        json: (b: any) => { meBody = b; return meRes; },
+      };
+      handleGetCurrentUser(meReq, meRes, () => {});
+      expect(meStatus).toBe(401);
+
+      // 7. /api/auth/heartbeat must reject with 401
+      let hbStatus = 0;
+      const hbReq: any = {
+        headers: { authorization: `Bearer ${token}` },
+      };
+      const hbRes: any = {
+        status: (s: number) => { hbStatus = s; return hbRes; },
+        json: () => hbRes,
+      };
+      handleHeartbeat(hbReq, hbRes, () => {});
+      expect(hbStatus).toBe(401);
+
+      // 8. Attempting to log in with deleted credentials must reject
+      let loginStatus = 0;
+      let loginBody: any = null;
+      const loginReq: any = {
+        headers: {},
+        body: { identifier: "deleted_operator_test", password: "OperatorPass@123" },
+      };
+      const loginRes: any = {
+        status: (s: number) => { loginStatus = s; return loginRes; },
+        json: (b: any) => { loginBody = b; return loginRes; },
+      };
+      handleLogin(loginReq, loginRes, () => {});
+      expect(loginStatus).toBe(401);
+      expect(loginBody.error).toContain("Invalid username or password");
+    });
+  });
+});

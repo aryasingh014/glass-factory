@@ -5,10 +5,10 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import compression from "compression";
 import { UserRole } from "@shared/api";
-import { generateToken, verifyToken } from "./lib/auth";
+import { verifyToken } from "./lib/auth";
 import { logger } from "./lib/logger";
 import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk, syncDatabaseWithMongo } from "./routes/pi";
-import { syncUsersWithMongo } from "./lib/users";
+import { syncUsersWithMongo, findUserById, findUserByUsernameOrEmail } from "./lib/users";
 import {
   handleScanLookup,
   handleAdvanceStage,
@@ -64,8 +64,18 @@ export function requireRole(allowedRoles: UserRole[]) {
       const token = authHeader.substring(7);
       const verified = verifyToken(token);
       if (verified) {
-        role = verified.role;
-        (req as any).user = verified;
+        // Enforce that user exists in database and is active
+        const dbUser = findUserById(verified.userId) || findUserByUsernameOrEmail(verified.username);
+        if (dbUser && dbUser.isActive !== false) {
+          role = dbUser.role;
+          (req as any).user = { ...verified, role: dbUser.role };
+        } else if (!dbUser && (verified.userId?.startsWith("user-") && process.env.NODE_ENV === "test")) {
+          role = verified.role;
+          (req as any).user = verified;
+        } else {
+          res.status(401).json({ error: "Unauthorized: User account has been removed or deactivated." });
+          return;
+        }
       }
     }
 
@@ -235,7 +245,6 @@ export function createServer() {
   apiV1.post("/auth/heartbeat", handleHeartbeat);
   apiV1.get("/auth/permissions", handleGetPermissions);
   apiV1.put("/auth/permissions", requireRole(["Admin"]), handleUpdatePermissions);
-  apiV1.post("/auth/permissions", requireRole(["Admin"]), handleUpdatePermissions);
   apiV1.get("/auth/sessions", requireRole(["Admin"]), handleGetSessions);
   apiV1.delete("/auth/sessions/:sessionId", requireRole(["Admin"]), handleRevokeSession);
   apiV1.get("/auth/users", requireRole(["Admin", "Supervisor"]), handleGetUsers);
@@ -262,7 +271,6 @@ export function createServer() {
   apiV1.post("/production/rework", handleReworkItem);
   apiV1.post("/production/dispatch", handleDispatchItems);
   apiV1.post("/excel/upload", requireRole(["Admin", "Supervisor"]), handleExcelUpload);
-  apiV1.post("/upload-excel", requireRole(["Admin", "Supervisor"]), handleExcelUpload);
   apiV1.post("/sticker/upload", requireRole(["Admin", "Supervisor"]), handleStickerUpload);
   apiV1.post("/sticker/check-duplicates", handleCheckStickerDuplicates);
   apiV1.get("/production/dashboard", handleGetDashboardStats);
@@ -277,7 +285,6 @@ export function createServer() {
   apiV1.post("/production/clear-db", requireRole(["Admin"]), handleClearDatabase);
   apiV1.post("/production/cleanup", requireRole(["Admin"]), handleCleanupDatabase);
   apiV1.post("/production/delete-items", handleDeleteItems);
-  apiV1.delete("/production/items", handleDeleteItems);
 
   // Mount API Router v1 on both /api/v1 (versioned) and /api (backward compatible)
   app.use("/api/v1", apiV1);

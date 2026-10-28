@@ -45,7 +45,6 @@ import { toast } from "sonner";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
 import { exportStageWipToExcel } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
-import { WorkstationStageBanner } from "./WorkstationStageBanner";
 
 interface PairingBufferViewProps {
   items: GlassItem[];

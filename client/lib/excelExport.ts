@@ -1,13 +1,7 @@
 import * as XLSX from "xlsx";
-import { GlassItem, ProductionStage, ProductionHistory, PIMaster, isGlassTypeColour } from "@shared/api";
+import { GlassItem, ProductionStage, ProductionHistory, PIMaster, isGlassTypeColour, isBatchUploadHistory } from "@shared/api";
 import { formatPlatformDateTime, formatBatchNumber, getItemFinish, getDguEffectiveQtyAndSqm, isDlguGlass, isDguGlass, isLaminatedGlass, getDisplayStage } from "./utils";
 import { toast } from "sonner";
-
-export const excelSaver = {
-  save: (wb: XLSX.WorkBook, fileName: string) => {
-    XLSX.writeFile(wb, fileName);
-  },
-};
 
 /**
  * Standard list of required exported Excel columns (in strict required order)
@@ -122,7 +116,7 @@ export const standardColWidths = [
 function downloadWorkbook(wb: XLSX.WorkBook, fileName: string) {
   const cleanName = fileName.replace(/[^a-zA-Z0-9_\-]/g, "_");
   const finalFileName = `${cleanName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-  excelSaver.save(wb, finalFileName);
+  XLSX.writeFile(wb, finalFileName);
   try {
     toast.success(`Exported: ${finalFileName}`);
   } catch {}
@@ -349,7 +343,7 @@ export function exportStageHistoryToExcel(
   glassItemsLookup: GlassItem[] = [],
   pis: PIMaster[] = []
 ) {
-  const stageRecords = historyRecords.filter((h) => h.stage === stage);
+  const stageRecords = historyRecords.filter((h) => h.stage === stage && !isBatchUploadHistory(h));
 
   if (stageRecords.length === 0) {
     try {

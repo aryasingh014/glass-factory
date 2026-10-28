@@ -32,6 +32,51 @@ export interface UserProfile {
 
 const DATA_DIR = path.resolve(process.cwd(), "server/data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
+const REVOKED_FILE = path.join(DATA_DIR, "revoked_users.json");
+
+export const revokedUserIds = new Set<string>();
+export const revokedUsernames = new Set<string>();
+
+export function loadRevokedUsersFromDisk(): void {
+  try {
+    if (fs.existsSync(REVOKED_FILE)) {
+      const content = fs.readFileSync(REVOKED_FILE, "utf-8");
+      if (content.trim()) {
+        const loaded = JSON.parse(content);
+        if (Array.isArray(loaded.userIds)) {
+          loaded.userIds.forEach((id: string) => revokedUserIds.add(id));
+        }
+        if (Array.isArray(loaded.usernames)) {
+          loaded.usernames.forEach((name: string) => revokedUsernames.add(name.toLowerCase()));
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn("Failed to load revoked users list from disk", { err });
+  }
+}
+
+export function saveRevokedUsersToDisk(): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const data = {
+      userIds: Array.from(revokedUserIds),
+      usernames: Array.from(revokedUsernames),
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(REVOKED_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err) {
+    logger.warn("Failed to save revoked users list to disk", { err });
+  }
+}
+
+export function isUserRevoked(id?: string, username?: string): boolean {
+  if (id && revokedUserIds.has(id)) return true;
+  if (username && revokedUsernames.has(username.toLowerCase())) return true;
+  return false;
+}
 
 /**
  * Hash password with salt using PBKDF2
@@ -146,10 +191,13 @@ export async function syncUsersWithMongo(): Promise<void> {
   try {
     const mongoUsers = await loadUsersFromMongo();
     if (mongoUsers && Array.isArray(mongoUsers) && mongoUsers.length > 0) {
-      // MongoDB Atlas has users; use MongoDB as the canonical source of truth
-      usersDatabase.splice(0, usersDatabase.length, ...mongoUsers);
+      // MongoDB Atlas has users; use MongoDB as the canonical source of truth, but never resurrect revoked/deleted accounts
+      const validUsers = mongoUsers.filter(
+        (u) => !revokedUserIds.has(u.id) && !revokedUsernames.has((u.username || "").toLowerCase())
+      );
+      usersDatabase.splice(0, usersDatabase.length, ...validUsers);
       saveUsersToDisk();
-      logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas.`);
+      logger.info(`[MongoDB] Successfully loaded ${usersDatabase.length} users from MongoDB Atlas (revoked/deleted excluded).`);
     } else if (usersDatabase.length > 0) {
       // Seed MongoDB Atlas only if MongoDB collection is empty
       const saved = await saveUsersToMongo(usersDatabase);
@@ -162,8 +210,9 @@ export async function syncUsersWithMongo(): Promise<void> {
   }
 }
 
-// Initialize users on load
+// Initialize users & revoked list on load
 loadUsersFromDisk();
+loadRevokedUsersFromDisk();
 
 // ─── Real-Time Session Store ──────────────────────────────────────────────────
 export const activeSessions = new Map<string, UserSession>();
@@ -314,6 +363,9 @@ export function createUser(data: {
   };
 
   usersDatabase.push(newUser);
+  // If this username was previously recorded as revoked, remove it from the revoked list
+  revokedUsernames.delete(newUser.username.toLowerCase());
+  saveRevokedUsersToDisk();
   saveUsersToDisk();
 
   return {
@@ -495,9 +547,9 @@ export function resetUserPermissions(userId: string): { user: UserRecord; permis
   };
 }
 
-export function deleteUser(id: string): boolean {
+export function deleteUser(id: string): User | null {
   const index = usersDatabase.findIndex((u) => u.id === id);
-  if (index === -1) return false;
+  if (index === -1) return null;
 
   const userToDelete = usersDatabase[index];
   if (userToDelete.role === "Admin") {
@@ -507,9 +559,25 @@ export function deleteUser(id: string): boolean {
     }
   }
 
+  // 1. Immediately record user in revoked sets and persist
+  revokedUserIds.add(id);
+  revokedUsernames.add(userToDelete.username.toLowerCase());
+  saveRevokedUsersToDisk();
+
+  // 2. Terminate all active sessions for this user
+  for (const [sessionId, session] of activeSessions.entries()) {
+    if (
+      session.userId === id ||
+      session.username.toLowerCase() === userToDelete.username.toLowerCase()
+    ) {
+      activeSessions.delete(sessionId);
+    }
+  }
+
+  // 3. Remove user from database and persist to disk & MongoDB
   usersDatabase.splice(index, 1);
   saveUsersToDisk();
-  return true;
+  return userToDelete;
 }
 
 export function updateUserLastLogin(id: string): void {

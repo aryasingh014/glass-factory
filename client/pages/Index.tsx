@@ -592,6 +592,38 @@ export default function Index() {
       eventSource.addEventListener("pi_deleted", handleStreamUpdate);
       eventSource.addEventListener("database_cleared", handleStreamUpdate);
 
+      eventSource.addEventListener("session_revoked", (e: any) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (
+            data &&
+            (data.userId === user?.id ||
+              (data.username && user?.username && data.username.toLowerCase() === user.username.toLowerCase()))
+          ) {
+            toast.error("Your account has been deleted by an administrator. Logging out...");
+            setTimeout(() => {
+              logout();
+            }, 300);
+          }
+        } catch {}
+      });
+
+      eventSource.addEventListener("user_deleted", (e: any) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (
+            data &&
+            (data.userId === user?.id ||
+              (data.username && user?.username && data.username.toLowerCase() === user.username.toLowerCase()))
+          ) {
+            toast.error("Your account has been deleted by an administrator. Logging out...");
+            setTimeout(() => {
+              logout();
+            }, 300);
+          }
+        } catch {}
+      });
+
       eventSource.onmessage = handleStreamUpdate;
     } catch (err) {
       console.error("SSE connection error:", err);

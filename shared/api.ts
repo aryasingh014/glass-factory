@@ -399,5 +399,55 @@ export function isGlassTypeColour(glassType?: string, glassColor?: string, categ
   return COLOURED_COATED_GLASS_REGEX.test(combined);
 }
 
+// ==========================================
+// Product Classification Helpers
+// ==========================================
 
+export function isDlguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string; remarks?: string } | null | undefined): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return true;
+  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""} ${item.remarks || ""}`.toLowerCase();
+  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
+  return (hasSpacer && hasLam) || str.includes("dlgu");
+}
 
+export function isDguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; glassCategory?: string; remarks?: string } | null | undefined): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return false;
+  if (item.glassCategory === "DGU") return true;
+  if (item.glassCategory === "Lamination") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("DGU") && !item.processRoute.includes("Lamination")) return true;
+    if (item.processRoute.includes("Lamination")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""}`.toLowerCase();
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
+  return hasSpacer && !hasLam;
+}
+
+export function isLaminatedGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string; remarks?: string } | null | undefined): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return false;
+  if (item.glassCategory === "Lamination") return true;
+  if (item.glassCategory === "DGU") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("DGU")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""} ${item.remarks || ""}`.toLowerCase();
+  return /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
+}
+
+export function isBatchUploadHistory(h: { serialNumber?: string; action?: string } | null | undefined): boolean {
+  if (!h) return false;
+  const sn = (h.serialNumber || "").toUpperCase();
+  const act = (h.action || "").toLowerCase();
+  return sn.startsWith("BATCH-") || act.includes("batch upload") || act.includes("batch uploaded");
+}

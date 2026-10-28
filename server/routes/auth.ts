@@ -29,7 +29,8 @@ import {
   verifySmtpConnection,
 } from "../lib/email";
 import { logger } from "../lib/logger";
-import { sanitizeString } from "./production";
+import { sanitizeString, broadcastUpdate } from "./production";
+import { createAndBroadcastNotification } from "./pi";
 
 /**
  * Real login handler validating username/email and password
@@ -104,23 +105,12 @@ export const handleGetCurrentUser: RequestHandler = (req, res) => {
 
   const user = findUserById(payload.userId) || findUserByUsernameOrEmail(payload.username);
   if (!user) {
-    const profile = {
-      id: payload.userId,
-      username: payload.username,
-      email: payload.email || `${payload.role.toLowerCase()}@sejalglass.com`,
-      name: payload.name || `${payload.role} User`,
-      role: payload.role,
-      assignedStages: payload.assignedStages,
-    };
-    res.json({
-      user: profile,
-      permissions: ROLE_PERMISSIONS[payload.role] || ROLE_PERMISSIONS.Operator,
-    });
+    res.status(401).json({ error: "Unauthorized: User account has been removed or no longer exists." });
     return;
   }
 
   if (user.isActive === false) {
-    res.status(403).json({ error: "Account is disabled." });
+    res.status(403).json({ error: "Account is disabled. Please contact your system administrator." });
     return;
   }
 
@@ -145,6 +135,13 @@ export const handleHeartbeat: RequestHandler = (req, res) => {
   const payload = verifyToken(token);
   if (!payload) {
     res.status(401).json({ error: "Invalid token" });
+    return;
+  }
+
+  const user = findUserById(payload.userId) || findUserByUsernameOrEmail(payload.username);
+  if (!user || user.isActive === false) {
+    if (payload.sessionId) revokeSession(payload.sessionId);
+    res.status(401).json({ error: "Unauthorized: User account has been removed or deactivated." });
     return;
   }
 
@@ -425,12 +422,22 @@ export const handleDeleteUser: RequestHandler = (req, res) => {
   }
 
   try {
-    const success = deleteUser(id);
-    if (!success) {
+    const deletedUser = deleteUser(id);
+    if (!deletedUser) {
       res.status(404).json({ error: "User not found." });
       return;
     }
-    res.json({ success: true, message: "User deleted successfully." });
+
+    broadcastUpdate("session_revoked", { userId: id, username: deletedUser.username });
+    broadcastUpdate("user_deleted", { userId: id, username: deletedUser.username });
+    createAndBroadcastNotification({
+      title: "User Account Deleted",
+      message: `User '${deletedUser.name}' (@${deletedUser.username}) has been permanently deleted by administrator.`,
+      type: "warning",
+      category: "SYSTEM",
+    });
+
+    res.json({ success: true, message: `User '${deletedUser.name}' deleted successfully.` });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to delete user." });
   }

@@ -10,7 +10,11 @@ import {
   ProductTypeBreakdown,
   BottleneckInfo,
   GlassItem,
-} from "@shared/api";
+  isDlguGlass,
+  isDguGlass,
+  isLaminatedGlass,
+  isBatchUploadHistory,
+} from "../../shared/api";
 import {
   piDatabase,
   glassItemsDatabase,
@@ -20,32 +24,6 @@ import {
 } from "./pi";
 import { logger } from "../lib/logger";
 import { getAllUserRecords } from "../lib/users";
-
-function isDlguGlass(item: any): boolean {
-  if (item.glassCategory === "DLGU") return true;
-  const desc = `${item.glassType || ""} ${item.glassCode || ""} ${item.remarks || ""}`.toLowerCase();
-  const hasInterlayer = /\b(pvb|sgp|eva|lamination|laminated|lami|lam)\b/i.test(desc);
-  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(desc);
-  return hasInterlayer && hasSpacer;
-}
-
-function isDguGlass(item: any): boolean {
-  if (item.glassCategory === "DGU") return true;
-  const desc = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  return (
-    item.processRoute?.includes("DGU") ||
-    /\b(dgu|igu|double|spacer)\b/i.test(desc)
-  );
-}
-
-function isLaminatedGlass(item: any): boolean {
-  if (item.glassCategory === "Lamination") return true;
-  const desc = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  return (
-    item.processRoute?.includes("Lamination") ||
-    /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(desc)
-  );
-}
 
 function getDguEffectiveQtyAndSqm(item: GlassItem) {
   const isDgu = isDguGlass(item);
@@ -141,8 +119,9 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
       return true;
     });
 
-    // 2. Filter Production History Logs
+    // 2. Filter Production History Logs (Exclude batch upload audit logs from processed unit counts)
     const filteredHistory = productionHistoryDatabase.filter((h) => {
+      if (isBatchUploadHistory(h)) return false;
       if (!filterByDate(h.timestamp)) return false;
       if (operatorFilter !== "all" && (h.operator || h.user || "").toLowerCase() !== operatorFilter) return false;
       if (stageFilter !== "all" && (h.stage || "").toLowerCase() !== stageFilter) return false;

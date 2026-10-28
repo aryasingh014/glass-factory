@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { isGlassTypeColour } from "@shared/api";
+import { isGlassTypeColour, isDlguGlass, isDguGlass, isLaminatedGlass } from "@shared/api";
+export { isDlguGlass, isDguGlass, isLaminatedGlass };
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -217,23 +218,6 @@ export function getGlassPaneRole(item: {
 }
 
 /**
- * Checks if a glass item is a DLGU (Double Laminated Glazed Unit).
- */
-export function isDlguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string } | null | undefined): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return true;
-  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
-    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
-  return (hasSpacer && hasLam) || str.includes("dlgu");
-}
-
-/**
  * Returns human-readable display stage for a glass item.
  * For DLGU items at DGU workstation, displays "DLGU" instead of "DGU".
  */
@@ -249,42 +233,6 @@ export function getDisplayStage(
     if (stage === "Pairing") return (item.dlguPhase === "DguPairing" || item.completedStages?.includes("Lamination")) ? "DLGU Pairing" : "Lam Pairing";
   }
   return stage;
-}
-
-/**
- * Checks if a glass item is a DGU (Double Glazing Unit) glass item.
- */
-export function isDguGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; glassCategory?: string } | null | undefined): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return false;
-  if (item.glassCategory === "DGU") return true;
-  if (item.glassCategory === "Lamination") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("DGU") && !item.processRoute.includes("Lamination")) return true;
-    if (item.processRoute.includes("Lamination")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
-  return hasSpacer && !hasLam;
-}
-
-/**
- * Checks if a glass item is Laminated glass (process route has Lamination or glass spec indicates laminated).
- */
-export function isLaminatedGlass(item: { processRoute?: string[]; glassType?: string; glassCode?: string; itemCode?: string; glassCategory?: string } | null | undefined): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return false;
-  if (item.glassCategory === "Lamination") return true;
-  if (item.glassCategory === "DGU") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return true;
-    if (item.processRoute.includes("DGU")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
-  return hasLam && !hasSpacer;
 }
 
 /**

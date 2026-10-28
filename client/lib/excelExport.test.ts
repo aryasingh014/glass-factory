@@ -1,4 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { capturedFiles } = vi.hoisted(() => ({
+  capturedFiles: {} as Record<string, any>,
+}));
+
+vi.mock("xlsx", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("xlsx")>();
+  return {
+    ...actual,
+    writeFile: (wb: any, filename: string) => {
+      capturedFiles[filename] = wb;
+    },
+  };
+});
+
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import {
@@ -8,8 +23,8 @@ import {
   exportPartialDispatchNoteToExcel,
   exportBatchProgressMatrixToExcel,
   STANDARD_EXCEL_COLUMNS,
-  excelSaver,
 } from "./excelExport";
+import { isBatchUploadHistory } from "@shared/api";
 import { ProductionStage } from "@shared/api";
 
 describe("Stage Export Functionality & Exact 31 Required Columns Verification", () => {
@@ -44,7 +59,9 @@ describe("Stage Export Functionality & Exact 31 Required Columns Verification", 
   }));
   const items = Array.isArray(db.glassItemsDatabase) && db.glassItemsDatabase.length >= 5 ? db.glassItemsDatabase : fallbackItems;
   const pis = Array.isArray(db.piDatabase) && db.piDatabase.length > 0 ? db.piDatabase : [{ id: "pi-01", piNumber: "1349", customerName: "ALUTEC FACADE", projectName: "DUBAI CREEK TOWER" }];
-  const history = Array.isArray(db.productionHistoryDatabase) && db.productionHistoryDatabase.length > 0 ? db.productionHistoryDatabase : [{
+  const rawHistory = Array.isArray(db.productionHistoryDatabase) ? db.productionHistoryDatabase : [];
+  const nonBatchHistory = rawHistory.filter((h: any) => !isBatchUploadHistory(h));
+  const history = nonBatchHistory.length > 0 ? nonBatchHistory : [{
     id: "hist-01",
     serialNumber: "S001",
     barcode: "1012627013490001",
@@ -56,12 +73,10 @@ describe("Stage Export Functionality & Exact 31 Required Columns Verification", 
     remarks: "Tested",
   }];
 
-  const capturedFiles: Record<string, any> = {};
-
   beforeEach(() => {
-    vi.spyOn(excelSaver, "save").mockImplementation((wb: any, filename: string) => {
-      capturedFiles[filename] = wb;
-    });
+    for (const key of Object.keys(capturedFiles)) {
+      delete capturedFiles[key];
+    }
   });
 
   const stages: ProductionStage[] = ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"];

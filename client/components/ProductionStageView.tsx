@@ -76,7 +76,6 @@ import {
   exportPartialDispatchNoteToExcel,
 } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
-import { WorkstationStageBanner } from "./WorkstationStageBanner";
 
 interface ProductionStageViewProps {
   stage: ProductionStage;
