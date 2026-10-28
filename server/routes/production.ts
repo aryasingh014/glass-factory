@@ -427,11 +427,13 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     if (g.barcode && !itemMap.has(g.barcode)) itemMap.set(g.barcode, g);
   }
 
-  // Combine targets: Process specific itemIds first, then serial numbers/barcodes
-  const combinedTargets = [
-    ...idList.map((id) => ({ type: "id", val: id })),
-    ...serialList.map((sn) => ({ type: "serial", val: sn })),
-  ];
+  // When specific itemIds are provided by the client, use ONLY itemIds so that
+  // the same item is not processed twice (once by ID and once by serialNumber/barcode),
+  // which causes multiple pieces sharing the same barcode or POS to be advanced simultaneously.
+  const combinedTargets: { type: "id" | "serial"; val: string }[] =
+    idList.length > 0
+      ? Array.from(new Set(idList)).map((id) => ({ type: "id" as const, val: id }))
+      : Array.from(new Set(serialList)).map((sn) => ({ type: "serial" as const, val: sn }));
 
   for (const target of combinedTargets) {
     const rawVal = target.val;
@@ -747,6 +749,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
 
       glassItemsDatabase.push(advancedItem);
       updatedItems.push(advancedItem);
+      alreadyProcessedIds.add(advancedItem.id);
 
       // 3. Log history for the scanned piece
       productionHistoryDatabase.unshift({

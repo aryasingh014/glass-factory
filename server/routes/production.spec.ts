@@ -2027,6 +2027,83 @@ describe("Barcode Scanner Sticker Matching & Stage Advancement Workflow", () => 
     if (idx2 !== -1) glassItemsDatabase.splice(idx2, 1);
   });
 
+  it("should advance only ONE piece when both itemIds and serialNumbers are provided for multi-sticker positions", async () => {
+    const { glassItemsDatabase } = await import("./pi");
+    const { handleAdvanceStage } = await import("./production");
+
+    const barcodeMulti = "1012627088880011";
+    const pieceAId = "test-piece-multi-a";
+    const pieceBId = "test-piece-multi-b";
+    const pieceCId = "test-piece-multi-c";
+
+    const pieceA: any = {
+      id: pieceAId,
+      serialNumber: "S801",
+      barcode: barcodeMulti,
+      posNo: "11",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    };
+    const pieceB: any = {
+      id: pieceBId,
+      serialNumber: "S802",
+      barcode: barcodeMulti,
+      posNo: "11",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    };
+    const pieceC: any = {
+      id: pieceCId,
+      serialNumber: "S803",
+      barcode: barcodeMulti,
+      posNo: "11",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Pairing", "Finished"],
+      completedStages: [],
+      status: "In Production",
+      qty: 1,
+    };
+    glassItemsDatabase.push(pieceA, pieceB, pieceC);
+
+    // Frontend scan sends BOTH itemIds: [pieceA.id] AND serialNumbers: [pieceA.serialNumber]
+    let resData: any = null;
+    const req: any = {
+      body: {
+        itemIds: [pieceAId],
+        serialNumbers: [pieceA.serialNumber],
+        currentStage: "Cutting",
+        stage: "Cutting",
+        advanceQty: 1,
+        advanceAll: false,
+      },
+    };
+    const res: any = {
+      status: () => res,
+      json: (d: any) => { resData = d; return res; },
+    };
+
+    handleAdvanceStage(req, res, () => {});
+
+    // Must advance ONLY pieceA, NOT pieceB or pieceC!
+    expect(resData.items).toHaveLength(1);
+    expect(resData.items[0].id).toBe(pieceAId);
+    expect(pieceA.currentStage).toBe("Pairing");
+    expect(pieceB.currentStage).toBe("Cutting");
+    expect(pieceC.currentStage).toBe("Cutting");
+
+    // Clean up
+    [pieceAId, pieceBId, pieceCId].forEach((id) => {
+      const idx = glassItemsDatabase.findIndex((g) => g.id === id);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
   it("should reject advancing an upstream item if scanned from a downstream workstation stage", async () => {
     const { glassItemsDatabase } = await import("./pi");
     const { handleAdvanceStage } = await import("./production");

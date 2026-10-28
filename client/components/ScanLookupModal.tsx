@@ -75,6 +75,7 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
   // Handle hardware scanner gun input inside modal
   useBarcodeScanner({
     enabled: open,
+    duplicateCooldownMs: 1800,
     onScan: (scannedBarcode) => {
       const clean = cleanScannedBarcode(scannedBarcode);
       setSearchInput(clean);

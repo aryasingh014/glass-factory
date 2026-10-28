@@ -2270,7 +2270,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   // Hardware barcode scanner gun listener for verification modal
   useBarcodeScanner({
     enabled: Boolean(scanRow),
-    duplicateCooldownMs: 800,
+    duplicateCooldownMs: 1800,
     onScan: (scanned) => {
       if (isVerifyingScanRef.current) return;
       isVerifyingScanRef.current = true;
@@ -5817,7 +5817,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           onScan={(code) => {
             setScanInput(code);
             setTimeout(() => {
-              handleScanVerify();
+              handleScanVerify(code);
             }, 100);
           }}
           title={`Scan with Camera (${stage})`}

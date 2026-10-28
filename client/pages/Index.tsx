@@ -812,13 +812,15 @@ export default function Index() {
       const cleanCode = cleanScannedBarcode(code);
       if (!cleanCode) return;
 
-      // Debounce rapid repeat triggers for the exact same code (<800ms)
+      // Debounce rapid repeat triggers for the exact same code (<1800ms) with sliding cooldown window
       const now = Date.now();
-      if (lastGlobalScanRef.current.code === cleanCode && now - lastGlobalScanRef.current.time < 800) {
+      if (lastGlobalScanRef.current.code === cleanCode && now - lastGlobalScanRef.current.time < 1800) {
+        lastGlobalScanRef.current.time = now;
         return;
       }
       // Concurrency lock: prevent multiple scans running at the exact same moment
       if (isGlobalScanningRef.current) {
+        lastGlobalScanRef.current = { code: cleanCode, time: now };
         return;
       }
       lastGlobalScanRef.current = { code: cleanCode, time: now };
@@ -1091,6 +1093,7 @@ export default function Index() {
 
   useBarcodeScanner({
     enabled: true,
+    duplicateCooldownMs: 1800,
     onScan: handleGlobalScan,
   });
 

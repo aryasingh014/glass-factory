@@ -18,6 +18,10 @@ export interface UseBarcodeScannerOptions {
   validate?: (code: string) => boolean;
 }
 
+// Module-level guard: prevents duplicate dispatch across multiple mounted scanner hook instances
+let globalLastScannedBarcode = "";
+let globalLastScanEpoch = 0;
+
 /**
  * High-performance global barcode and QR scanner hook for USB, 2.4GHz Wireless, and Bluetooth scanner guns.
  * Differentiates between human typing (>200ms/char) and scanner gun burst typing (<150ms/char).
@@ -26,7 +30,7 @@ export function useBarcodeScanner({
   onScan,
   minLen = 3,
   maxIntervalMs = 150,
-  duplicateCooldownMs = 800,
+  duplicateCooldownMs = 1800,
   enabled = true,
   ignoreWhenInputFocused = true,
   validate,
@@ -90,20 +94,28 @@ export function useBarcodeScanner({
             return;
           }
 
-          // Debounce hardware trigger repeat bursts on the same barcode
-          const nowEpoch = Date.now();
-          const cooldown = duplicateCooldownMs ?? 800;
-          if (
-            lastScanCandidateRef.current.code === candidate &&
-            nowEpoch - lastScanCandidateRef.current.time < cooldown
-          ) {
-            return;
-          }
-          lastScanCandidateRef.current = { code: candidate, time: nowEpoch };
-
-          // Stop default form submission/newline
+          // Always intercept and prevent default newline / button press on detected scanner code
           e.preventDefault();
           e.stopPropagation();
+
+          // Debounce hardware trigger repeat bursts on the same barcode (sliding window)
+          const nowEpoch = Date.now();
+          const cooldown = duplicateCooldownMs ?? 1800;
+          if (
+            (lastScanCandidateRef.current.code === candidate &&
+              nowEpoch - lastScanCandidateRef.current.time < cooldown) ||
+            (globalLastScannedBarcode === candidate &&
+              nowEpoch - globalLastScanEpoch < cooldown)
+          ) {
+            // Keep sliding the cooldown forward as long as trigger repeats keep coming
+            lastScanCandidateRef.current.time = nowEpoch;
+            globalLastScanEpoch = nowEpoch;
+            return;
+          }
+
+          lastScanCandidateRef.current = { code: candidate, time: nowEpoch };
+          globalLastScannedBarcode = candidate;
+          globalLastScanEpoch = nowEpoch;
 
           // Fire scan event
           onScanRef.current(candidate);
@@ -137,7 +149,7 @@ export function useBarcodeScanner({
         }
       }
     },
-    [enabled, minLen, maxIntervalMs, ignoreWhenInputFocused, validate]
+    [enabled, minLen, maxIntervalMs, duplicateCooldownMs, ignoreWhenInputFocused, validate]
   );
 
   useEffect(() => {
