@@ -116,14 +116,14 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl bg-white text-slate-900 border-slate-200 shadow-xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader className="flex flex-row items-center justify-between border-b border-slate-200 pb-3">
+        <DialogHeader className="flex flex-row items-center justify-between border-b border-slate-200 pb-3 pr-10">
           <DialogTitle className="text-lg font-extrabold flex items-center gap-2.5 text-slate-900">
             <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-sm shrink-0">
               <Tag className="w-4 h-4 text-white" />
             </div>
             <span>Glass Barcode Sticker Label</span>
           </DialogTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mr-2">
             <Button onClick={handlePrintSticker} size="sm" className="bg-blue-600 hover:bg-blue-700 text-white gap-1 text-xs font-semibold shadow-sm">
               <Printer className="w-4 h-4" /> Print Sticker
             </Button>
