@@ -998,39 +998,45 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     const posLabel = d.posNo ? `POS #${d.posNo}` : "Glass Unit";
 
     const refItem = updatedItems[0];
-    const siblings = refItem
+    const barcode = refItem?.barcode?.trim();
+    const stickerQty = parseInt(String(refItem?.lineQty || refItem?.qty || 1), 10) || 1;
+
+    // Find all sibling items in the batch that share this exact barcode
+    const barcodeSiblings = refItem && barcode
       ? glassItemsDatabase.filter(
           (g) =>
             ((refItem.piId && g.piId === refItem.piId) || (refItem.piNumber && g.piNumber === refItem.piNumber)) &&
-            ((refItem.posNo && g.posNo === refItem.posNo) || (refItem.barcode && g.barcode === refItem.barcode)) &&
+            g.barcode && g.barcode.trim() === barcode &&
             g.status !== "Rejected"
         )
       : [];
 
-    const totalPosQty = Math.max(
-      d.advancedQty + d.remainingQty,
-      siblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0)
+    const totalStickers = Math.max(
+      stickerQty,
+      barcodeSiblings.length,
+      barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+      d.advancedQty + d.remainingQty
     );
 
-    // Calculate how many pieces of this position have completed/advanced past fromStage
-    const advancedOrCompleted = siblings
+    // Calculate how many pieces for this barcode have completed or moved past fromStage
+    const completedOrAdvanced = barcodeSiblings
       .filter((g) => {
         if (g.currentStage === "Finished" || g.status === "Completed") return true;
         const r = g.processRoute || [];
         const fromIdx = r.indexOf(d.fromStage as ProductionStage);
         const curIdx = r.indexOf(g.currentStage as ProductionStage);
-        return curIdx > fromIdx;
+        return curIdx > fromIdx || (g.completedStages && g.completedStages.includes(d.fromStage as ProductionStage));
       })
       .reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0);
 
-    const scanCount = Math.min(totalPosQty, Math.max(1, advancedOrCompleted || d.advancedQty));
+    const scanCount = Math.min(totalStickers, Math.max(1, completedOrAdvanced || d.advancedQty));
 
-    if (totalPosQty > 1) {
-      if (scanCount >= totalPosQty || d.remainingQty === 0) {
-        richMessage = `Advanced ${posLabel} (${totalPosQty} of ${totalPosQty} scanned — All completed) from ${humanFrom} ➔ ${humanTo}`;
+    if (totalStickers > 1) {
+      if (scanCount >= totalStickers) {
+        richMessage = `Advanced ${posLabel} (${totalStickers} of ${totalStickers} scanned — All completed) from ${humanFrom} ➔ ${humanTo}`;
       } else {
-        const remaining = totalPosQty - scanCount;
-        richMessage = `Advanced ${posLabel} (${scanCount} of ${totalPosQty} scanned) from ${humanFrom} ➔ ${humanTo}${remaining > 0 ? ` (${remaining} remaining in ${humanFrom})` : ""}`;
+        const remaining = totalStickers - scanCount;
+        richMessage = `Advanced ${posLabel} (${scanCount} of ${totalStickers} scanned) from ${humanFrom} ➔ ${humanTo}${remaining > 0 ? ` (${remaining} remaining in ${humanFrom})` : ""}`;
       }
     } else {
       richMessage = `Advanced ${posLabel} from ${humanFrom} ➔ ${humanTo}`;

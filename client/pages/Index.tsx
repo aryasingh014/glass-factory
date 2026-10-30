@@ -930,12 +930,35 @@ export default function Index() {
       }
       const nextStage: ProductionStage = currentIndex >= 0 && currentIndex < route.length - 1 ? route[currentIndex + 1] : "Finished";
 
-      // Calculate sticker piece progression notes for multi-sticker positions (e.g. Glass1.pdf POS 17, Glass2.pdf POS 15)
-      const currentQty = parseInt(String(matchedItem.qty || 1), 10) || 1;
-      const totalMatching = Math.max(scanEval.totalMatching || 1, currentQty);
-      const remainingBeforeAdvance = Math.max(scanEval.remainingInStage || 1, currentQty);
+      // Calculate sticker piece progression notes for multi-sticker positions (matching exact sticker barcode)
+      const barcode = matchedItem.barcode?.trim();
+      const barcodeSiblings = barcode
+        ? items.filter(
+            (g) =>
+              ((matchedItem.piId && g.piId === matchedItem.piId) || (matchedItem.piNumber && g.piNumber === matchedItem.piNumber)) &&
+              g.barcode && g.barcode.trim() === barcode &&
+              g.status !== "Rejected"
+          )
+        : [];
+
+      const stickerQty = parseInt(String(matchedItem.lineQty || matchedItem.qty || 1), 10) || 1;
+      const totalMatching = Math.max(
+        stickerQty,
+        barcodeSiblings.length,
+        barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+        scanEval.totalMatching || 1
+      );
+
+      const inStageSiblings = barcodeSiblings.filter(
+        (g) => g.currentStage?.toLowerCase() === currentStage.toLowerCase()
+      );
+      const remainingBeforeAdvance = Math.max(
+        inStageSiblings.length,
+        inStageSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+        scanEval.remainingInStage || 1
+      );
       const remainingAfter = Math.max(0, remainingBeforeAdvance - 1);
-      const stickerIndex = totalMatching > 1 ? totalMatching - remainingAfter : 1;
+      const stickerIndex = totalMatching > 1 ? Math.min(totalMatching, totalMatching - remainingAfter) : 1;
 
       const stickerLabel = totalMatching > 1
         ? ` (${stickerIndex} of ${totalMatching} scanned)`
