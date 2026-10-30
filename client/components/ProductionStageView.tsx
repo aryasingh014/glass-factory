@@ -1049,7 +1049,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         dguPairReady: false,
         glassCategory: (isDlguGlass(item) || item.glassCategory === "DLGU") ? "DLGU" : (isDguGlass(item) || item.glassCategory === "DGU") ? "DGU" : (isLaminatedGlass(item) || item.glassCategory === "Lamination") ? "Laminated" : "General",
         allSerials: [item.serialNumber],
-        effectiveSqm: item.sqm || 0,
+        effectiveSqm: item.sqm || ((item.width && item.height) ? parseFloat(((item.width * item.height * (item.qty || 1)) / 1000000).toFixed(2)) : 0),
         displaySerial: item.serialNumber,
         displayBarcode: resolveValidBarcode(item),
       }));

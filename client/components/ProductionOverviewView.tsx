@@ -76,7 +76,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
   // Comprehensive Production Metrics Calculation
   const metrics = useMemo(() => {
-    const totalItems = items.length;
+    const totalItems = items.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const totalSqm = parseFloat(items.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
     // Stage counts (Individual Glass Panes - exclude dispatched items which belong only in Dispatched History)
@@ -89,14 +89,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const rejectedItemsList = items.filter((i) => i.status === "Rejected");
     const reworkItemsList = items.filter((i) => i.status === "Reworking" || ((i as any).reworkCount && (i as any).reworkCount > 0));
 
-    const cuttingCount = cuttingItemsList.length;
-    const polishingCount = polishingItemsList.length;
-    const pairingCount = pairingItemsList.length;
-    const dguCount = dguItemsList.length;
-    const laminationCount = laminationItemsList.length;
-    const finishedCount = finishedItemsList.length;
-    const rejectedCount = rejectedItemsList.length;
-    const reworkCount = reworkItemsList.length;
+    const cuttingCount = cuttingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const polishingCount = polishingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingCount = pairingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguCount = dguItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const laminationCount = laminationItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const finishedCount = finishedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const rejectedCount = rejectedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const reworkCount = reworkItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
     // SQMs
     const cuttingSqm = parseFloat(cuttingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
@@ -111,76 +111,80 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const inProgressSqm = parseFloat((cuttingSqm + polishingSqm + pairingSqm + dguSqm + laminationSqm).toFixed(2));
 
     // Pending Cutting / Unprocessed Panes
-    const pendingCuttingCount = cuttingItemsList.filter((i) => !i.completedStages || i.completedStages.length === 0).length;
+    const pendingCuttingCount = cuttingItemsList.filter((i) => !i.completedStages || i.completedStages.length === 0).reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
     // Distinct raw sheets in Cutting
     const distinctCuttingSheets = new Set(
       cuttingItemsList.map((i) => `${(i as any).rawSheetW || i.width}x${(i as any).rawSheetH || i.height}-${i.thickness || ""}-${i.glassType || "RAW"}`)
     ).size;
 
-    const cuttingColour = cuttingItemsList.filter(isColour).length;
+    const cuttingColour = cuttingItemsList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const cuttingClear = cuttingCount - cuttingColour;
 
     // Pairing stage details
-    const pairingColour = pairingItemsList.filter(isColour).length;
+    const pairingColour = pairingItemsList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const pairingClear = pairingCount - pairingColour;
     const pairingPairs = Math.min(pairingColour, pairingClear);
 
     // DGU / IGU Specialty Breakdown
     const allDguItems = items.filter((i) => isDguGlass(i) && !isDlguGlass(i));
-    const dguColourPanes = allDguItems.filter(isColour).length;
-    const dguClearPanes = allDguItems.length - dguColourPanes;
+    const dguColourPanes = allDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguClearPanes = allDguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) - dguColourPanes;
     const dguTotalUnits = dguColourPanes > 0 && dguClearPanes > 0
       ? Math.min(dguColourPanes, dguClearPanes)
-      : Math.ceil(allDguItems.length / 2);
-    const dguFinishedUnits = finishedItemsList.filter((i) => isDguGlass(i) && !isDlguGlass(i)).filter(isColour).length ||
-      Math.ceil(finishedItemsList.filter((i) => isDguGlass(i) && !isDlguGlass(i)).length / 2);
+      : Math.ceil(allDguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const dguFinishedUnits = finishedItemsList.filter((i) => isDguGlass(i) && !isDlguGlass(i)).filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0) ||
+      Math.ceil(finishedItemsList.filter((i) => isDguGlass(i) && !isDlguGlass(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
     const dguActiveUnits = Math.max(0, dguTotalUnits - dguFinishedUnits);
     const dguTotalSqm = parseFloat(allDguItems.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2)) ||
       parseFloat((allDguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2).toFixed(2));
 
     // DLGU (Double Laminated Glazed Units) Specialty Breakdown
     const allDlguItems = items.filter(isDlguGlass);
-    const dlguColourPanes = allDlguItems.filter(isColour).length;
-    const dlguClearPanes = allDlguItems.length - dlguColourPanes;
+    const dlguColourPanes = allDlguItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dlguClearPanes = allDlguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) - dlguColourPanes;
     const dlguTotalUnits = dlguColourPanes > 0 && dlguClearPanes > 0
       ? Math.min(dlguColourPanes, Math.floor(dlguClearPanes / 2))
-      : (Math.floor(allDlguItems.length / 3) || Math.ceil(allDlguItems.length / 2));
-    const dlguFinishedUnits = Math.ceil(finishedItemsList.filter(isDlguGlass).length / 3) || Math.ceil(finishedItemsList.filter(isDlguGlass).length / 2);
+      : (Math.floor(allDlguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 3) || Math.ceil(allDlguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2));
+    const dlguFinishedUnits = Math.ceil(finishedItemsList.filter(isDlguGlass).reduce((acc, curr) => acc + (curr.qty || 1), 0) / 3) || Math.ceil(finishedItemsList.filter(isDlguGlass).reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
     const dlguActiveUnits = Math.max(0, dlguTotalUnits - dlguFinishedUnits);
-    const dlguTotalSqm = parseFloat(allDlguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const dlguTotalSqm = parseFloat(allDlguItems.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2)) ||
+      parseFloat((allDlguItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 3).toFixed(2));
 
     // Laminated Specialty Breakdown
     const allLamItems = items.filter((i) => isLaminatedGlass(i) && !isDguGlass(i) && !isDlguGlass(i));
-    const lamTotalUnits = Math.ceil(allLamItems.length / 2);
-    const lamFinishedUnits = Math.ceil(finishedItemsList.filter((i) => isLaminatedGlass(i) && !isDguGlass(i) && !isDlguGlass(i)).length / 2);
+    const lamTotalUnits = Math.ceil(allLamItems.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+    const lamFinishedUnits = Math.ceil(finishedItemsList.filter((i) => isLaminatedGlass(i) && !isDguGlass(i) && !isDlguGlass(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
     const lamActiveUnits = Math.max(0, lamTotalUnits - lamFinishedUnits);
-    const lamTotalSqm = parseFloat(allLamItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const lamTotalSqm = parseFloat((allLamItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2).toFixed(2));
 
     // Monolithic / Single Tempered
     const allMonolithicItems = items.filter((i) => !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i));
-    const monoTotalUnits = allMonolithicItems.length;
-    const monoFinishedUnits = finishedItemsList.filter((i) => !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i)).length;
+    const monoTotalUnits = allMonolithicItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const monoFinishedUnits = finishedItemsList.filter((i) => !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i)).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const monoActiveUnits = Math.max(0, monoTotalUnits - monoFinishedUnits);
     const monoTotalSqm = parseFloat(allMonolithicItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
     // Live Stage Workstation Queue WIP (Current items/units waiting at each workstation)
-    const dguStageColour = dguItemsList.filter(isColour).length;
-    const dguStageClear = dguItemsList.length - dguStageColour;
+    const dguStageColour = dguItemsList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguStageTotal = dguItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dguStageClear = dguStageTotal - dguStageColour;
     const dguStageUnits = dguStageColour > 0 && dguStageClear > 0
       ? Math.min(dguStageColour, dguStageClear)
-      : (dguStageColour > 0 ? dguStageColour : Math.ceil(dguItemsList.length / 2));
+      : (dguStageColour > 0 ? dguStageColour : Math.ceil(dguStageTotal / 2));
 
     const dlguStageItems = items.filter((i) => !isDispatchedItem(i) && isDlguGlass(i) && (i.currentStage === "Pairing" || i.currentStage === "DGU" || i.currentStage === "Lamination") && i.status !== "Rejected");
-    const dlguStageUnits = Math.floor(dlguStageItems.length / 3) || Math.floor(dlguStageItems.length / 2);
+    const dlguStageTotal = dlguStageItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dlguStageUnits = Math.floor(dlguStageTotal / 3) || Math.floor(dlguStageTotal / 2);
 
-    const pairingStageColour = pairingItemsList.filter(isColour).length;
-    const pairingStageClear = pairingItemsList.length - pairingStageColour;
+    const pairingStageColour = pairingItemsList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingStageTotal = pairingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const pairingStageClear = pairingStageTotal - pairingStageColour;
     const pairingStageUnits = pairingStageColour > 0 && pairingStageClear > 0
       ? Math.min(pairingStageColour, pairingStageClear)
-      : Math.floor(pairingItemsList.length / 2);
+      : Math.floor(pairingStageTotal / 2);
 
-    const laminationStageUnits = Math.ceil(laminationItemsList.length / 2);
+    const laminationStageUnits = Math.ceil(laminationItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
 
     // Active downstream processing (panes moved past cutting into Polishing, Pairing, DGU, Lamination)
     const activeDownstreamCount = polishingCount + pairingCount + dguCount + laminationCount;

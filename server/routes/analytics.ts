@@ -147,7 +147,7 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
     });
 
     // 4. Executive Summary Calculations
-    const totalGlassItems = filteredItems.length;
+    const totalGlassItems = filteredItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     let totalVolumeSqm = 0;
     let completedSqm = 0;
     let inProgressSqm = 0;
@@ -155,15 +155,16 @@ export const handleGetPerformanceAnalytics: RequestHandler = (req, res) => {
     const completedItems = filteredItems.filter(
       (item) => item.status === "Completed" || item.currentStage === "Finished"
     );
-    const completedGlassItems = completedItems.length;
-    const inProgressGlassItems = totalGlassItems - completedGlassItems;
+    const completedGlassItems = completedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const rejectedGlassItems = filteredItems.filter((i) => i.status === "Rejected").reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const inProgressGlassItems = Math.max(0, totalGlassItems - completedGlassItems - rejectedGlassItems);
 
     filteredItems.forEach((item) => {
       const eff = getDguEffectiveQtyAndSqm(item);
       totalVolumeSqm += eff.sqm;
       if (item.status === "Completed" || item.currentStage === "Finished") {
         completedSqm += eff.sqm;
-      } else {
+      } else if (item.status !== "Rejected") {
         inProgressSqm += eff.sqm;
       }
     });

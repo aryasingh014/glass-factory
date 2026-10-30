@@ -37,7 +37,6 @@ import {
   RotateCw,
   Clock,
   Activity,
-  TrendingUp,
   X,
   Gauge,
   Zap,
@@ -46,7 +45,6 @@ import {
   Percent,
   SlidersHorizontal,
   Timer,
-  CheckSquare,
   Boxes,
   Truck,
   Scissors,
@@ -2296,71 +2294,6 @@ export default function Index() {
               const pendingPct = totalItems > 0 ? Math.round((pendingItems / grandTotal) * 100) : 0;
               const rejectedPct = totalItems > 0 ? Math.round((rejectedItems / grandTotal) * 100) : 0;
               // Real dynamic Production Efficiency:
-              // Measures actual progress across factory process routes:
-              // Items finished/dispatched = 100% completed
-              // Items in active stages = proportional to completed stages along their route
-              const stageCompletedWork = filteredSummaryItems.reduce((acc, item) => {
-                if (item.status === "Rejected") return acc;
-                if (item.status === "Completed" || item.currentStage === "Finished" || isDispatchedItem(item)) {
-                  return acc + (item.qty || 1);
-                }
-                const totalStages = Math.max(1, item.processRoute?.length || 2);
-                const doneStages = item.completedStages?.length || (item.currentStage && item.currentStage !== "Cutting" ? 1 : 0);
-                const progressFraction = Math.min(0.95, doneStages / totalStages);
-                return acc + (item.qty || 1) * progressFraction;
-              }, 0);
-
-              const efficiencyRate = totalItems > 0
-                ? Math.min(100, Math.max(0, Math.round((stageCompletedWork / totalItems) * 100)))
-                : (completedItems > 0 ? 100 : 0);
-
-              // Real dynamic On-Time Delivery:
-              // Evaluates customer order deadlines vs current production fulfillment
-              let onTimeCount = 0;
-              let evaluatedCount = 0;
-
-              filteredSummaryItems.forEach((item) => {
-                const qty = item.qty || 1;
-                evaluatedCount += qty;
-
-                const targetDateStr = item.delDate || pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber)?.deliveryDate;
-                if (!targetDateStr) {
-                  if (item.status !== "Rejected") {
-                    onTimeCount += qty;
-                  }
-                  return;
-                }
-
-                const isOverdue = (() => {
-                  try {
-                    const parts = targetDateStr.split(/[\/\-\.]/);
-                    let dueDate = null;
-                    if (parts.length === 3) {
-                      if (parts[0].length === 4) {
-                        dueDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 23, 59, 59);
-                      } else {
-                        dueDate = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]), 23, 59, 59);
-                      }
-                    } else {
-                      dueDate = new Date(targetDateStr);
-                    }
-                    if (dueDate && !isNaN(dueDate.getTime())) {
-                      return now.getTime() > dueDate.getTime();
-                    }
-                  } catch { }
-                  return false;
-                })();
-
-                const isDone = item.status === "Completed" || item.currentStage === "Finished" || isDispatchedItem(item);
-                if (isDone || !isOverdue) {
-                  onTimeCount += qty;
-                }
-              });
-
-              const onTimeRate = evaluatedCount > 0
-                ? Math.min(100, Math.max(0, Math.round((onTimeCount / evaluatedCount) * 100)))
-                : 100;
-
               let donutGrad = "#e2e8f0";
               if (totalItems > 0) {
                 if (completedPct === 100) {
@@ -2775,63 +2708,6 @@ export default function Index() {
                           </span>
                         </div>
                       </section>
-
-                      {/* Today's Overview */}
-                      <section className="ppb-panel ppb-overview-panel">
-                        <div className="ppb-panel-heading">
-                          <div
-                            onClick={() => setActiveTab("analytics")}
-                            className="cursor-pointer group flex items-center gap-2"
-                            title="Click to view detailed Enterprise Performance Analytics"
-                          >
-                            <Factory className="ppb-heading-icon group-hover:scale-110 transition-transform" size={20} />
-                            <h3 className="group-hover:text-blue-600 transition-colors">Today's Overview</h3>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab("analytics")}
-                            className="flex items-center gap-1 font-bold text-xs text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                            title="Open Enterprise Performance Analytics"
-                          >
-                            Analytics <ArrowRight size={15} />
-                          </button>
-                        </div>
-                        <div
-                          className="ppb-progress-row cursor-pointer hover:bg-blue-50/50 p-1.5 rounded-lg transition-colors"
-                          onClick={() => setActiveTab("production-overview")}
-                          title={`Production Efficiency: ${efficiencyRate}% (Based on completed workstation stages across ${totalItems} items)`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold text-slate-700">Production Efficiency</span>
-                            <strong className="text-xs font-black text-blue-700">{`${efficiencyRate}%`}</strong>
-                          </div>
-                          <div className="ppb-progress-bar">
-                            <div
-                              className="ppb-progress-fill ppb-progress-fill-blue"
-                              style={{ width: `${efficiencyRate}%` }}
-                            />
-                          </div>
-                        </div>
-                        <div
-                          className="ppb-progress-row cursor-pointer hover:bg-emerald-50/50 p-1.5 rounded-lg transition-colors"
-                          style={{ marginTop: 8 }}
-                          onClick={() => setActiveTab("analytics")}
-                          title={`On-Time Delivery: ${onTimeRate}% (Based on customer order delivery schedule)`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold text-slate-700">On-Time Delivery</span>
-                            <strong className="text-xs font-black" style={{ color: "#059669" }}>
-                              {`${onTimeRate}%`}
-                            </strong>
-                          </div>
-                          <div className="ppb-progress-bar">
-                            <div
-                              className="ppb-progress-fill ppb-progress-fill-green"
-                              style={{ width: `${onTimeRate}%` }}
-                            />
-                          </div>
-                        </div>
-                      </section>
                     </div>
                   </div>
                   {/* Dashboard End Custom Footer Card */}
@@ -2856,44 +2732,6 @@ export default function Index() {
                           <p className="text-[7.5px] font-bold text-slate-500 mt-0.5">Reflecting Values • Precision Glass Production • Built for Dubai. Made for Excellence.</p>
                         </div>
                       </div>
-
-                      {/* Center: 4 mini stats */}
-                      <div className="flex items-center gap-5 bg-white/60 px-4 py-2 rounded-3xl backdrop-blur-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded flex items-center justify-center shrink-0"><Layers size={12} /></div>
-                          <div className="flex flex-col justify-center">
-                            <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Total Batches</div>
-                            <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{pis.length}</div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center shrink-0"><CheckSquare size={12} /></div>
-                          <div className="flex flex-col justify-center">
-                            <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Finished Items</div>
-                            <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems ?? 0}</div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded flex items-center justify-center shrink-0"><TrendingUp size={12} /></div>
-                          <div className="flex flex-col justify-center">
-                            <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">Efficiency</div>
-                            <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{efficiencyRate}%</div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-emerald-50 text-emerald-600 rounded flex items-center justify-center shrink-0"><Clock size={12} /></div>
-                          <div className="flex flex-col justify-center">
-                            <div className="text-[7.5px] font-bold text-slate-500 uppercase tracking-wide">On-Time Delivery</div>
-                            <div className="text-[11.5px] font-black text-slate-900 leading-none mt-0.5">{onTimeRate}%</div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Empty spacer to push content left if needed, letting the 40% bg image shine on the right */}
-                      <div className="w-[15%]"></div>
                     </div>
 
                   </div>
