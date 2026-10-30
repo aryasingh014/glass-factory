@@ -133,6 +133,18 @@ export async function saveProductionToMongo(data: any): Promise<boolean> {
     const db = await getMongoDb();
     if (!db) return false;
     const col = db.collection("app_state");
+
+    // Safeguard: Never overwrite remote production data with an empty state
+    const incomingPiCount = Array.isArray(data.piDatabase) ? data.piDatabase.length : 0;
+    const incomingGlassCount = Array.isArray(data.glassItemsDatabase) ? data.glassItemsDatabase.length : 0;
+    if (incomingPiCount === 0 && incomingGlassCount === 0) {
+      const existing = await col.findOne({ _id: "production_db" as any });
+      if (existing && Array.isArray(existing.piDatabase) && existing.piDatabase.length > 0) {
+        logger.warn("[MongoDB] Refusing to overwrite populated cloud database with empty in-memory state!");
+        return false;
+      }
+    }
+
     await col.updateOne(
       { _id: "production_db" as any },
       {
@@ -180,6 +192,13 @@ export async function saveUsersToMongo(users: any[]): Promise<boolean> {
     const db = await getMongoDb();
     if (!db) return false;
     const col = db.collection("app_state");
+
+    // Safeguard: Never overwrite remote users with an empty list
+    if (!Array.isArray(users) || users.length === 0) {
+      logger.warn("[MongoDB] Refusing to overwrite cloud users with empty array!");
+      return false;
+    }
+
     await col.updateOne(
       { _id: "users_db" as any },
       {

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createServer } from "./index";
+import { createServer, initAppDatabases } from "./index";
 import * as express from "express";
 
 const app = createServer();
@@ -32,10 +32,13 @@ app.use((req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`🚀 Fusion Starter server running on port ${port}`);
-  console.log(`📱 Frontend: http://localhost:${port}`);
-  console.log(`🔧 API: http://localhost:${port}/api`);
+// Initialize and sync databases before listening for requests
+initAppDatabases().finally(() => {
+  app.listen(port, () => {
+    console.log(`🚀 Fusion Starter server running on port ${port}`);
+    console.log(`📱 Frontend: http://localhost:${port}`);
+    console.log(`🔧 API: http://localhost:${port}/api`);
+  });
 });
 
 // Graceful shutdown

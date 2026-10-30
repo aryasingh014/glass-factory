@@ -7,7 +7,7 @@ import compression from "compression";
 import { UserRole } from "@shared/api";
 import { verifyToken } from "./lib/auth";
 import { logger } from "./lib/logger";
-import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk, syncDatabaseWithMongo } from "./routes/pi";
+import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk, syncDatabaseWithMongo, piDatabase, glassItemsDatabase, productionHistoryDatabase } from "./routes/pi";
 import { syncUsersWithMongo, findUserById, findUserByUsernameOrEmail } from "./lib/users";
 import {
   handleScanLookup,
@@ -153,6 +153,18 @@ function rateLimiter(options: { windowMs?: number; max?: number } = {}) {
   };
 }
 
+export async function initAppDatabases(): Promise<void> {
+  loadDatabaseFromDisk(true);
+  try {
+    await Promise.allSettled([
+      syncDatabaseWithMongo(),
+      syncUsersWithMongo(),
+    ]);
+  } catch (err: any) {
+    logger.error("Error during initial database sync", { error: err?.message || String(err) });
+  }
+}
+
 export function createServer() {
   loadDatabaseFromDisk(true);
 
@@ -234,6 +246,22 @@ export function createServer() {
   // Health check endpoint
   apiV1.get("/ping", (_req, res) => {
     res.json({ message: "ping pong", version: "v1" });
+  });
+
+  apiV1.get("/health", (_req, res) => {
+    res.json({ status: "healthy", timestamp: new Date().toISOString() });
+  });
+
+  apiV1.get("/db-status", (_req, res) => {
+    res.json({
+      status: "online",
+      mongoConfigured: Boolean(process.env.MONGODB_URI),
+      dbName: process.env.MONGODB_DB_NAME || "glass_production_erp",
+      batchesCount: piDatabase.length,
+      glassItemsCount: glassItemsDatabase.length,
+      historyCount: productionHistoryDatabase.length,
+      environment: process.env.NODE_ENV || "development",
+    });
   });
 
   // Auth & Session endpoints
