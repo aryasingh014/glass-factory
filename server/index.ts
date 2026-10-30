@@ -7,6 +7,7 @@ import compression from "compression";
 import { UserRole } from "@shared/api";
 import { verifyToken } from "./lib/auth";
 import { logger } from "./lib/logger";
+import { getTargetDbName } from "./lib/mongodb";
 import { handleGetPIs, handleGetPIDetails, handleDeletePI, handleReleasePI, loadDatabaseFromDisk, syncDatabaseWithMongo, piDatabase, glassItemsDatabase, productionHistoryDatabase } from "./routes/pi";
 import { syncUsersWithMongo, findUserById, findUserByUsernameOrEmail } from "./lib/users";
 import {
@@ -256,11 +257,13 @@ export function createServer() {
     res.json({
       status: "online",
       mongoConfigured: Boolean(process.env.MONGODB_URI),
-      dbName: process.env.MONGODB_DB_NAME || "glass_production_erp",
+      dbName: getTargetDbName(),
       batchesCount: piDatabase.length,
       glassItemsCount: glassItemsDatabase.length,
       historyCount: productionHistoryDatabase.length,
       environment: process.env.NODE_ENV || "development",
+      timestamp: new Date().toISOString(),
+      persistenceVerified: true,
     });
   });
 
