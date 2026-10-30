@@ -350,7 +350,7 @@ export const handleScanLookup: RequestHandler = (req, res) => {
 
       if (alreadyPast.length > 0) {
         const first = alreadyPast[0];
-        const posLabel = first.posNo ? `POS #${first.posNo}` : (first.itemCode || first.serialNumber);
+        const posLabel = first.posNo ? `POS ${first.posNo}` : (first.itemCode || "Glass Piece");
         const pi = piDatabase.find((p) => p.id === first.piId || p.piNumber === first.piNumber);
         const history = productionHistoryDatabase.filter((h) => h.serialNumber === first.serialNumber || h.barcode === first.barcode);
         res.json({
@@ -595,7 +595,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         const partnerDesc = isColour ? "Clear" : "Colour";
         skippedItems.push({
           serialNumber: item.serialNumber,
-          reason: `Cannot advance from Pairing: Glass pane ${item.serialNumber} (POS #${item.posNo || item.itemCode}) cannot advance to ${nextStage} without pairing. The matching ${partnerDesc} partner pane has not been cut or is not in the Pairing Buffer yet.`,
+          reason: `Cannot advance from Pairing: Glass pane POS ${item.posNo || item.itemCode} cannot advance to ${nextStage} without pairing. The matching ${partnerDesc} partner pane has not been cut or is not in the Pairing Buffer yet.`,
         });
         continue;
       }
@@ -640,7 +640,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
           operator: cleanOperator,
           user: cleanOperator,
           timestamp: new Date().toISOString(),
-          remarks: `Paired with ${item.serialNumber} (POS #${item.posNo || item.itemCode}) and advanced to ${nextStage}`,
+          remarks: `Paired with POS ${item.posNo || item.itemCode} and advanced to ${nextStage}`,
         });
       }
     }
@@ -682,7 +682,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         if (!dguPartner) {
           skippedItems.push({
             serialNumber: item.serialNumber,
-            reason: `Cannot advance to Finished: DGU item ${item.serialNumber} (POS #${item.posNo || item.itemCode}) cannot be completed without its partner pane. Both Colour and Clear panes must be assembled in DGU before completing.`,
+            reason: `Cannot advance to Finished: DGU item POS ${item.posNo || item.itemCode} cannot be completed without its partner pane. Both Colour and Clear panes must be assembled in DGU before completing.`,
           });
           continue;
         }
@@ -995,7 +995,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     const d = advanceDetails[0];
     const humanTo = formatStageDisplay(d.toStage);
     const humanFrom = formatStageDisplay(d.fromStage);
-    const posLabel = d.posNo ? `POS #${d.posNo}` : "Glass Unit";
+    const posLabel = d.posNo ? `POS ${d.posNo}` : "Glass Unit";
 
     const refItem = updatedItems[0];
     const barcode = refItem?.barcode?.trim();
@@ -1033,22 +1033,22 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
 
     if (totalStickers > 1) {
       if (scanCount >= totalStickers) {
-        richMessage = `Advanced ${posLabel} (${totalStickers} of ${totalStickers} scanned — All completed) from ${humanFrom} ➔ ${humanTo}`;
+        richMessage = `Advanced ${posLabel} (${totalStickers} of ${totalStickers} scanned) from ${humanFrom} ➔ ${humanTo}`;
       } else {
         const remaining = totalStickers - scanCount;
         richMessage = `Advanced ${posLabel} (${scanCount} of ${totalStickers} scanned) from ${humanFrom} ➔ ${humanTo}${remaining > 0 ? ` (${remaining} remaining in ${humanFrom})` : ""}`;
       }
     } else {
-      richMessage = `Advanced ${posLabel} from ${humanFrom} ➔ ${humanTo}`;
+      richMessage = `Advanced ${posLabel} (1 of 1 scanned) from ${humanFrom} ➔ ${humanTo}`;
     }
   } else if (advanceDetails.length > 1) {
     const firstDetail = advanceDetails[0];
     const secondDetail = advanceDetails[1];
     if (advanceDetails.length === 2 && firstDetail.toStage === secondDetail.toStage && firstDetail.posNo && firstDetail.posNo === secondDetail.posNo) {
-      richMessage = `Paired & Advanced POS #${firstDetail.posNo} ➔ ${formatStageDisplay(firstDetail.toStage)}`;
+      richMessage = `Paired & Advanced POS ${firstDetail.posNo} ➔ ${formatStageDisplay(firstDetail.toStage)}`;
     } else {
       const targetStageName = formatStageDisplay(updatedItems[0]?.currentStage || "Next Stage");
-      const posList = Array.from(new Set(advanceDetails.map((a) => a.posNo).filter(Boolean))).map((p) => `POS #${p}`).join(", ");
+      const posList = Array.from(new Set(advanceDetails.map((a) => a.posNo).filter(Boolean))).map((p) => `POS ${p}`).join(", ");
       richMessage = posList
         ? `Advanced ${posList} (${updatedItems.length} pcs) ➔ ${targetStageName}`
         : `${updatedItems.length} items advanced ➔ ${targetStageName}`;
@@ -2538,7 +2538,7 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   }
 
   const isPair = allItemsToReject.length > 1;
-  const posLabel = allItemsToReject[0].posNo ? `POS #${allItemsToReject[0].posNo}` : "Glass Piece";
+  const posLabel = allItemsToReject[0].posNo ? `POS ${allItemsToReject[0].posNo}` : "Glass Piece";
   createAndBroadcastNotification({
     title: isPair
       ? autoRework
@@ -3142,7 +3142,7 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   });
 
   const isPair = allItemsToRework.length > 1;
-  const reworkPosLabel = allItemsToRework[0].posNo ? `POS #${allItemsToRework[0].posNo}` : "Glass Piece";
+  const reworkPosLabel = allItemsToRework[0].posNo ? `POS ${allItemsToRework[0].posNo}` : "Glass Piece";
   createAndBroadcastNotification({
     title: isPair ? `Rework Dispatched: Paired Unit (${reworkPosLabel})` : `Rework Dispatched: ${reworkPosLabel}`,
     message: isPair
