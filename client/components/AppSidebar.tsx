@@ -160,10 +160,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     } else {
       navigate(`/?tab=${item.id}`);
     }
-    // Auto-close drawer on mobile after clicking
-    if (typeof window !== "undefined" && window.innerWidth < 768 && setSidebarOpen) {
-      setSidebarOpen(false);
-    }
   };
 
   return (
