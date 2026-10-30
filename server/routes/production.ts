@@ -995,22 +995,57 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     const d = advanceDetails[0];
     const humanTo = formatStageDisplay(d.toStage);
     const humanFrom = formatStageDisplay(d.fromStage);
-    const posText = d.posNo ? ` (POS #${d.posNo})` : "";
-    if (d.remainingQty > 0) {
-      richMessage = `${d.advancedQty} pc of #${d.serialNumber}${posText} advanced from ${humanFrom} ➔ ${humanTo} • ${d.remainingQty} pcs remaining in ${humanFrom}`;
-    } else if (d.isPieceScan) {
-      richMessage = `Completed #${d.serialNumber}${posText} — Advanced ${d.advancedQty} pc from ${humanFrom} ➔ ${humanTo} (All pieces completed)`;
+    const posLabel = d.posNo ? `POS #${d.posNo}` : "Glass Unit";
+
+    const refItem = updatedItems[0];
+    const siblings = refItem
+      ? glassItemsDatabase.filter(
+          (g) =>
+            ((refItem.piId && g.piId === refItem.piId) || (refItem.piNumber && g.piNumber === refItem.piNumber)) &&
+            ((refItem.posNo && g.posNo === refItem.posNo) || (refItem.barcode && g.barcode === refItem.barcode)) &&
+            g.status !== "Rejected"
+        )
+      : [];
+
+    const totalPosQty = Math.max(
+      d.advancedQty + d.remainingQty,
+      siblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0)
+    );
+
+    // Calculate how many pieces of this position have completed/advanced past fromStage
+    const advancedOrCompleted = siblings
+      .filter((g) => {
+        if (g.currentStage === "Finished" || g.status === "Completed") return true;
+        const r = g.processRoute || [];
+        const fromIdx = r.indexOf(d.fromStage as ProductionStage);
+        const curIdx = r.indexOf(g.currentStage as ProductionStage);
+        return curIdx > fromIdx;
+      })
+      .reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0);
+
+    const scanCount = Math.min(totalPosQty, Math.max(1, advancedOrCompleted || d.advancedQty));
+
+    if (totalPosQty > 1) {
+      if (scanCount >= totalPosQty || d.remainingQty === 0) {
+        richMessage = `Advanced ${posLabel} (${totalPosQty} of ${totalPosQty} scanned — All completed) from ${humanFrom} ➔ ${humanTo}`;
+      } else {
+        const remaining = totalPosQty - scanCount;
+        richMessage = `Advanced ${posLabel} (${scanCount} of ${totalPosQty} scanned) from ${humanFrom} ➔ ${humanTo}${remaining > 0 ? ` (${remaining} remaining in ${humanFrom})` : ""}`;
+      }
     } else {
-      richMessage = `Advanced #${d.serialNumber}${posText} from ${humanFrom} ➔ ${humanTo}${d.advancedQty > 1 ? ` (${d.advancedQty} pcs)` : ""}`;
+      richMessage = `Advanced ${posLabel} from ${humanFrom} ➔ ${humanTo}`;
     }
   } else if (advanceDetails.length > 1) {
     const firstDetail = advanceDetails[0];
     const secondDetail = advanceDetails[1];
     if (advanceDetails.length === 2 && firstDetail.toStage === secondDetail.toStage && firstDetail.posNo && firstDetail.posNo === secondDetail.posNo) {
-      richMessage = `Paired & Advanced #${firstDetail.serialNumber} + #${secondDetail.serialNumber} (POS #${firstDetail.posNo}) ➔ ${formatStageDisplay(firstDetail.toStage)}`;
+      richMessage = `Paired & Advanced POS #${firstDetail.posNo} ➔ ${formatStageDisplay(firstDetail.toStage)}`;
     } else {
       const targetStageName = formatStageDisplay(updatedItems[0]?.currentStage || "Next Stage");
-      richMessage = `${updatedItems.length} items advanced to ${targetStageName}`;
+      const posList = Array.from(new Set(advanceDetails.map((a) => a.posNo).filter(Boolean))).map((p) => `POS #${p}`).join(", ");
+      richMessage = posList
+        ? `Advanced ${posList} (${updatedItems.length} pcs) ➔ ${targetStageName}`
+        : `${updatedItems.length} items advanced ➔ ${targetStageName}`;
     }
   }
 
@@ -1020,7 +1055,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     const operatorName = (req as any).user?.username || req.body?.operator || "Operator";
     createAndBroadcastNotification({
       title: `${targetStageName} Stage Advanced`,
-      message: richMessage || `${updatedItems.length} item(s) advanced to ${formatStageDisplay(targetStageName)}${firstItem?.serialNumber ? ` (Item #${firstItem.serialNumber})` : ""} by ${operatorName}`,
+      message: richMessage || `${updatedItems.length} item(s) advanced to ${formatStageDisplay(targetStageName)} by ${operatorName}`,
       category: "STAGE_ADVANCE",
       type: "success",
       stage: targetStageName,
@@ -2497,19 +2532,19 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   }
 
   const isPair = allItemsToReject.length > 1;
-  const serialList = allItemsToReject.map((t) => `#${t.serialNumber}`).join(", ");
+  const posLabel = allItemsToReject[0].posNo ? `POS #${allItemsToReject[0].posNo}` : "Glass Piece";
   createAndBroadcastNotification({
     title: isPair
       ? autoRework
-        ? `Quality Reject & Auto-Remake: Paired Unit (${serialList})`
-        : `Quality Reject: Paired Unit (${serialList})`
+        ? `Quality Reject & Auto-Remake: Paired Unit (${posLabel})`
+        : `Quality Reject: Paired Unit (${posLabel})`
       : autoRework
-      ? `Quality Reject & Auto-Remake: Item #${allItemsToReject[0].serialNumber}`
-      : `Quality Reject: Item #${allItemsToReject[0].serialNumber}`,
+      ? `Quality Reject & Auto-Remake: ${posLabel}`
+      : `Quality Reject: ${posLabel}`,
     message: isPair
       ? autoRework
-        ? `DLGU / Paired unit (${serialList}) rejected at ${allItemsToReject[0].currentStage} -> Remake auto-routed to ${reworkTargetStage || "Cutting"} by ${cleanOperator}. Reason: ${cleanReason}`
-        : `DLGU / Paired unit (${serialList}) marked as REJECTED at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`
+        ? `DLGU / Paired unit (${posLabel}) rejected at ${allItemsToReject[0].currentStage} -> Remake auto-routed to ${reworkTargetStage || "Cutting"} by ${cleanOperator}. Reason: ${cleanReason}`
+        : `DLGU / Paired unit (${posLabel}) marked as REJECTED at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`
       : autoRework
       ? `Rejected at ${allItemsToReject[0].currentStage} -> Remake auto-routed to ${reworkTargetStage || "Cutting"} by ${cleanOperator}. Reason: ${cleanReason}`
       : `Rejected at ${allItemsToReject[0].currentStage} by ${cleanOperator}. Reason: ${cleanReason}`,
@@ -2524,11 +2559,11 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   res.json({
     message: isPair
       ? autoRework
-        ? `Paired unit (${serialList}) marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
-        : `Paired unit (${serialList}) marked as rejected`
+        ? `Paired unit (${posLabel}) marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
+        : `Paired unit (${posLabel}) marked as rejected`
       : autoRework
-      ? `Item ${allItemsToReject[0].serialNumber} marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
-      : `Item ${allItemsToReject[0].serialNumber} marked as rejected`,
+      ? `${posLabel} marked as rejected & auto-routed to ${reworkTargetStage || "Cutting"} for remake`
+      : `${posLabel} marked as rejected`,
     rejectEntries,
     reworkEntries: autoRework ? reworkEntries : undefined,
     items: allItemsToReject,
@@ -3101,12 +3136,12 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   });
 
   const isPair = allItemsToRework.length > 1;
-  const serialList = allItemsToRework.map((t) => `#${t.serialNumber}`).join(", ");
+  const reworkPosLabel = allItemsToRework[0].posNo ? `POS #${allItemsToRework[0].posNo}` : "Glass Piece";
   createAndBroadcastNotification({
-    title: isPair ? `Rework Dispatched: Paired Unit (${serialList})` : `Rework Dispatched: Item #${allItemsToRework[0].serialNumber}`,
+    title: isPair ? `Rework Dispatched: Paired Unit (${reworkPosLabel})` : `Rework Dispatched: ${reworkPosLabel}`,
     message: isPair
-      ? `DLGU / Paired unit (${serialList}) routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`
-      : `Routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`,
+      ? `DLGU / Paired unit (${reworkPosLabel}) routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`
+      : `${reworkPosLabel} routed back to ${targetStage} by ${cleanOperator}. Reason: ${cleanReason}`,
     category: "REWORK",
     type: "warning",
     stage: targetStage,
@@ -3117,8 +3152,8 @@ export const handleReworkItem: RequestHandler = (req, res) => {
 
   res.json({
     message: isPair
-      ? `Paired unit (${serialList}) sent to rework at ${targetStage}`
-      : `Item ${allItemsToRework[0].serialNumber} sent to rework at ${targetStage}`,
+      ? `Paired unit (${reworkPosLabel}) sent to rework at ${targetStage}`
+      : `${reworkPosLabel} sent to rework at ${targetStage}`,
     reworkEntries,
     items: allItemsToRework,
   });

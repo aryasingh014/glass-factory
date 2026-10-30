@@ -792,12 +792,12 @@ export default function Index() {
       if (res.ok) {
         scannerAudio.playSuccess();
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `Advanced item ${item.serialNumber} (POS #${item.posNo || item.itemCode}) from ${currentStage} ➔ ${nextStage}!`);
+        toast.success(data.message || `Advanced POS #${item.posNo || item.itemCode} from ${currentStage} ➔ ${nextStage}!`);
         fetchData(true);
       } else {
         const err = await res.json().catch(() => ({}));
         scannerAudio.playWarning();
-        toast.warning(err.message || `Could not advance ${item.serialNumber}`);
+        toast.warning(err.message || `Could not advance POS #${item.posNo || item.itemCode}`);
         fetchData(true);
       }
     } catch (err: any) {
@@ -908,7 +908,7 @@ export default function Index() {
         setScanModalOpen(true);
         if (!currentWorkstationStage) {
           toast.info(
-            `📍 Item ${matchedItem.serialNumber} (POS #${matchedItem.posNo || matchedItem.itemCode}) is currently at ${matchedItem.currentStage}. Open the ${matchedItem.currentStage} workstation tab to scan & advance.`,
+            `📍 POS #${matchedItem.posNo || matchedItem.itemCode} is currently at ${matchedItem.currentStage}. Open the ${matchedItem.currentStage} workstation tab to scan & advance.`,
             { duration: 5500 }
           );
         }
@@ -938,7 +938,7 @@ export default function Index() {
       const stickerIndex = totalMatching > 1 ? totalMatching - remainingAfter : 1;
 
       const stickerLabel = totalMatching > 1
-        ? ` (Piece ${stickerIndex} of ${totalMatching})`
+        ? ` (${stickerIndex} of ${totalMatching} scanned)`
         : "";
 
       const remainingNote = remainingAfter > 0
@@ -990,7 +990,7 @@ export default function Index() {
             const isColour = getItemFinish(matchedItem) === "Colour";
             const neededFinish = isColour ? "Clear" : "Colour";
             toast.warning(
-              `⚠️ Cannot advance from Pairing: Glass pane ${matchedItem.serialNumber} (POS #${matchedItem.posNo || matchedItem.itemCode}) is waiting for its ${neededFinish} partner pane to be cut in Cutting Workstation. Both panes must be in Pairing Buffer before advancing to ${nextStage}.`,
+              `⚠️ Cannot advance from Pairing: Glass pane POS #${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane to be cut in Cutting Workstation. Both panes must be in Pairing Buffer before advancing to ${nextStage}.`,
               { duration: 6500 }
             );
             return;
@@ -1015,7 +1015,7 @@ export default function Index() {
           if (!partnerInDgu) {
             scannerAudio.playWarning();
             toast.warning(
-              `⚠️ Cannot complete DGU: Glass pane ${matchedItem.serialNumber} (POS #${matchedItem.posNo || matchedItem.itemCode}) is missing its assembled partner pane in DGU Assembly. Both Colour + Clear panes must be present before completing to Finished.`,
+              `⚠️ Cannot complete DGU: Glass pane POS #${matchedItem.posNo || matchedItem.itemCode} is missing its assembled partner pane in DGU Assembly. Both Colour + Clear panes must be present before completing to Finished.`,
               { duration: 6500 }
             );
             return;
@@ -1056,7 +1056,7 @@ export default function Index() {
           if (partnerToPair) {
             scannerAudio.playPairSuccess();
             toast.success(
-              `✨ Paired & Advanced ${matchedItem.serialNumber} + ${partnerToPair.serialNumber} (POS #${matchedItem.posNo || matchedItem.itemCode}) from Pairing ➔ ${nextStage}!`
+              `✨ Paired & Advanced POS #${matchedItem.posNo || matchedItem.itemCode} from Pairing ➔ ${nextStage}!`
             );
           } else {
             if (matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem)) {
@@ -1069,15 +1069,16 @@ export default function Index() {
               : nextStage === "Finished"
                 ? "➔ Finished Warehouse (Quality Inspected)"
                 : `➔ ${nextStage}`;
+            const posDisplay = matchedItem.posNo ? `POS #${matchedItem.posNo}` : (matchedItem.itemCode || "Glass Unit");
             toast.success(
-              `🔫 Scanned ${matchedItem.serialNumber}${stickerLabel} (POS #${matchedItem.posNo || matchedItem.itemCode}) — Advanced from ${currentStage} ${nextStageLabel}!${remainingNote}`
+              `🔫 Advanced ${posDisplay}${stickerLabel} from ${currentStage} ${nextStageLabel}!${remainingNote}`
             );
           }
           fetchData(true);
         } else {
           const err = await res.json().catch(() => ({}));
           scannerAudio.playWarning();
-          toast.warning(err.message || `Could not advance ${matchedItem.serialNumber}`);
+          toast.warning(err.message || `Could not advance POS #${matchedItem.posNo || matchedItem.itemCode}`);
           fetchData(true);
         }
       } catch (err: any) {
