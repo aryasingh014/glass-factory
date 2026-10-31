@@ -769,7 +769,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Outer Pane (OP • Coated) — #{dlguPanes.opItem?.serialNumber || (getItemFinish(item) === "Colour" ? item.serialNumber : "OP Colour Lite")}
+                            Outer Pane (OP • Coated)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {dlguPanes.opItem?.glassType || "8MM GUARDIAN SUNGUARD SN GREY 50 T"}
@@ -797,7 +797,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Inner Lami Lite 1 (IP 1 • Ply A) — #{dlguPanes.ip1Item?.serialNumber || (getItemFinish(item) === "Clear" ? item.serialNumber : "IP 1 Clear Lite")}
+                            Inner Lami Lite 1 (IP 1 • Ply A)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {dlguPanes.ip1Item?.glassType || "6MM CLEAR (Front Laminated Pane)"}
@@ -825,7 +825,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Inner Lami Lite 2 (IP 2 • Ply B) — #{dlguPanes.ip2Item?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`)}
+                            Inner Lami Lite 2 (IP 2 • Ply B)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {dlguPanes.ip2Item?.glassType || "6MM CLEAR (Back Laminated Pane)"}
@@ -853,7 +853,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Both Clear Lites (IP 1 + IP 2 • Lami Pair) — #{dlguPanes.ip1Item?.serialNumber || (getItemFinish(item) === "Clear" ? item.serialNumber : "IP1")} & #{dlguPanes.ip2Item?.serialNumber || (dlguPanes.ip1Item ? `${dlguPanes.ip1Item.serialNumber}-B` : `${item.serialNumber}-B`)}
+                            Both Clear Lites (IP 1 + IP 2 • Lami Pair)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             Both laminated clear float panes defective (OP Colour stays intact)
@@ -911,7 +911,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Outer Pane (OP • Coated/Colour) — #{dguPanes.opItem?.serialNumber || item.serialNumber}
+                            Outer Pane (OP • Coated/Colour)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {dguPanes.opItem?.glassType || "Coated / Colour Glass Lite"}
@@ -939,7 +939,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Inner Pane (IP • Clear Float) — #{dguPanes.ipItem?.serialNumber || item.serialNumber}
+                            Inner Pane (IP • Clear Float)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {dguPanes.ipItem?.glassType || "Clear Float Glass Lite"}
@@ -997,7 +997,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Lami Lite 1 (IP 1 • Front Ply) — #{lamPanes.ply1Item?.serialNumber || item.serialNumber}
+                            Lami Lite 1 (IP 1 • Front Ply)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {lamPanes.ply1Item?.glassType || "Clear Float Glass Lite"}
@@ -1025,7 +1025,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                         />
                         <div>
                           <div className="font-bold text-slate-900 text-xs">
-                            Lami Lite 2 (IP 2 • Back Ply) — #{lamPanes.ply2Item?.serialNumber || `${item.serialNumber}-B`}
+                            Lami Lite 2 (IP 2 • Back Ply)
                           </div>
                           <div className="text-[10.5px] text-slate-500 font-mono truncate max-w-[240px]">
                             {lamPanes.ply2Item?.glassType || "Clear Float Glass Lite"}
@@ -1091,7 +1091,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-slate-700">
-              <span>Selected Lite: <strong className="font-mono font-bold text-slate-900">#{activePaneInfo.serialNumber}</strong></span>
+              <span>Selected Position: <strong className="font-mono font-bold text-slate-900">POS {item.posNo || "—"}</strong></span>
               <span className="text-[11px] text-slate-500">({activePaneInfo.paneTitle})</span>
             </div>
 

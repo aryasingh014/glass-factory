@@ -1827,7 +1827,6 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                               <table className="w-full text-left text-xs">
                                                 <thead>
                                                   <tr className="border-b text-[10px] font-black text-slate-500 uppercase bg-slate-50">
-                                                    <th className="py-1 px-2">SERIAL</th>
                                                     <th className="py-1 px-2">BARCODE</th>
                                                     <th className="py-1 px-2">FINISH</th>
                                                     <th className="py-1 px-2">STAGE</th>
@@ -1838,8 +1837,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                                 <tbody className="divide-y divide-slate-100">
                                                   {row.rawItems.map((piece) => (
                                                     <tr key={piece.id || piece.serialNumber} className="hover:bg-slate-50">
-                                                      <td className="py-1.5 px-2 font-mono font-bold text-slate-800">{piece.serialNumber}</td>
-                                                      <td className="py-1.5 px-2 font-mono text-slate-600">{piece.barcode}</td>
+                                                      <td className="py-1.5 px-2 font-mono font-bold text-slate-700">{piece.barcode}</td>
                                                       <td className="py-1.5 px-2">
                                                         <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold ${
                                                           piece.colorOrClear === "Colour" ? "bg-blue-100 text-blue-800" : "bg-cyan-100 text-cyan-800"

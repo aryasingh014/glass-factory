@@ -800,7 +800,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
               <th className="py-3 px-3">Dispatched Time</th>
               {showCustomerCol && <th className="py-3 px-3">Client & Project</th>}
               <th className="py-3 px-3">Batch & SFO</th>
-              <th className="py-3 px-3">Unit / Sticker Serial</th>
+              <th className="py-3 px-3">Barcode</th>
               <th className="py-3 px-3">Dimensions (W × H)</th>
               <th className="py-3 px-3 text-center">Category</th>
               <th className="py-3 px-3">Glass Description</th>
@@ -879,16 +879,13 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                         </div>
                       </td>
 
-                      {/* Unit Serial & Barcode */}
+                      {/* Unit Barcode */}
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">
                         <div className="font-black text-slate-900 flex items-center gap-1.5">
-                          <span>{it.serialNumber}</span>
+                          <span>{it.barcode || "—"}</span>
                           <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
                             Dispatched
                           </span>
-                        </div>
-                        <div className="text-[10.5px] text-slate-400 tracking-tight">
-                          {it.barcode || "—"}
                         </div>
                       </td>
 
@@ -1008,7 +1005,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                                 </span>
                               </div>
                               <span className="text-[11px] font-mono text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                                {row.allSerials.join(" + ")}
+                                {it.barcode || "Unit Panes"}
                               </span>
                             </div>
 
@@ -1019,7 +1016,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                                   {row.glassCategory === "Laminated" ? "Layer 1 Pane" : "Outer Pane (OP)"}
                                 </div>
                                 <div className="font-mono font-black text-slate-900 mt-0.5">
-                                  #{it.serialNumber} • {it.barcode}
+                                  {it.barcode}
                                 </div>
                                 <div className="text-[11px] text-slate-600 truncate mt-0.5">
                                   {it.glassType}
@@ -1036,7 +1033,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                                     {row.glassCategory === "Laminated" ? "Layer 2 Pane" : "Inner Pane (IP)"}
                                   </div>
                                   <div className="font-mono font-black text-slate-900 mt-0.5">
-                                    #{partner.serialNumber} • {partner.barcode}
+                                    {partner.barcode}
                                   </div>
                                   <div className="text-[11px] text-slate-600 truncate mt-0.5">
                                     {partner.glassType}
@@ -1054,7 +1051,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
                                     DLGU Middle / 2nd Inner Pane
                                   </div>
                                   <div className="font-mono font-black text-slate-900 mt-0.5">
-                                    #{row.allPartners[1].serialNumber} • {row.allPartners[1].barcode}
+                                    {row.allPartners[1].barcode}
                                   </div>
                                   <div className="text-[11px] text-slate-600 truncate mt-0.5">
                                     {row.allPartners[1].glassType}
@@ -1243,7 +1240,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <Input
               type="text"
-              placeholder="Search Serial #, Barcode, Batch #, SFO #, Customer, Project..."
+              placeholder="Search Barcode, Batch #, SFO #, Customer, Project..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9 pr-8 h-9 text-xs font-medium border-slate-200 bg-slate-50 focus:bg-white rounded-xl transition-all"

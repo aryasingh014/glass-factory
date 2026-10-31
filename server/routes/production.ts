@@ -1048,10 +1048,30 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       richMessage = `Paired & Advanced POS ${firstDetail.posNo} ➔ ${formatStageDisplay(firstDetail.toStage)}`;
     } else {
       const targetStageName = formatStageDisplay(updatedItems[0]?.currentStage || "Next Stage");
-      const posList = Array.from(new Set(advanceDetails.map((a) => a.posNo).filter(Boolean))).map((p) => `POS ${p}`).join(", ");
-      richMessage = posList
-        ? `Advanced ${posList} (${updatedItems.length} pcs) ➔ ${targetStageName}`
-        : `${updatedItems.length} items advanced ➔ ${targetStageName}`;
+      const distinctPos = Array.from(
+        new Set(advanceDetails.map((a) => a.posNo).filter((p): p is string => Boolean(p && String(p).trim())))
+      );
+      const distinctBatches = Array.from(
+        new Set(updatedItems.map((a) => a.batchNo).filter((b): b is string => Boolean(b && String(b).trim())))
+      );
+      const batchPrefix = distinctBatches.length === 1 ? `Batch ${distinctBatches[0]}` : "";
+
+      if (distinctPos.length === 1) {
+        richMessage = `Advanced POS ${distinctPos[0]} (${updatedItems.length} pcs) ➔ ${targetStageName}`;
+      } else if (distinctPos.length > 1 && distinctPos.length <= 3) {
+        const posList = distinctPos.map((p) => `POS ${p}`).join(", ");
+        richMessage = `Advanced ${posList} (${updatedItems.length} pcs) ➔ ${targetStageName}`;
+      } else if (distinctPos.length > 3) {
+        if (batchPrefix) {
+          richMessage = `Advanced ${batchPrefix} (${updatedItems.length} pcs across ${distinctPos.length} POS items) ➔ ${targetStageName}`;
+        } else {
+          richMessage = `Advanced ${updatedItems.length} pcs across ${distinctPos.length} POS items (POS ${distinctPos.slice(0, 3).join(", POS ")}, +${distinctPos.length - 3} more) ➔ ${targetStageName}`;
+        }
+      } else {
+        richMessage = batchPrefix
+          ? `Advanced ${batchPrefix} (${updatedItems.length} pcs) ➔ ${targetStageName}`
+          : `${updatedItems.length} items advanced ➔ ${targetStageName}`;
+      }
     }
   }
 

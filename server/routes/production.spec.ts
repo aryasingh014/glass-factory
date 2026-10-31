@@ -2513,4 +2513,70 @@ describe("Batch Upload History & Worker Daily Progress Calculation", () => {
     const afterCutting = statsAfter.userThroughputByStage?.["Cutting"]?.["Operator"]?.stickers || 0;
     expect(afterCutting).toBe(initialCutting);
   });
+
+  it("should format multi-item advance notification concisely without listing dozens of POS numbers", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    // Add 5 distinct POS items belonging to Batch 9999
+    const testIds: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const id = `test-batch-item-${i}-${Date.now()}`;
+      testIds.push(id);
+      glassItemsDatabase.push({
+        id,
+        piId: "pi-test-batch",
+        piNumber: "PI-BATCH-TEST",
+        serialNumber: `SN-TEST-B-${i}`,
+        barcode: `BC-TEST-B-${i}`,
+        qrId: `QR-TEST-B-${i}`,
+        batchNo: "9999",
+        posNo: String(100 + i),
+        itemCode: `ITEM-${i}`,
+        glassType: "6MM CLEAR TEMPERED",
+        width: 1000,
+        height: 1000,
+        sqm: 1,
+        delLocation: "WAREHOUSE",
+        updatedAt: new Date().toISOString(),
+        qty: 2,
+        currentStage: "Cutting",
+        processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+        status: "In Production",
+        completedStages: [],
+      } as any);
+    }
+
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        itemIds: testIds,
+        stage: "Cutting",
+        currentStage: "Cutting",
+        operator: "TestOperator",
+        advanceAll: true,
+      },
+    };
+    const res: any = {
+      json: (data: any) => {
+        responseData = data;
+        return res;
+      },
+      status: () => res,
+    };
+
+    handleAdvanceStage(req, res, () => {});
+
+    // Clean up
+    testIds.forEach((id) => {
+      const idx = glassItemsDatabase.findIndex((g) => g.id === id);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+
+    expect(responseData).toBeDefined();
+    expect(responseData.message).toBeDefined();
+    // Must NOT contain a long dump of every single POS
+    expect(responseData.message).toContain("Batch 9999");
+    expect(responseData.message).toContain("across 5 POS items");
+  });
 });

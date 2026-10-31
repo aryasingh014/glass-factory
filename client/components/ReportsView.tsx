@@ -2949,7 +2949,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                             <thead>
                                                               <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
                                                                 <th className="p-3 w-12 text-center">SL</th>
-                                                                <th className="p-3">SERIAL NUMBER</th>
+                                                                <th className="p-3">BARCODE</th>
                                                                 <th className="p-3">BATCH NO</th>
                                                                 <th className="p-3">ORDER NO</th>
                                                                 <th className="p-3 text-center">POS NO</th>
@@ -3000,7 +3000,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                     <td className="p-3 font-mono whitespace-nowrap">
                                                                       <div className="flex items-center gap-1.5 flex-wrap">
                                                                         <span className={`font-bold ${isActivelyRejected ? "text-red-700" : "text-blue-700"}`}>
-                                                                          {item.serialNumber}
+                                                                          {item.barcode || item.serialNumber}
                                                                         </span>
                                                                         {isRemake && (
                                                                           <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200 inline-flex items-center gap-1 shadow-2xs">
@@ -3008,9 +3008,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                             <span>Remake</span>
                                                                           </span>
                                                                         )}
-                                                                      </div>
-                                                                      <div className="text-[10px] text-slate-400 font-medium">
-                                                                        {item.barcode}
                                                                       </div>
                                                                     </td>
 
@@ -3659,7 +3656,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                             <thead>
                                                               <tr className="bg-slate-100/60 text-slate-600 uppercase border-b border-slate-200 text-[10.5px] font-extrabold tracking-wider">
                                                                 <th className="p-3 w-12 text-center">SL</th>
-                                                                <th className="p-3">SERIAL NUMBER</th>
+                                                                <th className="p-3">BARCODE</th>
                                                                 <th className="p-3">BATCH NO</th>
                                                                 <th className="p-3">ORDER NO</th>
                                                                 <th className="p-3 text-center">POS NO</th>
@@ -3708,13 +3705,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                                       {idx + 1}
                                                                     </td>
 
-                                                                    {/* Serial Number & Barcode */}
+                                                                    {/* Barcode */}
                                                                     <td className="p-3 font-mono whitespace-nowrap">
                                                                       <div className={`font-bold ${isReworking ? "text-amber-700" : "text-blue-700"}`}>
-                                                                        {item.serialNumber}
-                                                                      </div>
-                                                                      <div className="text-[10px] text-slate-400 font-medium">
-                                                                        {item.barcode}
+                                                                        {item.barcode || item.serialNumber}
                                                                       </div>
                                                                     </td>
 

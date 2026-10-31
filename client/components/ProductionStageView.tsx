@@ -2257,12 +2257,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       toast.success(
         remainingPieces > 0
           ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advanced to ${destination} (${remainingPieces} pcs remaining in ${stage}).`
-          : `Scanned & Completed piece ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`
+          : `Scanned & Completed piece (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`
       );
       await completeStage(scanRow.allSerials, 1, false, true);
     } else {
       scannerAudio.playError();
-      toast.error(`Barcode mismatch: scanned "${val}". Expected: ${scanRow.displayBarcode} or #${scanRow.displaySerial}`);
+      toast.error(`Barcode mismatch: scanned "${val}". Expected barcode: ${scanRow.displayBarcode}`);
       setScanInput("");
     }
   };
@@ -4366,7 +4366,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               <th className="py-2.5 px-2 text-center whitespace-nowrap">PI</th>
                               <th className="py-2.5 px-2 text-center whitespace-nowrap">Batch</th>
                               <th className="py-2.5 px-2 text-center whitespace-nowrap">Pos</th>
-                              <th className="py-2.5 px-2">Sticker Serial</th>
                               <th className="py-2.5 px-2">Barcode</th>
                               <th className="py-2.5 px-2 text-center">QTY</th>
                               <th className="py-2.5 px-2 text-right">SQM</th>
@@ -4413,9 +4412,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg font-mono font-extrabold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs min-w-[32px]">
                                       {item.posNo || (row as any).posNo || "—"}
                                     </span>
-                                  </td>
-                                  <td className="py-2.5 px-2 font-mono font-bold align-middle">
-                                    <span className="text-[#1680f5]">{row.displaySerial}</span>
                                   </td>
                                   <td className="py-2.5 px-2 font-mono text-slate-600 align-middle text-[11px]">
                                     {resolveValidBarcode(item, row.displayBarcode)}
@@ -4773,7 +4769,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       </div>
                                       {partner ? (
                                         <div className="text-[10px] text-purple-900 font-semibold flex items-center gap-1 mt-0.5">
-                                          <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Laminated Clear Float"})</span>
+                                          <span>Inner Lite: {partner.barcode || `POS ${partner.posNo || "—"}`} ({partner.glassType || "Laminated Clear Float"})</span>
                                         </div>
                                       ) : (
                                         <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
@@ -4790,7 +4786,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       </div>
                                       {partner ? (
                                         <div className="text-[10px] text-teal-900 font-semibold flex items-center gap-1 mt-0.5">
-                                          <span>Inner Lite: {partner.serialNumber} ({partner.glassType || "Clear Float"})</span>
+                                          <span>Inner Lite: {partner.barcode || `POS ${partner.posNo || "—"}`} ({partner.glassType || "Clear Float"})</span>
                                         </div>
                                       ) : (
                                         <div className="text-[10px] text-amber-700 font-semibold mt-0.5">
@@ -5029,7 +5025,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                               <span>Partner Glass Details — Inner Pane (IP)</span>
                                               <span className="text-slate-400 font-normal">•</span>
                                               <span className="text-teal-800 font-bold">
-                                                Paired with Outer Pane (OP) #{item.serialNumber}
+                                                Paired with Outer Pane (OP) POS {item.posNo || "—"}
                                               </span>
                                             </div>
                                             <div className="text-[10px] text-slate-500 font-medium">
@@ -5085,9 +5081,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                   <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 text-xs font-mono font-black border border-teal-200">
                                                     IP Pane #{pIdx + 1}
-                                                  </span>
-                                                  <span className="text-xs font-mono font-black text-[#1680f5] bg-blue-50/50 px-2 py-0.5 rounded border border-blue-200">
-                                                    Serial: {p.serialNumber}
                                                   </span>
                                                   <span className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                                                     Barcode: <span className="font-bold text-slate-900">{pBarcode}</span>
@@ -5183,7 +5176,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         <div className="flex items-center gap-1.5 font-medium">
                                           <Sparkles className="w-3.5 h-3.5 text-teal-600 shrink-0" />
                                           <span>
-                                            <strong>Pair Verification:</strong> Outer Pane (OP #{item.serialNumber}) & Inner Pane (IP) are verified together in Finished Dispatch Queue.
+                                            <strong>Pair Verification:</strong> Outer Pane (OP POS {item.posNo || "—"}) & Inner Pane (IP) are verified together in Finished Dispatch Queue.
                                           </span>
                                         </div>
                                         <button
@@ -5523,8 +5516,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   <div key={row.id || idx} className="p-2.5 flex items-center justify-between text-xs hover:bg-white transition-colors">
                     <div className="flex items-center gap-2 truncate">
                       <span className="font-mono font-bold text-slate-800 shrink-0">#{idx + 1}</span>
-                      <span className="font-mono text-[#1680f5] font-extrabold bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-200">
-                        {row.displaySerial || row.item.serialNumber}
+                      <span className="font-mono text-indigo-700 font-extrabold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                        POS {row.item.posNo || row.item.srNo || "—"}
                       </span>
                       <span className="font-medium text-slate-700 truncate">{row.item.orderNo || row.item.piNumber}</span>
                       <span className="text-slate-400">•</span>
@@ -5679,9 +5672,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500">
-                    {stage === "DGU" ? "Colour Lite Serial (Primary):" : "Item Serial:"}
+                    Position:
                   </span>
-                  <span className="font-mono font-bold text-blue-700">{scanRow.displaySerial}</span>
+                  <span className="font-mono font-bold text-indigo-700">POS {scanRow.item.posNo || "—"}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500">Expected Barcode:</span>
@@ -5713,7 +5706,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <Link2 className="w-3.5 h-3.5 text-teal-600" /> Paired Clear Inner Lite:
                       </span>
                       <span className="font-mono font-extrabold text-teal-800">
-                        {scanRow.partnerItem.serialNumber}
+                        POS {scanRow.partnerItem.posNo || "—"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-teal-700">
