@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GlassItem, PIMaster, DashboardStats, ProductionStage } from "@shared/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, calculateAssembledUnits } from "@/lib/utils";
 
 interface ProductionOverviewViewProps {
   items: GlassItem[];
@@ -97,6 +97,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const finishedCount = finishedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const rejectedCount = rejectedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const reworkCount = reworkItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+
+    // Assembled Units in Finished / Ready for Dispatch
+    const finishedMetrics = calculateAssembledUnits(finishedItemsList);
+    const finishedUnits = finishedItemsList.length > 0
+      ? (finishedMetrics.totalUnits || (stats?.finishedItems !== undefined && stats.finishedItems > 0 ? stats.finishedItems : Math.ceil(finishedCount / 2)))
+      : 0;
 
     // SQMs
     const cuttingSqm = parseFloat(cuttingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
@@ -175,7 +181,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
     const dlguStageItems = items.filter((i) => !isDispatchedItem(i) && isDlguGlass(i) && (i.currentStage === "Pairing" || i.currentStage === "DGU" || i.currentStage === "Lamination") && i.status !== "Rejected");
     const dlguStageTotal = dlguStageItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const dlguStageUnits = Math.floor(dlguStageTotal / 3) || Math.floor(dlguStageTotal / 2);
+    const dlguStageColour = dlguStageItems.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const dlguStageClear = dlguStageTotal - dlguStageColour;
+    const rawDlguUnits = dlguStageColour > 0 && dlguStageClear > 0
+      ? Math.min(dlguStageColour, Math.floor(dlguStageClear / 2))
+      : (Math.floor(dlguStageTotal / 3) || Math.floor(dlguStageTotal / 2));
+    const dlguStageUnits = Math.min(dlguTotalUnits, rawDlguUnits);
 
     const pairingStageColour = pairingItemsList.filter(isColour).reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const pairingStageTotal = pairingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -185,6 +196,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       : Math.floor(pairingStageTotal / 2);
 
     const laminationStageUnits = Math.ceil(laminationItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
+
+    // Assembly stage (DGU + Lamination lines) assembled units & pieces
+    const assemblyItemsList = [...dguItemsList, ...laminationItemsList];
+    const assemblyCount = dguCount + laminationCount;
+    const assemblyMetrics = calculateAssembledUnits(assemblyItemsList);
+    const assemblyUnits = assemblyItemsList.length > 0
+      ? ((dguStageUnits + laminationStageUnits) || assemblyMetrics.totalUnits || Math.ceil(assemblyCount / 2))
+      : 0;
 
     // Active downstream processing (panes moved past cutting into Polishing, Pairing, DGU, Lamination)
     const activeDownstreamCount = polishingCount + pairingCount + dguCount + laminationCount;
@@ -207,6 +226,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       inProgressCount,
       inProgressSqm,
       finishedCount,
+      finishedUnits,
       finishedSqm,
       pendingCuttingCount,
       rejectedCount,
@@ -229,6 +249,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       laminationCount,
       laminationSqm,
       // Workstation Stage Queue WIP
+      assemblyCount,
+      assemblyUnits,
       dguStageUnits,
       dlguStageUnits,
       pairingStageUnits,
@@ -597,7 +619,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
-                    {metrics.laminationStageUnits} Pairs
+                    {metrics.laminationStageUnits} Units
                   </span>
                 </button>
 
@@ -615,11 +637,11 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     </div>
                     <div>
                       <div className="text-xs font-bold leading-none">Dispatch &amp; Shipping</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">Completed Pieces</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Completed Units</div>
                     </div>
                   </div>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    {metrics.finishedCount} Pcs
+                    {metrics.finishedUnits} Units
                   </span>
                 </button>
               </div>
@@ -678,19 +700,19 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           </div>
         </div>
 
-        {/* 4. Completed Pieces */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}} title="View Quality Inspected / Ready for Dispatch">
+        {/* 4. Completed Pieces & Units */}
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}} title={`Quality Inspected: ${metrics.finishedUnits} Units ready for dispatch (${metrics.finishedCount} Glass Panes)`}>
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Completed Pieces</h3>
               <strong>{metrics.finishedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
-              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>Dispatch</small></div>
+              <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>Dispatch ({metrics.finishedUnits} Units)</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-green" title="Quality Inspected - Completed and Ready for Dispatch">
             <span style={{width:6,height:6,borderRadius:'50%',background:'#10b981',display:'inline-block',flexShrink:0}} />
-            <span className="truncate">Quality Inspected</span>
+            <span className="truncate">Quality Inspected • {metrics.finishedUnits} Units Ready</span>
           </div>
         </div>
 
@@ -785,13 +807,21 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
               <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={14} /></span>
               <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Pcs</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald" onClick={() => onNavigateTab("dgu")}>
+            <div
+              className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald cursor-pointer"
+              onClick={() => onNavigateTab("dgu")}
+              title={`${metrics.assemblyUnits} Assembled Units in DGU & Lamination Lines (${metrics.assemblyCount} Glass Panes)`}
+            >
               <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={14} /></span>
-              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.dguCount + metrics.laminationCount}</b> Pcs</span></div>
+              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.assemblyUnits}</b> Units</span></div>
             </div>
-            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green" onClick={() => onNavigateTab("finished")}>
+            <div
+              className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green cursor-pointer"
+              onClick={() => onNavigateTab("finished")}
+              title={`${metrics.finishedUnits} Finished Units Ready for Dispatch (${metrics.finishedCount} Glass Panes)`}
+            >
               <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={14} /></span>
-              <div><strong>5. Dispatch</strong><span className="ppb-count"><b>{metrics.finishedCount}</b> Ready</span></div>
+              <div><strong>5. Dispatch</strong><span className="ppb-count"><b>{metrics.finishedUnits}</b> Units</span></div>
             </div>
           </div>
         </section>
@@ -840,7 +870,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <div className="flex items-center gap-4 flex-wrap">
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                <span>Completed: <strong className="text-slate-800">{metrics.finishedCount} Pcs</strong> ({metrics.completionPercent}%)</span>
+                <span>Completed: <strong className="text-slate-800">{metrics.finishedCount} Pcs ({metrics.finishedUnits} Units)</strong> ({metrics.completionPercent}%)</span>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 flex-shrink-0" />
@@ -1033,7 +1063,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                         />
                       </div>
                       <span className="text-[10px] font-mono font-bold text-slate-500 mt-0.5 block">
-                        {b.progress}% ({b.finishedCount}/{b.totalPieces})
+                        {b.progress}% ({b.finishedCount}/{b.totalPieces} pcs)
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

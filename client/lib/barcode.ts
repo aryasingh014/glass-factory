@@ -293,7 +293,7 @@ export function isItemMatchingCode(item: any, rawCode: string): boolean {
     const s = String(item.serialNumber).toLowerCase();
     if (s === cleanLower || s.replace(/^#/, "") === cleanLower) return true;
     const sDigits = s.replace(/\D/g, "");
-    if (digitsOnly && sDigits && (sDigits === digitsOnly || sDigits.replace(/^0+/, "") === digitsOnly.replace(/^0+/, ""))) {
+    if (/^\d+$/.test(clean) && digitsOnly && sDigits && (sDigits === digitsOnly || sDigits.replace(/^0+/, "") === digitsOnly.replace(/^0+/, ""))) {
       return true;
     }
   }
@@ -373,7 +373,7 @@ export function isItemMatchingCode(item: any, rawCode: string): boolean {
       return true;
     }
     // Pure numeric input matching POS (e.g. operator scans or types "3" or "22")
-    if (digitsOnly && posDigits && (digitsOnly === posDigits || digitsOnly.replace(/^0+/, "") === posDigits.replace(/^0+/, ""))) {
+    if (/^\d+$/.test(clean) && digitsOnly && posDigits && (digitsOnly === posDigits || digitsOnly.replace(/^0+/, "") === posDigits.replace(/^0+/, ""))) {
       if (digitsOnly.length <= 4) {
         return true;
       }
@@ -406,7 +406,7 @@ export function isItemMatchingCode(item: any, rawCode: string): boolean {
       }
       const vDigits = v.replace(/\D/g, "").replace(/^0+/, "");
       const inputDigits = digitsOnly.replace(/^0+/, "");
-      if (vDigits && inputDigits && vDigits === inputDigits && vDigits.length >= 3) {
+      if (/^\d+$/.test(clean) && vDigits && inputDigits && vDigits === inputDigits && vDigits.length >= 3) {
         return true;
       }
     }

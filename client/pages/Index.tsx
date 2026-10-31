@@ -2342,11 +2342,16 @@ export default function Index() {
                         <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-6 h-6" /></span>
                         <div className="ppb-metric-copy">
                           <h3>Completed Glass</h3>
-                          <strong>{effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems}</strong>
+                          <strong>
+                            {effectiveStats.totalCompletedItems ?? effectiveStats.finishedItems}{" "}
+                            <small style={{ fontSize: '11px', color: '#64748b', fontWeight: 700 }}>Units</small>
+                          </strong>
                         </div>
                         <div className="ppb-sparkline">{[12, 21, 27, 35, 41, 50, 64, 78].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#10b981' }} />)}</div>
                       </div>
-                      <div className="ppb-metric-note ppb-note-green"><CheckCircle2 className="w-3.5 h-3.5" />Quality Inspected{effectiveStats.dispatchedItems > 0 ? ` (${effectiveStats.dispatchedItems} Dispatched)` : ""}</div>
+                      <div className="ppb-metric-note ppb-note-green">
+                        <CheckCircle2 className="w-3.5 h-3.5" />Quality Inspected • {completedItems} Pcs{effectiveStats.dispatchedItems > 0 ? ` (${effectiveStats.dispatchedItems} Dispatched)` : ""}
+                      </div>
                     </div>
 
                     <div className="ppb-metric-card" onClick={() => { setReportsInitialTab("rejects"); try { localStorage.setItem("sejal_reports_active_tab", "rejects"); } catch { } setActiveTab("reports"); }} style={{ cursor: 'pointer' }}>
@@ -2388,14 +2393,14 @@ export default function Index() {
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-blue" onClick={() => setActiveTab("cutting")}>
                               <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={20} /></span>
-                              <div><strong>Cutting Line</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Items</span></div>
+                              <div><strong>Cutting Line</strong><span className="ppb-count"><b>{effectiveStats.pendingCutting ?? 0}</b> Pcs</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-cyan" onClick={() => setActiveTab("polishing")}>
                               <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={20} /></span>
-                              <div><strong>Polishing Line</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Panes</span></div>
+                              <div><strong>Polishing Line</strong><span className="ppb-count"><b>{effectiveStats.pendingPolishing ?? 0}</b> Pcs</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
@@ -2409,14 +2414,14 @@ export default function Index() {
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-purple" onClick={() => setActiveTab("lamination")}>
                               <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
-                              <div><strong>Lamination Line</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Items</span></div>
+                              <div><strong>Lamination Line</strong><span className="ppb-count"><b>{effectiveStats.pendingLamination ?? 0}</b> Units</span></div>
                             </div>
                             <ArrowRight className="ppb-queue-arrow" size={15} />
                           </div>
                           <div className="ppb-queue-group">
                             <div className="ppb-queue-tile ppb-queue-tile-emerald" onClick={() => setActiveTab("finished")}>
                               <span className="ppb-queue-icon ppb-queue-icon-emerald"><CheckCircle size={20} /></span>
-                              <div><strong>Finished Glass</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Items</span></div>
+                              <div><strong>Finished Glass</strong><span className="ppb-count"><b>{effectiveStats.finishedItems ?? 0}</b> Units</span></div>
                             </div>
                           </div>
                         </div>
@@ -2437,7 +2442,7 @@ export default function Index() {
                               </tr>
                             </thead>
                             <tbody>
-                              {pis.length > 0 ? pis.slice(0, 2).map((pi) => {
+                              {pis.length > 0 ? pis.slice(0, 5).map((pi) => {
                                 const m = getBatchMetrics(pi);
                                 return (
                                   <tr key={pi.id} onClick={() => openPIDetails(pi)} tabIndex={0}
@@ -2449,7 +2454,20 @@ export default function Index() {
                                     <td><strong>{m.completedPieces} / {m.totalPieces} pcs</strong><span className="ppb-mini-progress" style={{ width: `${Math.max(10, m.progressPct)}%` }} /></td>
                                     <td>{m.totalSqm.toFixed(2)} m²</td>
                                     <td>{formatPlatformDate(pi.createdAt || pi.issueDate)}<small style={{ display: 'block', color: '#8099b4' }}>{formatPlatformTime(pi.createdAt)}</small></td>
-                                    <td><span className="ppb-status-pill">COMPLETED</span></td>
+                                    <td>
+                                      <span
+                                        className="ppb-status-pill"
+                                        style={
+                                          m.status === "Completed"
+                                            ? { background: "rgba(16,185,129,0.12)", color: "#047857", borderColor: "rgba(16,185,129,0.22)" }
+                                            : m.status === "In Production"
+                                            ? { background: "rgba(59,130,246,0.12)", color: "#1d4ed8", borderColor: "rgba(59,130,246,0.22)" }
+                                            : { background: "rgba(245,158,11,0.12)", color: "#b45309", borderColor: "rgba(245,158,11,0.22)" }
+                                        }
+                                      >
+                                        {m.status.toUpperCase()}
+                                      </span>
+                                    </td>
                                   </tr>
                                 );
                               }) : (
@@ -2513,7 +2531,11 @@ export default function Index() {
                               <tr>
                                 <th>Worker Name</th>
                                 <th>Stage</th>
-                                <th style={{ textAlign: "center" }}>Pieces Done</th>
+                                <th style={{ textAlign: "center" }}>
+                                  {overviewThroughputStage === "DGU" || overviewThroughputStage === "Lamination" || overviewThroughputStage === "Dispatched"
+                                    ? "Units Done"
+                                    : "Pieces Done"}
+                                </th>
                                 <th style={{ textAlign: "right" }}>Total Area (m²)</th>
                               </tr>
                             </thead>
@@ -2554,7 +2576,12 @@ export default function Index() {
                                         <span className="ppb-stage-pill">{overviewThroughputStage}</span>
                                       </td>
                                       <td style={{ textAlign: "center" }}>
-                                        <strong className="text-emerald-600 font-mono text-xs">{opData.stickers.toLocaleString()} pcs</strong>
+                                        <strong className="text-emerald-600 font-mono text-xs">
+                                          {opData.stickers.toLocaleString()}{" "}
+                                          {overviewThroughputStage === "DGU" || overviewThroughputStage === "Lamination" || overviewThroughputStage === "Dispatched"
+                                            ? "units"
+                                            : "pcs"}
+                                        </strong>
                                       </td>
                                       <td style={{ textAlign: "right" }}>
                                         <strong className="text-blue-600 font-mono text-xs">{opData.sqm.toFixed(2)} m²</strong>
@@ -2638,9 +2665,13 @@ export default function Index() {
                             <div
                               onClick={() => setActiveTab("finished")}
                               className="cursor-pointer hover:bg-emerald-50 px-1 py-0.5 rounded transition-colors"
-                              title="View Finished & Dispatched Items"
+                              title={`View Finished & Dispatched Items (${completedItems} Pcs • ${effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units)`}
                             >
-                              <i className="ppb-dot ppb-dot-green" />Completed <b>{completedItems} <small>({completedPct}%)</small></b>
+                              <i className="ppb-dot ppb-dot-green" />Completed{" "}
+                              <b>
+                                {completedItems} Pcs{" "}
+                                <small>({effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units • {completedPct}%)</small>
+                              </b>
                             </div>
                             <div
                               onClick={() => setActiveTab("production-overview")}
@@ -2683,6 +2714,14 @@ export default function Index() {
                             ◉&nbsp; Polish <b>{effectiveStats.pendingPolishing ?? 0}</b>
                           </span>
                           <span
+                            onClick={() => setActiveTab("pairing")}
+                            className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                            style={{ color: '#9333ea' }}
+                            title="View Glass Pairing & Assembly Buffer"
+                          >
+                            ◉&nbsp; Pair <b>{effectiveStats.pendingPairing ?? 0}</b>
+                          </span>
+                          <span
                             onClick={() => setActiveTab("dgu")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#059669' }}
@@ -2702,9 +2741,9 @@ export default function Index() {
                             onClick={() => setActiveTab("finished")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#10b981' }}
-                            title="View Finished & Dispatched Warehouse"
+                            title={`View Finished & Dispatched Warehouse (${completedItems} Pcs • ${effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units)`}
                           >
-                            ◉&nbsp; Fin <b>{completedItems}</b>
+                            ◉&nbsp; Fin <b>{effectiveStats.finishedItems ?? Math.round(completedItems / 2)}</b>
                           </span>
                         </div>
                       </section>
@@ -2995,7 +3034,7 @@ export default function Index() {
                         <strong>{pipelineMetrics.totalUnits} <span style={{ fontSize: '16px' }}>Units</span></strong>
                         <div className="ppb-metric-change">
                           <span className="ppb-metric-change-up">
-                            {items.length} {items.length === 1 ? "Piece" : "Pieces"} Being Tracked
+                            {pipelineMetrics.totalItems} {pipelineMetrics.totalItems === 1 ? "Piece" : "Pieces"} Being Tracked
                           </span>
                         </div>
                       </div>
@@ -3264,6 +3303,22 @@ export default function Index() {
                                 type="button"
                                 onClick={() => {
                                   setPiSearchTerm(customer.projectName || customer.customerName);
+                                  setActiveTab("polishing");
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${customer.inPolishing > 0
+                                    ? "bg-cyan-50 text-cyan-800 border-cyan-200 hover:bg-cyan-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
+                                  }`}
+                                title="View Polishing items for this customer and project"
+                              >
+                                <Sparkles className="w-3 h-3 text-cyan-600" />
+                                <span>Polishing: <strong>{customer.inPolishing}</strong></span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPiSearchTerm(customer.projectName || customer.customerName);
                                   setActiveTab("pairing");
                                 }}
                                 className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shadow-xs ${customer.inPairing > 0
@@ -3302,10 +3357,10 @@ export default function Index() {
                                     ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100"
                                     : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60"
                                   }`}
-                                title="View DLGU / IGU items for this customer and project"
+                                title="View DGU / IGU items for this customer and project"
                               >
                                 <ShieldCheck className="w-3 h-3 text-teal-600" />
-                                <span>DLGU: <strong>{customer.inDgu}</strong></span>
+                                <span>DGU: <strong>{customer.inDgu}</strong></span>
                               </button>
 
                               <button

@@ -4116,22 +4116,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </Button>
             )}
 
-            {stage === "Polishing" && selectedRowIds.length > 0 && (
-              <Button
-                size="sm"
-                onClick={handleBatchComplete}
-                disabled={loading}
-                className="bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white font-black text-xs h-7 px-3.5 gap-1.5 rounded-xl shadow-[0_4px_14px_rgba(6,182,212,0.4)] border border-cyan-400/50 hover:shadow-lg active:scale-95 transition-all animate-in fade-in cursor-pointer"
-                title="Advance selected polished glass pieces to Pairing"
-              >
-                <CheckCircle className="w-3.5 h-3.5 text-white" /> Polish & Advance Selected ({displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
-              </Button>
-            )}
-
-
-
-
-
             <div className="text-[11px] text-slate-500 font-mono">
               {stage === "Cutting" ? (
                 <>
@@ -4585,27 +4569,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                         <th className="py-2.5 px-2">{stage === "Finished" ? "Product Type & Finish" : "Finish"}</th>
                         <th className="py-2.5 px-2">Route Flow</th>
                         {stage === "Finished" && <th className="py-2.5 px-2 text-center whitespace-nowrap">IP Glass</th>}
-                        <th className="py-2.5 px-3 text-right">
-                          {stage === "Polishing" && rows.some((r) => selectedRowIds.includes(r.id)) ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => {
-                                const currentTableSelected = rows.filter((r) => selectedRowIds.includes(r.id));
-                                const serialsToAdvance = Array.from(new Set(currentTableSelected.flatMap((r) => r.allSerials)));
-                                setSelectedRowIds((prev) => prev.filter((id) => !currentTableSelected.some((r) => r.id === id)));
-                                completeStage(serialsToAdvance, undefined, true);
-                              }}
-                              disabled={loading}
-                              className="h-7 px-3 text-[11px] font-black bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg shadow-sm gap-1 transition-all cursor-pointer inline-flex items-center"
-                              title="Advance all selected items in this table"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" /> Advance Selected ({rows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
-                            </Button>
-                          ) : (
-                            "Actions"
-                          )}
-                        </th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -5372,27 +5336,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 </div>
                               </div>
 
-                              {stage === "Polishing" && customer.rows.some((r) => selectedRowIds.includes(r.id)) && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const custSelected = customer.rows.filter((r) => selectedRowIds.includes(r.id));
-                                    const serialsToAdvance = Array.from(new Set(custSelected.flatMap((r) => r.allSerials)));
-                                    setSelectedRowIds((prev) => prev.filter((id) => !custSelected.some((r) => r.id === id)));
-                                    completeStage(serialsToAdvance, undefined, true);
-                                  }}
-                                  disabled={loading}
-                                  className="h-8 px-3 text-xs font-black bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 animate-in fade-in"
-                                  title={`Polish & Advance ${customer.rows.filter((r) => selectedRowIds.includes(r.id)).length} selected items for ${customer.customerName}`}
-                                >
-                                  <CheckCircle className="w-3.5 h-3.5 text-white" />
-                                  <span>
-                                    Polish & Advance ({customer.rows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)} pcs)
-                                  </span>
-                                </button>
-                              )}
-
                               {stage === "Finished" && (
                                 <button
                                   type="button"
@@ -5815,46 +5758,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           }}
           title={`Scan with Camera (${stage})`}
         />
-      )}
-
-      {/* Floating Sticky Bulk Advance Bar when rows are selected in Polishing Workstation */}
-      {stage === "Polishing" && selectedRowIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-3 rounded-2xl shadow-2xl border border-cyan-500/50 flex items-center gap-4 animate-in slide-in-from-bottom-5 duration-200">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-            <span className="text-xs font-bold text-slate-200">
-              <strong className="text-cyan-300 font-mono text-sm">
-                {displayedRows.filter((r) => selectedRowIds.includes(r.id)).reduce((a, b) => a + (b.item.qty || 1), 0)}
-              </strong>{" "}
-              pieces selected for Polishing
-            </span>
-          </div>
-
-          <div className="h-4 w-px bg-slate-700" />
-
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleBatchComplete}
-              disabled={loading}
-              className="bg-gradient-to-r from-cyan-600 via-teal-600 to-cyan-700 hover:from-cyan-700 hover:to-teal-800 text-white font-black text-xs h-8 px-4 gap-1.5 rounded-xl shadow-md active:scale-95 cursor-pointer"
-            >
-              <CheckCircle className="w-3.5 h-3.5 text-white" />
-              <span>Polish & Advance Selected</span>
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setSelectedRowIds([])}
-              className="text-slate-400 hover:text-white hover:bg-slate-800 text-xs h-8 px-2.5 rounded-xl cursor-pointer"
-            >
-              Clear
-            </Button>
-          </div>
-        </div>
       )}
     </div>
   );

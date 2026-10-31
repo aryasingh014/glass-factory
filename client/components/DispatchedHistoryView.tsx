@@ -617,7 +617,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
   // Overall Dispatched KPI Totals
   const kpiStats = useMemo(() => {
     const totalUnits = filteredUnitRows.reduce((sum, r) => sum + (r.effectiveQty || 1), 0);
-    const totalPanes = rawDispatchedItems.length;
+    const totalPanes = filteredUnitRows.reduce((sum, r) => sum + (r.allSerials?.length || r.effectiveQty || 1), 0);
     const totalSqm = filteredUnitRows.reduce((sum, r) => sum + (r.effectiveSqm || 0), 0);
 
     const batchSet = new Set<string>();
@@ -1202,7 +1202,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
           <div className="ppb-metric-main">
             <div className="ppb-metric-copy">
               <h3>Dispatched Batches</h3>
-              <strong>{kpiStats.totalBatches} <span style={{fontSize:'16px'}}>Batches</span></strong>
+              <strong>{kpiStats.totalBatches} <span style={{fontSize:'16px'}}>{kpiStats.totalBatches === 1 ? "Batch" : "Batches"}</span></strong>
               <div className="ppb-metric-change">
                 <span className="ppb-metric-change-up">Fulfilled Orders</span>
               </div>
@@ -1219,7 +1219,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
           <div className="ppb-metric-main">
             <div className="ppb-metric-copy">
               <h3>Clients Served</h3>
-              <strong>{kpiStats.totalCustomers} <span style={{fontSize:'16px'}}>Clients</span></strong>
+              <strong>{kpiStats.totalCustomers} <span style={{fontSize:'16px'}}>{kpiStats.totalCustomers === 1 ? "Client" : "Clients"}</span></strong>
               <div className="ppb-metric-change">
                 <span className="ppb-metric-change-up" style={{color: '#8b5cf6'}}>Corporate Accounts</span>
               </div>
@@ -1447,7 +1447,7 @@ export const DispatchedHistoryView: React.FC<DispatchedHistoryViewProps> = ({
             <div className="flex items-center gap-2 text-slate-600 font-bold">
               <Building2 className="w-4 h-4 text-emerald-600" />
               <span>
-                Dispatched Orders by Customer ({customerGroups.length} Clients • {filteredUnitRows.length} Total Units)
+                Dispatched Orders by Customer ({customerGroups.length} {customerGroups.length === 1 ? "Client" : "Clients"} • {filteredUnitRows.length} Total Units)
               </span>
             </div>
             <div className="flex items-center gap-2">
