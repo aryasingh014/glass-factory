@@ -2189,7 +2189,7 @@ export default function Index() {
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
-                          window.open("https://sejalglass.com", "_blank", "noopener,noreferrer");
+                          window.open("https://www.sejalglass.co.in", "_blank", "noopener,noreferrer");
                         }}
                         className="w-full text-left px-3 py-1.5 rounded-lg text-slate-700 hover:bg-slate-100 font-medium flex items-center justify-between transition-all"
                       >

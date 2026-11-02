@@ -167,10 +167,30 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   const availablePIs = useMemo(() => {
     const map = new Map<string, { id: string; piNumber: string; customerName: string; totalItems: number; cutItems: number }>();
 
+    // Index PIs for fast lookup
+    const piMapById = new Map<string, (typeof pis)[0]>();
+    const piMapByNumber = new Map<string, (typeof pis)[0]>();
+    for (let p = 0; p < pis.length; p++) {
+      if (pis[p].id) piMapById.set(pis[p].id, pis[p]);
+      if (pis[p].piNumber) piMapByNumber.set(pis[p].piNumber, pis[p]);
+    }
+
     items.forEach((item) => {
       if (isDispatchedItem(item)) return;
-      const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
-      const orderPi = (item.orderNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
+      const parentPI = (item.piId ? piMapById.get(item.piId) : null) || (item.piNumber ? piMapByNumber.get(item.piNumber) : null);
+
+      // Resolve genuine PI number (Order No / Proforma Invoice No)
+      let resolvedPi = item.orderNo || parentPI?.proformaInvNo;
+      if (!resolvedPi) {
+        const rawPi = item.piNumber || parentPI?.piNumber || "";
+        const rawBatch = item.batchNo || parentPI?.batchNo || "";
+        if (rawPi && (!rawBatch || (rawPi !== rawBatch && formatBatchNumber(rawPi) !== formatBatchNumber(rawBatch)))) {
+          resolvedPi = rawPi;
+        }
+      }
+      if (!resolvedPi) return; // Do not treat raw batch numbers as PI numbers!
+
+      const orderPi = resolvedPi.replace(/^STK-/i, "").trim();
       const customer = parentPI?.customerName || (item as any).customerName || (item as any).clientName || "Customer";
 
       if (!map.has(orderPi)) {
@@ -190,14 +210,26 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       }
     });
 
-    // Also include any PIs from Master if not already mapped and not completed
+    // Also include any genuine PIs from Master if not already mapped and not completed
     pis.forEach((p) => {
       if (p.status === "Completed" || (p as any).status === "Dispatched") return;
-      const pNum = (p.piNumber || "").replace(/^STK-/i, "").trim();
-      if (pNum && !map.has(pNum)) {
-        map.set(pNum, {
-          id: p.id || pNum,
-          piNumber: pNum,
+
+      // Genuine PI number is proformaInvNo, or piNumber ONLY IF distinct from batchNo
+      let genuinePi = p.proformaInvNo;
+      if (!genuinePi) {
+        const rawPi = p.piNumber || "";
+        const rawBatch = p.batchNo || "";
+        if (rawPi && (!rawBatch || (rawPi !== rawBatch && formatBatchNumber(rawPi) !== formatBatchNumber(rawBatch)))) {
+          genuinePi = rawPi;
+        }
+      }
+      if (!genuinePi) return; // Ignore master records that only have batch numbers
+
+      const cleanPi = genuinePi.replace(/^STK-/i, "").trim();
+      if (cleanPi && !map.has(cleanPi)) {
+        map.set(cleanPi, {
+          id: cleanPi,
+          piNumber: cleanPi,
           customerName: p.customerName || "Customer",
           totalItems: p.totalQty || p.itemsCount || 0,
           cutItems: p.completedItemsCount || 0,
@@ -272,8 +304,16 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
       if (item.status === "Rejected" || isDispatchedItem(item)) return;
 
       const parentPI = (item.piId ? piMapById.get(item.piId) : null) || (item.piNumber ? piMapByNumber.get(item.piNumber) : null);
-      // The PI number displayed in the sticker upload table is item.orderNo (e.g. 2045, 2137, 2139)
-      const cleanPiNumber = (item.orderNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
+      // The PI number displayed in the sticker upload table is item.orderNo (e.g. 2045, 2137, 2139) or parentPI.proformaInvNo
+      let resolvedItemPi = item.orderNo || parentPI?.proformaInvNo;
+      if (!resolvedItemPi) {
+        const rawPi = item.piNumber || parentPI?.piNumber || "";
+        const rawBatch = item.batchNo || parentPI?.batchNo || "";
+        if (rawPi && (!rawBatch || (rawPi !== rawBatch && formatBatchNumber(rawPi) !== formatBatchNumber(rawBatch)))) {
+          resolvedItemPi = rawPi;
+        }
+      }
+      const cleanPiNumber = (resolvedItemPi || item.orderNo || parentPI?.proformaInvNo || item.piNumber || parentPI?.piNumber || `BATCH-${item.batchNo || "1"}`).replace(/^STK-/i, "").trim();
       const posKey = (item.posNo || String(item.srNo || "1")).trim();
       const finish = getItemFinish(item);
       const isDlgu = item.glassCategory === "DLGU" || isDlguGlass(item);
@@ -453,9 +493,11 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         if (selectedPIFilter !== "ALL") {
           const matchPI =
             row.piNumber === selectedPIFilter ||
+            row.orderNo === selectedPIFilter ||
             row.piId === selectedPIFilter ||
             row.sfoNo === selectedPIFilter ||
-            row.batchNo === selectedPIFilter;
+            row.batchNo === selectedPIFilter ||
+            (row.rawItems && row.rawItems.some((i) => i.orderNo === selectedPIFilter || i.piNumber === selectedPIFilter));
           if (!matchPI) return false;
         }
 
@@ -699,7 +741,13 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
 
   const scopedCategoryRows = consolidatedRows.filter((r) => {
     if (selectedPIFilter !== "ALL") {
-      const matchPI = r.piNumber === selectedPIFilter || r.piId === selectedPIFilter || r.sfoNo === selectedPIFilter || r.batchNo === selectedPIFilter;
+      const matchPI =
+        r.piNumber === selectedPIFilter ||
+        r.orderNo === selectedPIFilter ||
+        r.piId === selectedPIFilter ||
+        r.sfoNo === selectedPIFilter ||
+        r.batchNo === selectedPIFilter ||
+        (r.rawItems && r.rawItems.some((i) => i.orderNo === selectedPIFilter || i.piNumber === selectedPIFilter));
       if (!matchPI) return false;
     }
     if (selectedCustomerFilter !== "ALL") {
@@ -720,7 +768,11 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
   const activeViewMetrics = useMemo(() => {
     const scopeRows = consolidatedRows.filter((r) => {
       if (selectedPIFilter !== "ALL") {
-        const matchPI = r.piNumber === selectedPIFilter || r.piId === selectedPIFilter;
+        const matchPI =
+          r.piNumber === selectedPIFilter ||
+          r.orderNo === selectedPIFilter ||
+          r.piId === selectedPIFilter ||
+          (r.rawItems && r.rawItems.some((i) => i.orderNo === selectedPIFilter || i.piNumber === selectedPIFilter));
         if (!matchPI) return false;
       }
       if (selectedCustomerFilter !== "ALL") {
@@ -967,7 +1019,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     }
   };
 
-  const selectedPIObject = pis.find((p) => p.id === selectedPIFilter || p.piNumber === selectedPIFilter);
+  const selectedPIObject = pis.find((p) => p.id === selectedPIFilter || p.piNumber === selectedPIFilter || p.proformaInvNo === selectedPIFilter);
 
   const totalBufferItems = items.filter((i) => i.currentStage === "Pairing").length;
   const totalBufferSqm = items.filter((i) => i.currentStage === "Pairing").reduce((acc, i) => acc + (i.sqm || 0), 0);
@@ -1482,8 +1534,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
               >
                 <option value="ALL">All PIs ({availablePIs.length})</option>
                 {availablePIs.map((p) => (
-                  <option key={p.id} value={p.id || p.piNumber}>
-                    PI {formatBatchNumber(p.piNumber)} — {p.customerName}
+                  <option key={p.id || p.piNumber} value={p.piNumber || p.id}>
+                    PI {p.piNumber.replace(/^PI[-_\s]*/i, "")} — {p.customerName}
                   </option>
                 ))}
               </select>
@@ -1749,7 +1801,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                                         </div>
                                       </td>
                                       <td className="px-2 py-2 font-mono font-bold text-[#1680f5] text-center whitespace-nowrap">
-                                        {formatBatchNumber(row.piNumber)}
+                                        {row.piNumber.replace(/^PI[-_\s]*/i, "")}
                                       </td>
                                       <td className="px-2 py-2 font-mono text-center font-bold text-slate-700 whitespace-nowrap">
                                         {formatBatchNumber(row.batchNo || row.piNumber)}
@@ -1922,7 +1974,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                     Scan & Verify Glass — Buffer Stage
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    POS #{scanRow.posNo} • PI {formatBatchNumber(scanRow.piNumber)}
+                    POS #{scanRow.posNo} • PI {scanRow.piNumber.replace(/^PI[-_\s]*/i, "")}
                   </p>
                 </div>
               </div>
