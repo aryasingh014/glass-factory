@@ -91,6 +91,32 @@ describe("getDistinctPiDisplay", () => {
       })
     ).toBe("PI-2026-001");
   });
+
+  it("should return distinct proformaInvNo, sfoNo, or obNo when piNumber equals batchNo", () => {
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "5651",
+        batchNo: "5651",
+        proformaInvNo: "2473",
+      })
+    ).toBe("2473");
+
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "5651",
+        batchNo: "5651",
+        sfoNo: "1981",
+      })
+    ).toBe("1981");
+
+    expect(
+      getDistinctPiDisplay({
+        piNumber: "5651",
+        batchNo: "5651",
+        obNo: "4592",
+      })
+    ).toBe("4592");
+  });
 });
 
 describe("isLaminatedGlass & isDguGlass", () => {

@@ -271,6 +271,18 @@ function groupCustomerItemsByBatch<
   });
 }
 
+function resolveRowPiAndBatch(item: GlassItem): { batchStr: string; piStr: string } {
+  const batchStr = formatBatchNumber(item.batchNo || item.piNumber) || item.batchNo || item.piNumber || "—";
+  const distinctPi =
+    getDistinctPiDisplay(item, batchStr) ||
+    (item.orderNo && item.orderNo !== batchStr && formatBatchNumber(item.orderNo) !== formatBatchNumber(batchStr) ? item.orderNo : null) ||
+    (item.piNumber && item.piNumber !== batchStr && formatBatchNumber(item.piNumber) !== formatBatchNumber(batchStr) ? String(item.piNumber).replace(/^STK-/i, "").trim() : null) ||
+    (item.sfoNo && item.sfoNo !== batchStr && formatBatchNumber(item.sfoNo) !== formatBatchNumber(batchStr) ? item.sfoNo : null) ||
+    (item.obNo && item.obNo !== batchStr && formatBatchNumber(item.obNo) !== formatBatchNumber(batchStr) ? item.obNo : null) ||
+    (item.orderNo ? item.orderNo : "—");
+  return { batchStr, piStr: distinctPi };
+}
+
 interface ReportsViewProps {
   initialTab?: "pis" | "items" | "history" | "rejects" | "reworks";
   onTabChange?: (tab: "pis" | "items" | "history" | "rejects" | "reworks") => void;
@@ -1233,12 +1245,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       rejectCustomerGroups.forEach((grp) => {
         grp.items.forEach(({ item, rejectRecord, isRejected }) => {
           const eff = getDguEffectiveQtyAndSqm(item);
+          const { batchStr, piStr } = resolveRowPiAndBatch(item);
           allRejectItems.push({
             "Customer Name": grp.customerName,
             "Serial Number": item.serialNumber,
             "Barcode": item.barcode,
-            "Batch No": item.batchNo || formatBatchNumber(item.piNumber) || "—",
-            "PI No": item.orderNo || item.piNumber || item.sfoNo || "—",
+            "Batch No": batchStr,
+            "PI No": piStr,
             "POS No": item.posNo || "—",
             "Glass Code": item.glassCode || item.itemCode || "—",
             "Glass Specification": item.glassType,
@@ -1284,12 +1297,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       reworkCustomerGroups.forEach((grp) => {
         grp.items.forEach(({ item, reworkRecord, isReworking }) => {
           const eff = getDguEffectiveQtyAndSqm(item);
+          const { batchStr, piStr } = resolveRowPiAndBatch(item);
           allReworkItems.push({
             "Customer Name": grp.customerName,
             "Serial Number": item.serialNumber,
             "Barcode": item.barcode,
-            "Batch No": item.batchNo || formatBatchNumber(item.piNumber) || "—",
-            "PI No": item.orderNo || item.piNumber || item.sfoNo || "—",
+            "Batch No": batchStr,
+            "PI No": piStr,
             "POS No": item.posNo || "—",
             "Glass Code": item.glassCode || item.itemCode || "—",
             "Glass Specification": item.glassType,
@@ -3013,12 +3027,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                                                                     {/* Batch No */}
                                                                     <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                                                                      {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                                                      {resolveRowPiAndBatch(item).batchStr}
                                                                     </td>
 
                                                                     {/* PI Number */}
                                                                     <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                                                      {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                                                      {resolveRowPiAndBatch(item).piStr}
                                                                     </td>
 
                                                                     {/* POS NO */}
@@ -3714,12 +3728,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                                                                     {/* Batch No */}
                                                                     <td className="p-3 font-mono font-bold text-purple-700 whitespace-nowrap">
-                                                                      {item.batchNo || formatBatchNumber(item.piNumber) || "—"}
+                                                                      {resolveRowPiAndBatch(item).batchStr}
                                                                     </td>
 
                                                                     {/* PI Number */}
                                                                     <td className="p-3 font-mono font-bold text-blue-700 whitespace-nowrap">
-                                                                      {item.orderNo || item.piNumber || item.sfoNo || "—"}
+                                                                      {resolveRowPiAndBatch(item).piStr}
                                                                     </td>
 
                                                                     {/* POS NO */}

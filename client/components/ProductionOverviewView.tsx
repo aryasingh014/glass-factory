@@ -95,8 +95,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const dguCount = dguItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const laminationCount = laminationItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const finishedCount = finishedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const rejectedCount = rejectedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const reworkCount = reworkItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const rejectedCount = Math.max(stats?.rejectItems ?? 0, rejectedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0));
+    const reworkCount = Math.max(stats?.reworkItems ?? 0, reworkItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0));
 
     // Assembled Units in Finished / Ready for Dispatch
     const finishedMetrics = calculateAssembledUnits(finishedItemsList);

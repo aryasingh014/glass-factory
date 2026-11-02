@@ -333,7 +333,16 @@ export function formatBatchNumber(batchIdentifier?: string): string {
  * If neither is distinct from the batch number, it returns null to prevent duplicate badges.
  */
 export function getDistinctPiDisplay(
-  itemOrSheet?: { orderNo?: string; piNumber?: string; batchNo?: string; orderList?: string[] } | null,
+  itemOrSheet?: {
+    orderNo?: string;
+    piNumber?: string;
+    batchNo?: string;
+    orderList?: string[];
+    proformaInvNo?: string;
+    jobOrderNumber?: string;
+    sfoNo?: string;
+    obNo?: string;
+  } | null,
   fallbackBatch?: string
 ): string | null {
   if (!itemOrSheet) return null;
@@ -350,7 +359,16 @@ export function getDistinctPiDisplay(
     }
   }
 
-  // 2. If orderNo is present and distinct from batch
+  // 2. If proformaInvNo is present and distinct from batch
+  if (
+    itemOrSheet.proformaInvNo &&
+    itemOrSheet.proformaInvNo !== batch &&
+    formatBatchNumber(itemOrSheet.proformaInvNo) !== fmtBatch
+  ) {
+    return itemOrSheet.proformaInvNo;
+  }
+
+  // 3. If orderNo is present and distinct from batch
   if (
     itemOrSheet.orderNo &&
     itemOrSheet.orderNo !== batch &&
@@ -359,13 +377,40 @@ export function getDistinctPiDisplay(
     return itemOrSheet.orderNo;
   }
 
-  // 3. If piNumber is present and distinct from batch
+  // 4. If piNumber is present and distinct from batch
   if (
     itemOrSheet.piNumber &&
     itemOrSheet.piNumber !== batch &&
     formatBatchNumber(itemOrSheet.piNumber) !== fmtBatch
   ) {
     return String(itemOrSheet.piNumber).replace(/^STK-/i, "").trim();
+  }
+
+  // 5. If jobOrderNumber is present and distinct from batch
+  if (
+    itemOrSheet.jobOrderNumber &&
+    itemOrSheet.jobOrderNumber !== batch &&
+    formatBatchNumber(itemOrSheet.jobOrderNumber) !== fmtBatch
+  ) {
+    return itemOrSheet.jobOrderNumber;
+  }
+
+  // 6. If sfoNo is present and distinct from batch
+  if (
+    itemOrSheet.sfoNo &&
+    itemOrSheet.sfoNo !== batch &&
+    formatBatchNumber(itemOrSheet.sfoNo) !== fmtBatch
+  ) {
+    return itemOrSheet.sfoNo;
+  }
+
+  // 7. If obNo is present and distinct from batch
+  if (
+    itemOrSheet.obNo &&
+    itemOrSheet.obNo !== batch &&
+    formatBatchNumber(itemOrSheet.obNo) !== fmtBatch
+  ) {
+    return itemOrSheet.obNo;
   }
 
   return null;

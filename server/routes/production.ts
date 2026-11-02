@@ -2420,13 +2420,17 @@ export const handleRejectItem: RequestHandler = (req, res) => {
     delete (targetItem as any).lamPairId;
     delete (targetItem as any).dguPairId;
     const prevStage = targetItem.currentStage;
-    const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
+    const distinctPi = (targetItem.orderNo && targetItem.orderNo !== targetItem.batchNo) ? targetItem.orderNo : undefined;
+    const resolvedIncomingPi = (piNumber && piNumber !== targetItem.batchNo) ? piNumber : undefined;
+    const finalPiNumber = sanitizeString(resolvedIncomingPi || distinctPi || piNumber || targetItem.piNumber, 100);
 
     const rejectEntry: RejectRecord = {
       id: `rej-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       serialNumber: targetItem.serialNumber,
       barcode: targetItem.barcode,
       piNumber: finalPiNumber,
+      batchNo: targetItem.batchNo,
+      orderNo: targetItem.orderNo,
       stage: prevStage,
       defectStation: cleanDefectStation,
       reason: cleanReason,
@@ -2447,6 +2451,9 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       const targetStage = (reworkTargetStage as ProductionStage) || "Cutting";
       targetItem.currentStage = targetStage;
       targetItem.status = "Reworking";
+      (targetItem as any).isRejected = true;
+      (targetItem as any).rejectionReason = cleanReason;
+      (targetItem as any).rejectionDate = new Date().toISOString();
       targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
       targetItem.updatedAt = new Date().toISOString();
       if (isDlguItem(targetItem)) {
@@ -2461,6 +2468,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
         serialNumber: targetItem.serialNumber,
         barcode: targetItem.barcode,
         piNumber: finalPiNumber,
+        batchNo: targetItem.batchNo,
+        orderNo: targetItem.orderNo,
         fromStage: prevStage,
         targetStage: targetStage,
         defectStation: cleanDefectStation,
@@ -3088,13 +3097,17 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       }
     }
 
-    const finalPiNumber = sanitizeString(piNumber || targetItem.piNumber, 100);
+    const distinctPi = (targetItem.orderNo && targetItem.orderNo !== targetItem.batchNo) ? targetItem.orderNo : undefined;
+    const resolvedIncomingPi = (piNumber && piNumber !== targetItem.batchNo) ? piNumber : undefined;
+    const finalPiNumber = sanitizeString(resolvedIncomingPi || distinctPi || piNumber || targetItem.piNumber, 100);
 
     const reworkEntry: ReworkRecord = {
       id: `rew-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       serialNumber: targetItem.serialNumber,
       barcode: targetItem.barcode,
       piNumber: finalPiNumber,
+      batchNo: targetItem.batchNo,
+      orderNo: targetItem.orderNo,
       fromStage: prevStage,
       targetStage: targetStage as ProductionStage,
       defectStation: cleanDefectStation,
@@ -4128,6 +4141,8 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
   res.json({
     ...stats,
     items: glassItemsDatabase,
+    rejects: rejectDatabase,
+    reworks: reworkDatabase,
   });
 };
 

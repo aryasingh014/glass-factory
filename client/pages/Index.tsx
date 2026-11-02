@@ -67,7 +67,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage, SystemNotification } from "@shared/api";
+import { PIMaster, GlassItem, DashboardStats, UserRole, ProductionStage, SystemNotification, RejectRecord, ReworkRecord } from "@shared/api";
 import { TableHorizontalScrollWrapper } from "@/components/TableHorizontalScrollWrapper";
 import { ProductionStageView } from "@/components/ProductionStageView";
 import { SettingsView } from "@/components/SettingsView";
@@ -288,6 +288,8 @@ export default function Index() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [pis, setPis] = useState<PIMaster[]>([]);
   const [items, setItems] = useState<GlassItem[]>([]);
+  const [rejects, setRejects] = useState<RejectRecord[]>([]);
+  const [reworks, setReworks] = useState<ReworkRecord[]>([]);
   // Sticker & Batch export dropdown
   const [isBatchExportOpen, setIsBatchExportOpen] = useState(false);
   const batchExportBtnRef = useRef<HTMLButtonElement>(null);
@@ -420,6 +422,8 @@ export default function Index() {
         const freshItems: GlassItem[] = dashData.items || [];
         setItems(freshItems);
         setStats(dashData);
+        if (Array.isArray(dashData.rejects)) setRejects(dashData.rejects);
+        if (Array.isArray(dashData.reworks)) setReworks(dashData.reworks);
         if (selectedPI) {
           const updatedPIItems = freshItems.filter((i) => i.piId === selectedPI.id || i.piNumber === selectedPI.piNumber);
           if (updatedPIItems.length > 0) {
@@ -1561,8 +1565,10 @@ export default function Index() {
     const laminationItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "lamination" && i.status !== "Rejected");
     const finishedItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "finished" && i.status !== "Rejected");
     const dispatchedList = items.filter((i) => isDispatchedItem(i) && i.status !== "Rejected");
-    const rejectedItems = items.filter((i) => i.status === "Rejected");
-    const reworkItems = items.filter((i) => i.status === "Reworking");
+    const rejectSerials = new Set(rejects.map((r) => r.serialNumber));
+    const reworkSerials = new Set(reworks.map((rw) => rw.serialNumber));
+    const rejectedItems = items.filter((i) => i.status === "Rejected" || (i as any).isRejected || rejectSerials.has(i.serialNumber));
+    const reworkItems = items.filter((i) => i.status === "Reworking" || (i as any).isReworking || reworkSerials.has(i.serialNumber));
 
     const totalItems = items.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const cuttingCount = cuttingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -1578,8 +1584,8 @@ export default function Index() {
     const dguCount = dguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const laminationCount = laminationItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const finishedCount = finishedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const rejectedCount = rejectedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const reworkCount = reworkItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const rejectedCount = Math.max(stats?.rejectItems ?? 0, rejects.length, rejectedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0));
+    const reworkCount = Math.max(stats?.reworkItems ?? 0, reworks.length, reworkItems.reduce((acc, curr) => acc + (curr.qty || 1), 0));
 
     const totalSqm = items.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
     const cuttingSqm = cuttingItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
@@ -1697,7 +1703,7 @@ export default function Index() {
       completionRate,
       yieldRate,
     };
-  }, [items]);
+  }, [items, rejects, reworks, stats]);
 
   const effectiveStats = React.useMemo(() => {
     const dguUnitsCount =
@@ -1722,10 +1728,10 @@ export default function Index() {
       finishedItems: pipelineMetrics.finishedItems,
       dispatchedItems: stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems,
       totalCompletedItems: pipelineMetrics.finishedItems + (stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems),
-      rejectItems: pipelineMetrics.rejectedItems,
-      reworkItems: pipelineMetrics.reworkItems,
+      rejectItems: Math.max(stats?.rejectItems ?? 0, rejects.length, pipelineMetrics.rejectedItems),
+      reworkItems: Math.max(stats?.reworkItems ?? 0, reworks.length, pipelineMetrics.reworkItems),
     };
-  }, [stats, pis, pipelineMetrics]);
+  }, [stats, pis, pipelineMetrics, rejects, reworks]);
 
   const pipelineBatches = React.useMemo(() => {
     const map = new Map<string, {
@@ -2262,13 +2268,16 @@ export default function Index() {
                 return true;
               });
 
-              const rejectedSummaryItems = filteredSummaryItems.filter((i) => i.status === "Rejected");
+              const rejectSerialSet = new Set(rejects.map((r) => r.serialNumber));
+              const rejectedSummaryItems = filteredSummaryItems.filter((i) => i.status === "Rejected" || (i as any).isRejected || rejectSerialSet.has(i.serialNumber));
               const completedSummaryItems = filteredSummaryItems.filter(
-                (i) => i.status !== "Rejected" && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
+                (i) => i.status !== "Rejected" && !(i as any).isRejected && !rejectSerialSet.has(i.serialNumber) && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
               );
               const inProgressSummaryItems = filteredSummaryItems.filter(
                 (i) =>
                   i.status !== "Rejected" &&
+                  !(i as any).isRejected &&
+                  !rejectSerialSet.has(i.serialNumber) &&
                   !completedSummaryItems.some((c) => c.id === i.id) &&
                   (i.status === "In Production" ||
                     i.status === "Reworking" ||
@@ -2278,6 +2287,8 @@ export default function Index() {
               const pendingSummaryItems = filteredSummaryItems.filter(
                 (i) =>
                   i.status !== "Rejected" &&
+                  !(i as any).isRejected &&
+                  !rejectSerialSet.has(i.serialNumber) &&
                   !completedSummaryItems.some((c) => c.id === i.id) &&
                   !inProgressSummaryItems.some((p) => p.id === i.id)
               );
@@ -2286,7 +2297,11 @@ export default function Index() {
               const completedItems = completedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
               const inProgressItems = inProgressSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
               const pendingItems = pendingSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-              const rejectedItems = rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+              const rejectedItems = Math.max(
+                stats?.rejectItems ?? 0,
+                rejects.length,
+                rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0)
+              );
 
               const grandTotal = Math.max(1, totalItems);
               const completedPct = totalItems > 0 ? Math.round((completedItems / grandTotal) * 100) : 0;
@@ -3725,6 +3740,7 @@ export default function Index() {
               onOpenChange={setRejectReworkModalOpen}
               item={rejectReworkItem}
               allItems={items}
+              allPis={pis}
               mode={rejectReworkMode}
               onSuccess={() => fetchData(true)}
             />

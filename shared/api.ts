@@ -123,6 +123,8 @@ export interface RejectRecord {
   serialNumber: string;
   barcode?: string;
   piNumber?: string;
+  batchNo?: string;
+  orderNo?: string;
   stage: ProductionStage;
   defectStation?: string;
   reason: string;
@@ -142,6 +144,8 @@ export interface ReworkRecord {
   serialNumber: string;
   barcode?: string;
   piNumber?: string;
+  batchNo?: string;
+  orderNo?: string;
   fromStage: ProductionStage;
   toStage?: ProductionStage;
   targetStage?: ProductionStage;
@@ -168,6 +172,8 @@ export interface DashboardStats {
   dispatchedItems?: number;
   rejectItems: number;
   reworkItems: number;
+  rejects?: RejectRecord[];
+  reworks?: ReworkRecord[];
   userThroughputByStage?: Record<string, Record<string, { stickers: number; sqm: number; name?: string; username?: string }>>;
 }
 

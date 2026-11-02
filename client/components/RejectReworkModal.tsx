@@ -4,9 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertOctagon, RefreshCw, Factory } from "lucide-react";
-import { GlassItem, ProductionStage } from "@shared/api";
+import { GlassItem, ProductionStage, PIMaster } from "@shared/api";
 import { toast } from "sonner";
-import { getItemFinish, getGlassPaneRole, isDlguGlass, isDguGlass, isLaminatedGlass } from "@/lib/utils";
+import {
+  getItemFinish,
+  getGlassPaneRole,
+  isDlguGlass,
+  isDguGlass,
+  isLaminatedGlass,
+  getDistinctPiDisplay,
+  formatBatchNumber,
+} from "@/lib/utils";
 
 interface RejectReworkModalProps {
   open: boolean;
@@ -14,6 +22,7 @@ interface RejectReworkModalProps {
   mode: "reject" | "rework";
   item: GlassItem | null;
   allItems?: GlassItem[];
+  allPis?: PIMaster[];
   onSuccess: () => void;
 }
 
@@ -62,6 +71,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   mode,
   item,
   allItems = [],
+  allPis = [],
   onSuccess,
 }) => {
   const [defectStation, setDefectStation] = useState<string>("Transit / Delivery to Customer");
@@ -499,6 +509,128 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
     allSerials,
   ]);
 
+  const activeItem = React.useMemo(() => {
+    if (!item) return null;
+    if (isDlgu) {
+      if (selectedDefectivePane === "OP") return dlguPanes.opItem || item;
+      if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "IP1") return dlguPanes.ip1Item || item;
+      if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "IP2") return dlguPanes.ip2Item || item;
+    } else if (isDgu) {
+      if (selectedDefectivePane === "OP") return dguPanes.opItem || item;
+      if (selectedDefectivePane === "IP") return dguPanes.ipItem || item;
+    } else if (isLam) {
+      if (selectedDefectivePane === "IP_PLY1" || selectedDefectivePane === "PLY1") return lamPanes.ply1Item || item;
+      if (selectedDefectivePane === "IP_PLY2" || selectedDefectivePane === "PLY2") return lamPanes.ply2Item || item;
+    }
+    return item;
+  }, [item, isDlgu, isDgu, isLam, selectedDefectivePane, dlguPanes, dguPanes, lamPanes]);
+
+  const parentPI = React.useMemo(() => {
+    const target = activeItem || item;
+    if (!target) return undefined;
+    if (allPis && allPis.length > 0) {
+      return allPis.find((p) => (target.piId && p.id === target.piId) || (target.piNumber && p.piNumber === target.piNumber));
+    }
+    return undefined;
+  }, [allPis, activeItem, item]);
+
+  const displayBatchNo = React.useMemo(() => {
+    const target = activeItem || item;
+    if (!target) return "—";
+    const rawBatch = target.batchNo || parentPI?.batchNo || target.piNumber;
+    return formatBatchNumber(rawBatch) || rawBatch || "—";
+  }, [activeItem, item, parentPI]);
+
+  const displayPiNumber = React.useMemo(() => {
+    const target = activeItem || item;
+    if (!target) return "—";
+
+    // 1. Check getDistinctPiDisplay on active/target item
+    const distinct = getDistinctPiDisplay(target, displayBatchNo);
+    if (distinct) return distinct;
+
+    // 2. Check getDistinctPiDisplay on primary item if different
+    if (item && item !== target) {
+      const distinctPrimary = getDistinctPiDisplay(item, displayBatchNo);
+      if (distinctPrimary) return distinctPrimary;
+    }
+
+    // 3. Check getDistinctPiDisplay on parentPI
+    if (parentPI) {
+      const distinctParent = getDistinctPiDisplay(
+        {
+          orderNo: parentPI.proformaInvNo,
+          piNumber: parentPI.piNumber,
+          batchNo: parentPI.batchNo || displayBatchNo,
+          jobOrderNumber: parentPI.jobOrderNumber,
+          sfoNo: parentPI.sfoNo,
+          obNo: parentPI.obNo,
+        },
+        displayBatchNo
+      );
+      if (distinctParent) return distinctParent;
+
+      if (
+        parentPI.proformaInvNo &&
+        parentPI.proformaInvNo !== displayBatchNo &&
+        formatBatchNumber(parentPI.proformaInvNo) !== formatBatchNumber(displayBatchNo)
+      ) {
+        return parentPI.proformaInvNo;
+      }
+      if (
+        parentPI.jobOrderNumber &&
+        parentPI.jobOrderNumber !== displayBatchNo &&
+        formatBatchNumber(parentPI.jobOrderNumber) !== formatBatchNumber(displayBatchNo)
+      ) {
+        return parentPI.jobOrderNumber;
+      }
+    }
+
+    // 4. Check explicit orderNo on target or primary item
+    if (
+      target.orderNo &&
+      target.orderNo !== displayBatchNo &&
+      formatBatchNumber(target.orderNo) !== formatBatchNumber(displayBatchNo)
+    ) {
+      return target.orderNo;
+    }
+    if (
+      item?.orderNo &&
+      item.orderNo !== displayBatchNo &&
+      formatBatchNumber(item.orderNo) !== formatBatchNumber(displayBatchNo)
+    ) {
+      return item.orderNo;
+    }
+
+    // 5. Check sfoNo or obNo
+    if (
+      target.sfoNo &&
+      target.sfoNo !== displayBatchNo &&
+      formatBatchNumber(target.sfoNo) !== formatBatchNumber(displayBatchNo)
+    ) {
+      return target.sfoNo;
+    }
+    if (
+      target.obNo &&
+      target.obNo !== displayBatchNo &&
+      formatBatchNumber(target.obNo) !== formatBatchNumber(displayBatchNo)
+    ) {
+      return target.obNo;
+    }
+
+    // 6. Check if piNumber is truly distinct from batch
+    if (
+      target.piNumber &&
+      target.piNumber !== displayBatchNo &&
+      formatBatchNumber(target.piNumber) !== formatBatchNumber(displayBatchNo)
+    ) {
+      return String(target.piNumber).replace(/^STK-/i, "").trim();
+    }
+
+    // 7. If no distinct PI number exists, fallback to orderNo if present, or "—" rather than repeating the batch number
+    return target.orderNo || "—";
+  }, [activeItem, item, parentPI, displayBatchNo]);
+
   const isCompletedOrFinished = Boolean(item.status === "Completed" || item.currentStage === "Finished");
   const isCuttingStage = Boolean(item.currentStage === "Cutting");
 
@@ -607,7 +739,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             serialNumber: targetSerialsToProcess[0] || item.serialNumber,
             serialNumbers: targetSerialsToProcess,
             singlePaneOnly: isSinglePane,
-            piNumber: item.piNumber,
+            piNumber: displayPiNumber !== "—" ? displayPiNumber : (item.orderNo || item.piNumber),
             defectStation,
             reason: finalReason,
             defectivePane: defectiveCode,
@@ -644,7 +776,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             serialNumber: targetSerialsToProcess[0] || item.serialNumber,
             serialNumbers: targetSerialsToProcess,
             singlePaneOnly: isSinglePane,
-            piNumber: item.piNumber,
+            piNumber: displayPiNumber !== "—" ? displayPiNumber : (item.orderNo || item.piNumber),
             targetStage,
             defectStation,
             reason: finalReason,
@@ -1074,7 +1206,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
           <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
             <div className="flex items-center justify-between">
               <div className="text-slate-600 text-[11px] font-semibold">
-                PI Number: <span className="font-bold text-purple-900">{item.piNumber || item.batchNo}</span>
+                PI Number: <span className="font-bold text-purple-900">{displayPiNumber}</span>
               </div>
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activePaneInfo.badgeClass}`}>
                 {activePaneInfo.badgeText}
@@ -1083,7 +1215,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
             <div className="flex items-center justify-between">
               <div className="text-slate-600 text-[11px] font-semibold">
-                Batch / Pos: <span className="font-bold text-slate-900">{item.batchNo || item.piNumber}</span> / POS <span className="font-bold text-purple-900">{item.posNo}</span>
+                Batch / Pos: <span className="font-bold text-slate-900">{displayBatchNo}</span> / POS <span className="font-bold text-purple-900">{(activeItem || item).posNo || item.posNo || "—"}</span>
               </div>
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activePaneInfo.finishClass}`}>
                 {activePaneInfo.finishText}
@@ -1091,7 +1223,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-slate-700">
-              <span>Selected Position: <strong className="font-mono font-bold text-slate-900">POS {item.posNo || "—"}</strong></span>
+              <span>Selected Position: <strong className="font-mono font-bold text-slate-900">POS {(activeItem || item).posNo || item.posNo || "—"}</strong></span>
               <span className="text-[11px] text-slate-500">({activePaneInfo.paneTitle})</span>
             </div>
 
@@ -1099,19 +1231,19 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
               <span className="text-slate-500">Glass Spec:</span> <strong className="font-mono">{activePaneInfo.glassType}</strong>
             </div>
 
-            {item.itemCode && (
+            {(activeItem || item).itemCode && (
               <div className="text-[11px] text-slate-700 truncate">
-                <span className="text-slate-500">Item / Category:</span> <strong>{item.itemCode}</strong>
+                <span className="text-slate-500">Item / Category:</span> <strong>{(activeItem || item).itemCode}</strong>
                 {isDlgu && <span className="ml-1 text-purple-700 font-bold">(DLGU)</span>}
               </div>
             )}
 
             <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 text-[11px]">
               <span className="text-slate-500">
-                Current Stage: <strong className="text-amber-700">{item.currentStage || "Cutting"}</strong>
+                Current Stage: <strong className="text-amber-700">{(activeItem || item).currentStage || item.currentStage || "Cutting"}</strong>
               </span>
               <span className="text-slate-500 font-mono font-bold">
-                {item.width} × {item.height} mm
+                {activePaneInfo.width || item.width} × {activePaneInfo.height || item.height} mm
               </span>
             </div>
           </div>

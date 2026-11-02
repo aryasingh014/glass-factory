@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { GlassItem, PIMaster, ProductionHistory } from "@shared/api";
 import { generateQRCodeSVG, cleanScannedBarcode } from "@/lib/barcode";
-import { getDguEffectiveQtyAndSqm } from "@/lib/utils";
+import { getDguEffectiveQtyAndSqm, getDistinctPiDisplay, formatBatchNumber } from "@/lib/utils";
 import { scannerAudio } from "@/lib/audioBeep";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { CameraScannerModal } from "@/components/CameraScannerModal";
@@ -245,12 +245,25 @@ export const ScanLookupModal: React.FC<ScanLookupModalProps> = ({
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs bg-white p-3.5 rounded-xl border border-slate-200">
                 <div>
                   <span className="text-slate-500 block">PI Number:</span>
-                  <span className="font-bold text-blue-600">{scannedResult.item.piNumber}</span>
+                  <span className="font-bold text-blue-600">
+                    {getDistinctPiDisplay(scannedResult.item, scannedResult.item.batchNo) ||
+                      scannedResult.pi?.proformaInvNo ||
+                      scannedResult.item.orderNo ||
+                      (scannedResult.item.piNumber !== scannedResult.item.batchNo && formatBatchNumber(scannedResult.item.piNumber) !== formatBatchNumber(scannedResult.item.batchNo)
+                        ? scannedResult.item.piNumber
+                        : null) ||
+                      scannedResult.pi?.jobOrderNumber ||
+                      scannedResult.item.sfoNo ||
+                      "—"}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Batch:</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {scannedResult.item.batchNo || scannedResult.item.sfoNo || "—"}
+                    {formatBatchNumber(scannedResult.item.batchNo || scannedResult.pi?.batchNo || scannedResult.item.piNumber) ||
+                      scannedResult.item.batchNo ||
+                      scannedResult.item.sfoNo ||
+                      "—"}
                   </span>
                 </div>
                 <div>
