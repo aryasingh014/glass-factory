@@ -3191,12 +3191,12 @@ export default function Index() {
                       )}
 
                       <div className="relative flex-1 max-w-md min-w-[180px]">
-                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                         <Input
                           placeholder="Search customer, batch, project..."
                           value={piSearchTerm}
                           onChange={(e) => setPiSearchTerm(e.target.value)}
-                          className="pl-8.5 pr-8 text-xs bg-slate-50/90 border-slate-200 rounded-xl h-9 font-medium focus:bg-white transition-all w-full"
+                          className="pl-9 pr-8 text-xs bg-slate-50/90 border-slate-200 rounded-xl h-9 font-medium focus:bg-white transition-all w-full"
                         />
                         {piSearchTerm && (
                           <button

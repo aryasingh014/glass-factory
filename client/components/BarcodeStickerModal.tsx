@@ -67,6 +67,35 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
     return "CUT/TMP";
   };
 
+  const getDisplayRoute = (itm: GlassItem): string => {
+    // 1. Direct stickerRoute extracted from the physical PDF / sticker (e.g. CUT/POLISH 2 HEIGHTS/TMP)
+    if (itm.stickerRoute && itm.stickerRoute.trim()) {
+      return itm.stickerRoute.trim().toUpperCase();
+    }
+    // 2. Extracted route stored in remarks (e.g. "Route: CUT/POLISH 2 HEIGHTS/TMP")
+    if (itm.remarks && /Route:\s*(.+)/i.test(itm.remarks)) {
+      const match = itm.remarks.match(/Route:\s*(.+)/i);
+      if (match && match[1]?.trim()) {
+        return match[1].trim().toUpperCase();
+      }
+    }
+    // 3. Any string route property
+    if (typeof (itm as any).processRouteText === "string" && (itm as any).processRouteText.trim()) {
+      return (itm as any).processRouteText.trim().toUpperCase();
+    }
+    if (typeof (itm as any).routeText === "string" && (itm as any).routeText.trim()) {
+      return (itm as any).routeText.trim().toUpperCase();
+    }
+    if (typeof (itm as any).rawRoute === "string" && (itm as any).rawRoute.trim()) {
+      return (itm as any).rawRoute.trim().toUpperCase();
+    }
+    if (typeof itm.processRoute === "string" && (itm.processRoute as string).trim()) {
+      return (itm.processRoute as string).trim().toUpperCase();
+    }
+    // 4. Fallback to formatting system pipeline processRoute array
+    return formatRoute(itm.processRoute);
+  };
+
   const getMakeupLines = (itm: GlassItem): string[] => {
     const rawMakeup = (itm as any).makeup;
     if (rawMakeup && typeof rawMakeup === "string" && rawMakeup.trim().length > 0) {
@@ -289,14 +318,14 @@ export const BarcodeStickerModal: React.FC<BarcodeStickerModalProps> = ({
                 {item.glassType || (item as any).description || "GLASS SPECIFICATION"}
               </div>
 
-              {/* Line 4: Process Routing */}
+              {/* Line 4: Process Routing (Exact Physical Sticker Route Match) */}
               <div className="text-black font-bold text-[10px] tracking-tight">
-                {formatRoute(item.processRoute)}
+                {getDisplayRoute(item)}
               </div>
 
               {/* Line 5: Glass Code */}
               <div className="text-black font-black text-[10.5px] tracking-tight">
-                GLASS CODE; {item.glassCode || item.itemCode || `GL ${item.posNo || 1}`}
+                Glass Code:{item.glassCode || item.itemCode || `GL ${item.posNo || 1}`}
               </div>
 
               {/* Lines 6, 7, 8: Physical Glass Makeup Structure (Outer Pane, Spacer/Interlayer, Inner Pane) */}
