@@ -1,5 +1,4 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
-import ReactDOM from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { GlassItem, ProductionStage, PIMaster } from "@shared/api";
 import { Button } from "@/components/ui/button";
@@ -71,9 +70,6 @@ import {
 import { toast } from "sonner";
 import {
   exportStageWipToExcel,
-  exportStageHistoryToExcel,
-  exportSelectedItemsToExcel,
-  exportPartialDispatchNoteToExcel,
 } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
 
@@ -194,10 +190,6 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const [lastClickedSheetIndex, setLastClickedSheetIndex] = useState<number | null>(null);
   const sheetDropdownRef = useRef<HTMLDivElement>(null);
   const sheetScrollContainerRef = useRef<HTMLDivElement>(null);
-  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-  const exportBtnRef = useRef<HTMLButtonElement>(null);
-  const [exportMenuPos, setExportMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [rangeFromInput, setRangeFromInput] = useState<string>("1");
   const [rangeToInput, setRangeToInput] = useState<string>("10");
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
@@ -751,17 +743,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         setIsSheetDropdownOpen(false);
         setIsDraggingSheets(false);
       }
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
-        setIsExportMenuOpen(false);
-      }
     };
-    if (isSheetDropdownOpen || isExportMenuOpen) {
+    if (isSheetDropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [isSheetDropdownOpen, isExportMenuOpen]);
+  }, [isSheetDropdownOpen]);
 
 
   // Reset batch drilldown, sheet selection, and search when stage changes
@@ -948,7 +937,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 onClick: () => onNavigateTab("dispatched-history"),
               }
             : undefined,
-          duration: 6000,
+          duration: 2500,
         }
       );
 
@@ -1972,6 +1961,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     return filteredRows.filter((r) => selectedSheetRackNos.includes(r.item.rackNo || "1"));
   }, [filteredRows, isAllSheetsSelected, selectedSheetRackNos]);
 
+  // One-click direct export to Excel without dropdown menus
+  const handleDirectExportExcel = () => {
+    const exportItems = selectedRowIds.length > 0
+      ? stageRows.filter((r) => selectedRowIds.includes(r.id)).map((r) => r.item)
+      : displayedRows.map((r) => r.item);
+    exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`, pis);
+  };
+
   // ponytail: Handle drag selection from grip handle only
   const handleSheetGripMouseDown = (index: number, rackNo: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -2257,7 +2254,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       toast.success(
         remainingPieces > 0
           ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advanced to ${destination} (${remainingPieces} pcs remaining in ${stage}).`
-          : `Scanned & Completed piece (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`
+          : `Scanned & Completed piece (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`,
+        { id: "stage-advance" }
       );
       await completeStage(scanRow.allSerials, 1, false, true);
     } else {
@@ -2314,7 +2312,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         if (data.skippedCount > 0) {
           toast.warning(`Advanced ${data.items.length} item(s). ${data.skippedCount} skipped.`);
         } else {
-          toast.success(data.message || `Advanced ${data.items.length} item(s) from ${stage}!`);
+          toast.success(data.message || `Advanced ${data.items.length} item(s) from ${stage}!`, { id: "stage-advance" });
         }
       }
       onRefresh();
@@ -3509,119 +3507,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 </Button>
               )}
 
-              {/* EXPORT EXCEL DROPDOWN BUTTON (Header Position) */}
-              <div className="relative inline-block text-left shrink-0" ref={exportMenuRef}>
-                <Button
-                  ref={exportBtnRef}
-                  type="button"
-                  size="sm"
-                  onClick={() => {
-                    const willOpen = !isExportMenuOpen;
-                    if (willOpen && exportBtnRef.current) {
-                      const rect = exportBtnRef.current.getBoundingClientRect();
-                      setExportMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
-                    }
-                    setIsExportMenuOpen(willOpen);
-                  }}
-                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>Export Excel</span>
-                  <ChevronDown className={`w-3 h-3 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
-                </Button>
-
-                {isExportMenuOpen && exportMenuPos && ReactDOM.createPortal(
-                  <div
-                    style={{ position: "fixed", top: exportMenuPos.top, right: exportMenuPos.right, zIndex: 9999 }}
-                    className="w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in zoom-in-95"
-                  >
-                    <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                      Export Excel Options ({stage})
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsExportMenuOpen(false);
-                        const exportItems = displayedRows.map((r) => r.item);
-                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`, pis);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2 cursor-pointer"
-                    >
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <div>
-                        <div>Export Current Stage WIP ({displayedRows.length} Items)</div>
-                        <div className="text-[10px] text-slate-400 font-normal">Active table queue & details</div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setIsExportMenuOpen(false);
-                        try {
-                          toast.info(`Fetching completed ${stage} stage logs...`);
-                          const res = await fetch("/api/reports");
-                          const data = await res.json();
-                          exportStageHistoryToExcel(stage, data.history || [], items, pis);
-                        } catch {
-                          toast.error("Failed to fetch stage completion history.");
-                        }
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50 hover:text-blue-900 transition-colors flex items-center gap-2 cursor-pointer"
-                    >
-                      <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                      <div>
-                        <div>Export Stage Completion Log</div>
-                        <div className="text-[10px] text-slate-400 font-normal">Audit history of completed scans</div>
-                      </div>
-                    </button>
-
-                    {selectedRowIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsExportMenuOpen(false);
-                          const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item), undefined, pis);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2 cursor-pointer"
-                      >
-                        <CheckSquare className="w-4 h-4 text-[#1680f5] shrink-0" />
-                        <div>
-                          <div>Export Selected Rows ({selectedRowIds.length})</div>
-                          <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
-                        </div>
-                      </button>
-                    )}
-
-                    {stage === "Finished" && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsExportMenuOpen(false);
-                          const targetItems = selectedRowIds.length > 0
-                            ? stageRows.filter((r) => selectedRowIds.includes(r.id)).map((r) => r.item)
-                            : displayedRows.map((r) => r.item);
-
-                          const parentPI = pis.find((p) => p.id === targetItems[0]?.piId || p.piNumber === targetItems[0]?.piNumber);
-                          exportPartialDispatchNoteToExcel(parentPI, targetItems);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-emerald-950 bg-emerald-50 hover:bg-emerald-100 transition-colors flex items-center gap-2 border border-emerald-200 cursor-pointer"
-                      >
-                        <Truck className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <div>
-                          <div>Export Partial Delivery Note (.xlsx)</div>
-                          <div className="text-[10px] text-emerald-700 font-medium">
-                            {selectedRowIds.length > 0 ? `${selectedRowIds.length} items selected for shipment` : "Full warehouse delivery note"}
-                          </div>
-                        </div>
-                      </button>
-                    )}
-                  </div>,
-                  document.body
-                )}
-              </div>
+              {/* DIRECT EXPORT EXCEL BUTTON (Header Position) */}
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleDirectExportExcel}
+                className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer shrink-0"
+                title={`Export ${stage} stage items to Excel`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Export Excel</span>
+              </Button>
 
               {stage === "Finished" && (
                 <Button
@@ -3916,83 +3812,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                   : `${selectedSheetRackNos.length} of ${sheetGroups.length} Sheets`}
               </div>
 
-              {/* EXPORT EXCEL DROPDOWN BUTTON IN TOP BAR */}
-              <div className="relative inline-block text-left" ref={exportMenuRef}>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => setIsExportMenuOpen((prev) => !prev)}
-                  className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-8 px-3 gap-1.5 rounded-xl shadow-lg transition-all"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>Export Excel</span>
-                  <ChevronDown className={`w-3 h-3 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
-                </Button>
-
-                {isExportMenuOpen && (
-                  <div className="absolute right-0 mt-1.5 w-64 bg-white border-2 border-emerald-300 rounded-2xl shadow-2xl z-50 p-2 space-y-1 animate-in fade-in zoom-in-95">
-                    <div className="px-2.5 py-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                      Export Excel Options ({stage})
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsExportMenuOpen(false);
-                        const exportItems = displayedRows.map((r) => r.item);
-                        exportStageWipToExcel(stage, exportItems, `${stage}_Stage_Queue`, pis);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 transition-colors flex items-center gap-2"
-                    >
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <div>
-                        <div>Export Current Stage WIP ({displayedRows.length} Items)</div>
-                        <div className="text-[10px] text-slate-400 font-normal">Active table queue & details</div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setIsExportMenuOpen(false);
-                        try {
-                          toast.info(`Fetching completed ${stage} stage logs...`);
-                          const res = await fetch("/api/reports");
-                          const data = await res.json();
-                          exportStageHistoryToExcel(stage, data.history || [], items, pis);
-                        } catch {
-                          toast.error("Failed to fetch stage completion history.");
-                        }
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50 hover:text-blue-900 transition-colors flex items-center gap-2"
-                    >
-                      <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                      <div>
-                        <div>Export Stage Completion Log</div>
-                        <div className="text-[10px] text-slate-400 font-normal">Audit history of completed scans</div>
-                      </div>
-                    </button>
-
-                    {selectedRowIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsExportMenuOpen(false);
-                          const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                          exportSelectedItemsToExcel(stage, selectedRows.map((r) => r.item), undefined, pis);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-800 hover:bg-blue-50/50 hover:text-purple-900 transition-colors flex items-center gap-2"
-                      >
-                        <CheckSquare className="w-4 h-4 text-[#1680f5] shrink-0" />
-                        <div>
-                          <div>Export Selected Rows ({selectedRowIds.length})</div>
-                          <div className="text-[10px] text-slate-400 font-normal">Only items checked in table</div>
-                        </div>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              {/* DIRECT EXPORT EXCEL BUTTON IN TOP BAR */}
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleDirectExportExcel}
+                className="bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white font-extrabold text-xs h-8 px-3 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer shrink-0"
+                title={`Export ${stage} stage items to Excel`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Export Excel</span>
+              </Button>
             </div>
           </div>
         </div>

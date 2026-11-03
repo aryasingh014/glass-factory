@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { 
-  Settings, Users, Shield, Bell, Plus, Edit2, Trash2, Save, X, Key, KeyRound,
+  Settings, Users, Shield, Bell, Plus, Edit2, Trash2, Save, X, Key, KeyRound, Copy,
   Mail, Lock, CheckCircle2, AlertCircle, RefreshCw, Check, Minus,
   Power, Smartphone, Laptop, Globe, ShieldCheck, UserCheck, Zap, Activity,
   Search, Filter, Scissors, Sparkles, Layers, Boxes, Box, PackageCheck,
@@ -52,6 +52,25 @@ export function SettingsView() {
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+  const [copiedPasswordId, setCopiedPasswordId] = useState<string | null>(null);
+
+  const handleCopyPassword = (userId: string, pass?: string) => {
+    if (!pass) {
+      toast.warning("No password stored yet for this account. Edit user to set a password.");
+      return;
+    }
+    navigator.clipboard.writeText(pass);
+    setCopiedPasswordId(userId);
+    toast.success("Password copied to clipboard!");
+    setTimeout(() => {
+      setCopiedPasswordId((cur) => (cur === userId ? null : cur));
+    }, 2000);
+  };
+
+  const toggleRevealPassword = (userId: string) => {
+    setRevealedPasswords((prev) => ({ ...prev, [userId]: !prev[userId] }));
+  };
 
   // Add/Edit Form fields
   const [formData, setFormData] = useState<{
@@ -650,9 +669,9 @@ export function SettingsView() {
 
       toast.success(data.message || `User '${formData.name}' created successfully!`);
       if (data.emailStatus?.sent) {
-        toast.success(data.emailStatus.message, { duration: 5000 });
+        toast.success(data.emailStatus.message, { duration: 2500 });
       } else if (data.emailStatus?.message) {
-        toast.info(data.emailStatus.message, { duration: 5000 });
+        toast.info(data.emailStatus.message, { duration: 2500 });
       }
       setIsAddUserOpen(false);
       setFormData({ username: "", name: "", email: "", role: "Operator", password: "", isActive: true, assignedStages: ["Cutting"] });
@@ -899,6 +918,7 @@ export function SettingsView() {
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[200px]">User / Identifier</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[100px]">Role</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[170px]">Assigned Stage(s)</th>
+                        <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">Password</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[90px]">Status</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] whitespace-nowrap min-w-[140px]">Last Login</th>
                         <th className="px-3 py-2 font-extrabold text-slate-500 uppercase tracking-wider text-[10px] text-right whitespace-nowrap min-w-[80px]">Actions</th>
@@ -907,7 +927,7 @@ export function SettingsView() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-xs font-medium">
+                          <td colSpan={7} className="px-3 py-6 text-center text-slate-400 text-xs font-medium">
                             No users match the search criteria.
                           </td>
                         </tr>
@@ -971,6 +991,35 @@ export function SettingsView() {
                                     <span className="text-[10px] text-slate-400 font-medium italic">All Stages</span>
                                   )}
                                 </div>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {u.plainPassword ? (
+                                  <div className="inline-flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100/90 border border-slate-200/90 rounded-lg px-2 py-1 transition-colors">
+                                    <span className="font-mono text-xs font-bold text-slate-800 tracking-wide select-all min-w-[70px]">
+                                      {revealedPasswords[u.id] ? u.plainPassword : "••••••••"}
+                                    </span>
+                                    <div className="flex items-center gap-0.5 border-l border-slate-200 pl-1 ml-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRevealPassword(u.id)}
+                                        className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-white transition-colors cursor-pointer"
+                                        title={revealedPasswords[u.id] ? "Hide password" : "Show password"}
+                                      >
+                                        {revealedPasswords[u.id] ? <EyeOff className="w-3.5 h-3.5 text-slate-600" /> : <Eye className="w-3.5 h-3.5 text-slate-400" />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopyPassword(u.id, u.plainPassword)}
+                                        className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white transition-colors cursor-pointer"
+                                        title="Copy password to give to user"
+                                      >
+                                        {copiedPasswordId === u.id ? <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" /> : <Copy className="w-3.5 h-3.5" />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 italic font-medium">••••••••</span>
+                                )}
                               </td>
                               <td className="px-3 py-2 whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1 text-[10.5px] font-bold text-slate-700 whitespace-nowrap">
@@ -1779,6 +1828,37 @@ export function SettingsView() {
                     <p className="text-[10.5px] text-amber-600 font-semibold">⚠️ No stage selected (User will have access to all stages).</p>
                   )}
                 </div>
+
+                {selectedUser.plainPassword && (
+                  <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-900 block">Current Stored Password</span>
+                      <span className="font-mono text-xs font-bold text-slate-900 tracking-wider">
+                        {showEditPassword ? selectedUser.plainPassword : "••••••••"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowEditPassword((prev) => !prev)}
+                        className="px-2 py-1 rounded-lg bg-white border border-blue-200 text-xs font-bold text-blue-700 hover:bg-blue-50 flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Toggle password view"
+                      >
+                        {showEditPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        <span>{showEditPassword ? "Hide" : "Show"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPassword(selectedUser.id, selectedUser.plainPassword)}
+                        className="px-2.5 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+                        title="Copy password to clipboard"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 block">

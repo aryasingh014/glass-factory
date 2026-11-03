@@ -564,10 +564,10 @@ export default function Index() {
             } else if (notif.type === "warning") {
               toast.warning(`${notif.title}: ${notif.message}`);
             } else if (notif.type === "success") {
-              const lastLocalTime = notif.serialNumber ? recentLocalScansRef.current.get(notif.serialNumber) : undefined;
-              const isRecentLocalAction = lastLocalTime && (Date.now() - lastLocalTime < 3500);
-              if (!isRecentLocalAction) {
-                toast.success(notif.message || notif.title);
+              // Routine stage advances already have direct on-screen feedback at the workstation.
+              // Keep them recorded in the notification drawer without spamming repetitive bottom toasts.
+              if (notif.title !== "Stage Advanced") {
+                toast.success(notif.message || notif.title, { id: notif.id });
               }
             }
           }
@@ -794,7 +794,7 @@ export default function Index() {
       if (res.ok) {
         scannerAudio.playSuccess();
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `Advanced POS ${item.posNo || item.itemCode} from ${currentStage} ➔ ${nextStage}!`);
+        toast.success(data.message || `Advanced POS ${item.posNo || item.itemCode} from ${currentStage} ➔ ${nextStage}!`, { id: "stage-advance" });
         fetchData(true);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -841,14 +841,14 @@ export default function Index() {
       // Handle duplicate scan in the same stage (all stickers have completed this stage)
       if (scanEval.status === "already_scanned") {
         scannerAudio.playWarning();
-        toast.warning(scanEval.message, { duration: 5500 });
+        toast.warning(scanEval.message);
         return;
       }
 
       // Handle wrong stage (upstream piece that hasn't reached this station yet)
       if (scanEval.status === "wrong_stage") {
         scannerAudio.playWarning();
-        toast.warning(scanEval.message, { duration: 5500 });
+        toast.warning(scanEval.message);
         return;
       }
 
@@ -887,7 +887,7 @@ export default function Index() {
             const data = await res.json();
             if (data.status === "already_scanned") {
               scannerAudio.playWarning();
-              toast.warning(data.message || `Sticker already scanned at ${currentWorkstationStage}!`, { duration: 5500 });
+              toast.warning(data.message || `Sticker already scanned at ${currentWorkstationStage}!`);
               return;
             }
             matchedItem = data.item;
@@ -910,8 +910,7 @@ export default function Index() {
         setScanModalOpen(true);
         if (!currentWorkstationStage) {
           toast.info(
-            `📍 POS ${matchedItem.posNo || matchedItem.itemCode} is currently at ${matchedItem.currentStage}. Open the ${matchedItem.currentStage} workstation tab to scan & advance.`,
-            { duration: 5500 }
+            `📍 POS ${matchedItem.posNo || matchedItem.itemCode} is currently at ${matchedItem.currentStage}. Open the ${matchedItem.currentStage} workstation tab to scan & advance.`
           );
         }
         return;
@@ -1015,8 +1014,7 @@ export default function Index() {
             const isColour = getItemFinish(matchedItem) === "Colour";
             const neededFinish = isColour ? "Clear" : "Colour";
             toast.warning(
-              `⚠️ Cannot advance from Pairing: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane to be cut in Cutting Workstation. Both panes must be in Pairing Buffer before advancing to ${nextStage}.`,
-              { duration: 6500 }
+              `⚠️ Cannot advance from Pairing: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane to be cut in Cutting Workstation. Both panes must be in Pairing Buffer before advancing to ${nextStage}.`
             );
             return;
           }
@@ -1040,8 +1038,7 @@ export default function Index() {
           if (!partnerInDgu) {
             scannerAudio.playWarning();
             toast.warning(
-              `⚠️ Cannot complete DGU: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is missing its assembled partner pane in DGU Assembly. Both Colour + Clear panes must be present before completing to Finished.`,
-              { duration: 6500 }
+              `⚠️ Cannot complete DGU: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is missing its assembled partner pane in DGU Assembly. Both Colour + Clear panes must be present before completing to Finished.`
             );
             return;
           }
@@ -1081,7 +1078,8 @@ export default function Index() {
           if (partnerToPair) {
             scannerAudio.playPairSuccess();
             toast.success(
-              `✨ Paired & Advanced POS ${matchedItem.posNo || matchedItem.itemCode} from Pairing ➔ ${nextStage}!`
+              `✨ Paired & Advanced POS ${matchedItem.posNo || matchedItem.itemCode} from Pairing ➔ ${nextStage}!`,
+              { id: "stage-advance" }
             );
           } else {
             if (matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem)) {
@@ -1096,7 +1094,8 @@ export default function Index() {
                 : `➔ ${nextStage}`;
             const posDisplay = matchedItem.posNo ? `POS ${matchedItem.posNo}` : (matchedItem.itemCode || "Glass Unit");
             toast.success(
-              `🔫 Advanced ${posDisplay}${stickerLabel} from ${currentStage} ${nextStageLabel}!${remainingNote}`
+              `🔫 Advanced ${posDisplay}${stickerLabel} from ${currentStage} ${nextStageLabel}!${remainingNote}`,
+              { id: "stage-advance" }
             );
           }
           fetchData(true);

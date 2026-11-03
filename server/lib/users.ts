@@ -15,6 +15,7 @@ export interface User {
   customPermissions?: Partial<RolePermissions>;
   passwordHash: string;
   salt: string;
+  plainPassword?: string;
   isActive: boolean;
   createdAt: string;
   lastLoginAt?: string;
@@ -112,6 +113,7 @@ const DEFAULT_USERS: User[] = [
     assignedStages: ["Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished", "Dispatched"],
     passwordHash: adminCreds.hash,
     salt: adminCreds.salt,
+    plainPassword: "Admin@123",
     isActive: true,
     createdAt: new Date().toISOString(),
   },
@@ -141,6 +143,9 @@ export function loadUsersFromDisk(): void {
               cleaned.push(def);
             } else if (def.assignedStages && (!exists.assignedStages || exists.assignedStages.length === 0)) {
               exists.assignedStages = def.assignedStages;
+            }
+            if (!exists.plainPassword && def.plainPassword) {
+              exists.plainPassword = def.plainPassword;
             }
           }
           usersDatabase.splice(0, usersDatabase.length, ...cleaned);
@@ -315,6 +320,7 @@ export function getAllUserRecords(): UserRecord[] {
     role: u.role,
     assignedStages: u.assignedStages,
     customPermissions: u.customPermissions,
+    plainPassword: u.plainPassword,
     isActive: u.isActive !== false,
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt,
@@ -358,6 +364,7 @@ export function createUser(data: {
     assignedStages: data.assignedStages,
     passwordHash: hash,
     salt,
+    plainPassword: (data.password || "Password@123").trim(),
     isActive: true,
     createdAt: new Date().toISOString(),
   };
@@ -375,6 +382,7 @@ export function createUser(data: {
     name: newUser.name,
     role: newUser.role,
     assignedStages: newUser.assignedStages,
+    plainPassword: newUser.plainPassword,
     isActive: newUser.isActive,
     createdAt: newUser.createdAt,
   };
@@ -430,6 +438,7 @@ export function updateUser(
     const { hash, salt } = hashPassword(updates.password.trim());
     user.passwordHash = hash;
     user.salt = salt;
+    user.plainPassword = updates.password.trim();
   }
 
   saveUsersToDisk();
@@ -442,6 +451,7 @@ export function updateUser(
     role: user.role,
     assignedStages: user.assignedStages,
     customPermissions: user.customPermissions,
+    plainPassword: user.plainPassword,
     isActive: user.isActive,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
@@ -793,6 +803,7 @@ export function verifyAndResetPassword(
   const { hash, salt } = hashPassword(newPassword.trim());
   user.passwordHash = hash;
   user.salt = salt;
+  user.plainPassword = newPassword.trim();
   saveUsersToDisk();
 
   // Clean up used OTP

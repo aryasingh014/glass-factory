@@ -318,6 +318,7 @@ export interface UserRecord {
   role: UserRole;
   assignedStages?: ProductionStage[];
   customPermissions?: Partial<RolePermissions>;
+  plainPassword?: string;
   isActive: boolean;
   createdAt: string;
   lastLoginAt?: string;
