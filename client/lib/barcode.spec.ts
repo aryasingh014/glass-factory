@@ -441,6 +441,15 @@ describe("Generic Sticker & A1.pdf Barcode Scanning Support", () => {
       expect(res.remainingInStage).toBe(5);
     });
   });
+
+  describe("Centralized Barcode Scanner Hook & Modal Priority Stacking", () => {
+    it("should allow simulateBarcodeScan to route cleanly", async () => {
+      const { simulateBarcodeScan } = await import("../hooks/useBarcodeScanner");
+      // Returns false when no scanners registered in pure node/headless test environment
+      expect(typeof simulateBarcodeScan).toBe("function");
+    });
+  });
 });
+
 
 

@@ -832,8 +832,20 @@ export default function Index() {
         setLastScannedCode(cleanCode);
         setLastScannedTime(new Date());
 
-        // If Scan Lookup Modal or any dialog/modal is already open, do not trigger background global scan
-        if (scanModalOpen || (typeof document !== "undefined" && Boolean(document.querySelector('[role="dialog"]')))) return;
+        // If user was previewing/printing a barcode sticker, close the sticker preview and proceed with the scan
+        if (stickerModalOpen) {
+          setStickerModalOpen(false);
+          setSelectedStickerItem(null);
+        } else if (
+          scanModalOpen ||
+          manualPIModalOpen ||
+          piModalOpen ||
+          uploadedPdfsModalOpen ||
+          rejectReworkModalOpen ||
+          (typeof document !== "undefined" && Boolean(document.querySelector('[role="dialog"]')))
+        ) {
+          return;
+        }
 
         // 1. Evaluate scan status against active production state & current workstation stage
         const scanEval = evaluateScanStatus(items, cleanCode, currentWorkstationStage);
@@ -1118,6 +1130,7 @@ export default function Index() {
 
   useBarcodeScanner({
     enabled: true,
+    priority: 0,
     duplicateCooldownMs: 1800,
     onScan: handleGlobalScan,
   });
