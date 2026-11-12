@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { isGlassTypeColour, isDlguGlass, isDguGlass, isLaminatedGlass } from "@shared/api";
-export { isDlguGlass, isDguGlass, isLaminatedGlass };
+import { isGlassTypeColour, isDlguGlass, isDguGlass, isLaminatedGlass, isStickerPairMatch, isDlguStickerPairMatch, isDguStickerPairMatch, isLaminationStickerPairMatch } from "@shared/api";
+export { isDlguGlass, isDguGlass, isLaminatedGlass, isStickerPairMatch, isDlguStickerPairMatch, isDguStickerPairMatch, isLaminationStickerPairMatch };
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -416,130 +416,6 @@ export function getDistinctPiDisplay(
   return null;
 }
 
-/**
- * Validates if two glass sticker panes
- * form an exact 1+1 DGU, Lamination, or DLGU Pair based on factory sticker specifications:
- * - Order No / PI #
- * - OB #
- * - POS # (Position Number)
- * - QTY (Line Qty / Total Position Quantity)
- * - Width (mm)
- * - Height (mm)
- * - Client Name
- * - Project Name
- * - Glass Code
- */
-export function isDguStickerPairMatch(col: any, clr: any): boolean {
-  if (!col || !clr) return false;
-
-  const isColDlgu = isDlguGlass(col) || col.glassCategory === "DLGU";
-  const isClrDlgu = isDlguGlass(clr) || clr.glassCategory === "DLGU";
-  const isColLam = isLaminatedGlass(col) || col.glassCategory === "Lamination";
-  const isClrLam = isLaminatedGlass(clr) || clr.glassCategory === "Lamination";
-  if ((isColDlgu && !isClrDlgu) || (!isColDlgu && isClrDlgu)) return false;
-
-  if (isColDlgu && isClrDlgu) {
-    const isColLamDone = Array.isArray(col.completedStages) && col.completedStages.includes("Lamination");
-    const isClrLamDone = Array.isArray(clr.completedStages) && clr.completedStages.includes("Lamination");
-    const isColInLam = col.currentStage === "Lamination";
-    const isClrInLam = clr.currentStage === "Lamination";
-
-    const isColColour = col.colorOrClear === "Colour" || String(col.category || "").toLowerCase().includes("colour");
-    const isClrColour = clr.colorOrClear === "Colour" || String(clr.category || "").toLowerCase().includes("colour");
-
-    // If one is Colour and one is Clear: Phase 2 (DGU Pairing)
-    if (isColColour !== isClrColour) {
-      const clrPane = isColColour ? clr : col;
-      const isClrReady =
-        clrPane.dlguPhase === "DguPairing" ||
-        isColLamDone ||
-        isClrLamDone ||
-        (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
-      if (!isClrReady) return false;
-    } else {
-      // Phase 1: Lamination Pairing (e.g. 6mm Clear + 13.52mm Clear Laminated sticker, or 2 identical clear lites)
-      // Distinct physical panes (serials/IDs checked) are valid pairing candidates.
-    }
-  } else {
-    // STRICT RULE: Category must match (DGU only matches DGU, Lamination only matches Lamination)
-    const colCat = col.glassCategory || (isDguGlass(col) ? "DGU" : isLaminatedGlass(col) ? "Lamination" : null);
-    const clrCat = clr.glassCategory || (isDguGlass(clr) ? "DGU" : isLaminatedGlass(clr) ? "Lamination" : null);
-    if (colCat && clrCat && colCat !== clrCat) return false;
-
-    const isColDgu = isDguGlass(col) || col.glassCategory === "DGU";
-    const isClrDgu = isDguGlass(clr) || clr.glassCategory === "DGU";
-
-    if ((isColDgu && isClrLam) || (isColLam && isClrDgu)) return false;
-
-    // STRICT RULE: DGU requires 1 Colour + 1 Clear pane when finishes are specified
-    if (isColDgu && isClrDgu && col.colorOrClear && clr.colorOrClear) {
-      const isColColour = col.colorOrClear === "Colour" || col.colorOrClear === "Color" || String(col.category || "").toLowerCase().includes("colour");
-      const isClrColour = clr.colorOrClear === "Colour" || clr.colorOrClear === "Color" || String(clr.category || "").toLowerCase().includes("colour");
-      if (isColColour === isClrColour) return false;
-    }
-
-    // STRICT RULE: Lamination requires 2 distinct lites (cannot pair exact same barcode/id)
-    if (isColLam && isClrLam) {
-      const barcodeA = String(col.barcode || "");
-      const barcodeB = String(clr.barcode || "");
-      if (barcodeA && barcodeB && barcodeA === barcodeB) return false;
-    }
-  }
-
-  // 1. Order No / PI # must match
-  if (col.orderNo && clr.orderNo) {
-    if (String(col.orderNo).trim().toLowerCase() !== String(clr.orderNo).trim().toLowerCase()) return false;
-  } else if (col.obNo && clr.obNo) {
-    if (String(col.obNo).trim().toLowerCase() !== String(clr.obNo).trim().toLowerCase()) return false;
-  } else {
-    const colOrder = String(col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    const clrOrder = String(clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
-  }
-
-  // 2. POS # (Position Number) must match
-  const colPos = String(col.posNo || "").trim();
-  const clrPos = String(clr.posNo || "").trim();
-  if (colPos && clrPos && colPos !== clrPos) return false;
-
-  // 3. Exact Dimensions (Width & Height in mm) must match
-  const colW = Number(col.width);
-  const clrW = Number(clr.width);
-  const colH = Number(col.height);
-  const clrH = Number(clr.height);
-  if (isNaN(colW) || isNaN(clrW) || colW !== clrW) return false;
-  if (isNaN(colH) || isNaN(clrH) || colH !== clrH) return false;
-
-  // 4. OB # must match (when present on both)
-  const colOb = String(col.obNo || "").trim().toLowerCase();
-  const clrOb = String(clr.obNo || "").trim().toLowerCase();
-  if (colOb && clrOb && colOb !== clrOb) return false;
-
-  // 5. Line QTY / Order Qty must match (when present on both)
-  const colQty = col.lineQty || col.totalQty;
-  const clrQty = clr.lineQty || clr.totalQty;
-  if (colQty && clrQty && colQty !== clrQty) return false;
-
-  // 6. Glass Code must match for pure DGU (when present on both)
-  if (!isColDlgu && !isColLam) {
-    const colCode = String(col.glassCode || col.itemCode || "").trim().toLowerCase();
-    const clrCode = String(clr.glassCode || clr.itemCode || "").trim().toLowerCase();
-    if (colCode && clrCode && colCode !== clrCode) return false;
-  }
-
-  // 7. Client Name must match (when present on both)
-  const colCust = String(col.customerName || "").trim().toLowerCase();
-  const clrCust = String(clr.customerName || "").trim().toLowerCase();
-  if (colCust && clrCust && colCust !== clrCust) return false;
-
-  // 8. Project Name must match (when present on both)
-  const colProj = String(col.projectName || "").trim().toLowerCase();
-  const clrProj = String(clr.projectName || "").trim().toLowerCase();
-  if (colProj && clrProj && colProj !== clrProj) return false;
-
-  return true;
-}
-
 export function isDispatchedItem(item: any): boolean {
   if (!item) return false;
   return (
@@ -589,5 +465,302 @@ export function calculateAssembledUnits(itemList: any[]): { totalUnits: number; 
     totalSqm: parseFloat((dguSqmTotal + nonDguSqmTotal).toFixed(2)),
   };
 }
+
+export type RackLetter = "Rack A" | "Rack B" | "Rack C" | "Rack D" | "Rack E";
+
+/**
+ * Parses raw rack string into Rack letter ('Rack A' to 'Rack E') and slot number.
+ */
+export function parseRackInfo(raw?: string): { rackNo: RackLetter | "Direct Finish"; rackSlot: string } {
+  if (!raw) return { rackNo: "Rack A", rackSlot: "" };
+  const str = String(raw).trim();
+  const up = str.toUpperCase();
+  if (up === "DIRECT FINISH" || up === "DIRECT" || up === "NO RACK") {
+    return { rackNo: "Direct Finish", rackSlot: "—" };
+  }
+  let rackNo: RackLetter = "Rack A";
+  if (
+    up.startsWith("RACK E") ||
+    up.startsWith("RACK-E") ||
+    up.startsWith("E -") ||
+    up.startsWith("E-") ||
+    up.includes("RACK-05") ||
+    up.includes("RACK 05") ||
+    up === "E"
+  ) {
+    rackNo = "Rack E";
+  } else if (
+    up.startsWith("RACK D") ||
+    up.startsWith("RACK-D") ||
+    up.startsWith("D -") ||
+    up.startsWith("D-") ||
+    up.includes("RACK-04") ||
+    up.includes("RACK 04") ||
+    up === "D"
+  ) {
+    rackNo = "Rack D";
+  } else if (
+    up.startsWith("RACK C") ||
+    up.startsWith("RACK-C") ||
+    up.startsWith("C -") ||
+    up.startsWith("C-") ||
+    up.includes("RACK-03") ||
+    up.includes("RACK 03") ||
+    up === "C"
+  ) {
+    rackNo = "Rack C";
+  } else if (
+    up.startsWith("RACK B") ||
+    up.startsWith("RACK-B") ||
+    up.startsWith("B -") ||
+    up.startsWith("B-") ||
+    up.includes("RACK-02") ||
+    up.includes("RACK 02") ||
+    up === "B"
+  ) {
+    rackNo = "Rack B";
+  } else {
+    rackNo = "Rack A";
+  }
+
+  let rackSlot = "";
+  if (str.includes("-")) {
+    rackSlot = str.substring(str.indexOf("-") + 1).trim();
+  }
+  return { rackNo, rackSlot };
+}
+
+/**
+ * Exact unit row counting logic matching PackingListView:
+ * - DLGU: 1 Colour + 2 Clears = 1 Unit
+ * - Pure DGU: 1 Colour + 1 Clear = 1 Unit
+ * - Orphaned Clears: 1 Unit each
+ * - Lami: 1 Pane = 1 Unit
+ */
+export function countPackingUnits(itemList: any[], type: "IGU" | "LAMI"): number {
+  if (!Array.isArray(itemList) || itemList.length === 0) return 0;
+  if (type === "LAMI") {
+    const usedIds = new Set<string>();
+    let unitCount = 0;
+    const sorted = [...itemList].sort((a, b) => {
+      const numA = parseInt(String(a.serialNumber || "").replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(String(b.serialNumber || "").replace(/\D/g, ""), 10) || 0;
+      return numA - numB;
+    });
+
+    for (let i = 0; i < sorted.length; i++) {
+      const paneA = sorted[i];
+      if (usedIds.has(paneA.id)) continue;
+
+      const lamPairIdA = (paneA as any).lamPairId;
+      let partner = lamPairIdA
+        ? sorted.find(
+            (pB) => !usedIds.has(pB.id) && pB.id !== paneA.id && (pB as any).lamPairId === lamPairIdA
+          )
+        : null;
+
+      if (!partner) {
+        partner =
+          sorted.find(
+            (pB) =>
+              !usedIds.has(pB.id) &&
+              pB.id !== paneA.id &&
+              isLaminationStickerPairMatch(paneA, pB)
+          ) || null;
+      }
+
+      if (!partner) {
+        partner =
+          sorted.find(
+            (pB) =>
+              !usedIds.has(pB.id) &&
+              pB.id !== paneA.id &&
+              String(pB.posNo || "").trim() === String(paneA.posNo || "").trim() &&
+              Number(pB.width) === Number(paneA.width) &&
+              Number(pB.height) === Number(paneA.height) &&
+              (pB.glassType !== paneA.glassType || pB.piNumber !== paneA.piNumber || pB.batchNo !== paneA.batchNo)
+          ) || null;
+      }
+
+      usedIds.add(paneA.id);
+      if (partner) usedIds.add(partner.id);
+      unitCount++;
+    }
+
+    return unitCount || Math.ceil(itemList.length / 2);
+  }
+
+  const usedClearIds = new Set<string>();
+  const dlguItems = itemList.filter((i) => isDlguGlass(i) || i.glassCategory === "DLGU");
+  const pureDguItems = itemList.filter((i) => !isDlguGlass(i) && i.glassCategory !== "DLGU");
+
+  const dlguColour = dlguItems.filter((i) => getItemFinish(i) === "Colour");
+  const dlguClear = dlguItems.filter((i) => getItemFinish(i) !== "Colour");
+
+  dlguColour.forEach((col) => {
+    const colDguPairId = col.dguPairId;
+    let matchingClears = colDguPairId
+      ? dlguClear.filter(
+          (clr) => !usedClearIds.has(clr.id) && clr.dguPairId === colDguPairId
+        ).slice(0, 2)
+      : [];
+
+    if (matchingClears.length === 0) {
+      matchingClears = dlguClear.filter(
+        (clr) =>
+          !usedClearIds.has(clr.id) &&
+          ((clr.posNo && col.posNo && String(clr.posNo).trim() === String(col.posNo).trim()) ||
+            (clr.width === col.width && clr.height === col.height))
+      ).slice(0, 2);
+    }
+    matchingClears.forEach((clr) => usedClearIds.add(clr.id));
+  });
+
+  const dguColour = pureDguItems.filter((i) => getItemFinish(i) === "Colour");
+  const dguClear = pureDguItems.filter((i) => getItemFinish(i) !== "Colour");
+
+  dguColour.forEach((col) => {
+    const colDguPairId = col.dguPairId;
+    let partner = colDguPairId
+      ? dguClear.find(
+          (clr) => !usedClearIds.has(clr.id) && clr.dguPairId === colDguPairId
+        )
+      : null;
+
+    if (!partner) {
+      partner = dguClear.find(
+        (clr) =>
+          !usedClearIds.has(clr.id) &&
+          ((clr.posNo && col.posNo && String(clr.posNo).trim() === String(col.posNo).trim()) ||
+            (clr.width === col.width && clr.height === col.height))
+      );
+    }
+
+    if (partner) usedClearIds.add(partner.id);
+  });
+
+  const allClears = [...dlguClear, ...dguClear];
+  let orphanedClearCount = 0;
+  allClears.forEach((clr) => {
+    if (!usedClearIds.has(clr.id)) {
+      orphanedClearCount++;
+    }
+  });
+
+  return dlguColour.length + dguColour.length + orphanedClearCount;
+}
+
+/**
+ * Checks whether an item is currently pending or racked in Packing List IGU
+ */
+export function isPackingIguItem(i: any): boolean {
+  if (!i || isDispatchedItem(i) || i.status === "Rejected") return false;
+  const isIgu = isDguGlass(i) || isDlguGlass(i) || i.glassCategory === "DGU" || i.glassCategory === "DLGU" || Boolean(i.dguPairId);
+  if (!isIgu) return false;
+  if (i.sentToFinished) return false;
+  if (i.packingRackNo && parseRackInfo(i.packingRackNo).rackNo === "Direct Finish") return false;
+  if (i.packingRackNo) return true;
+  const sentFromUpstream =
+    i.currentStage === "Finished" ||
+    (Array.isArray(i.completedStages) && (i.completedStages.includes("DGU") || i.completedStages.includes("Finished")));
+  return Boolean(sentFromUpstream);
+}
+
+/**
+ * Checks whether an item is currently pending or racked in Auto Clave (Lami Packing List)
+ */
+export function isPackingLamiItem(i: any): boolean {
+  if (!i || isDispatchedItem(i) || i.status === "Rejected") return false;
+  const isIgu = isDguGlass(i) || isDlguGlass(i) || i.glassCategory === "DGU" || i.glassCategory === "DLGU" || Boolean(i.dguPairId);
+  if (isIgu) return false;
+  const isLami = isLaminatedGlass(i) || i.glassCategory === "Laminated" || i.glassCategory === "Lamination";
+  if (!isLami) return false;
+  if (i.sentToFinished) return false;
+  if (i.packingRackNo && parseRackInfo(i.packingRackNo).rackNo === "Direct Finish") return false;
+  if (i.packingRackNo) return true;
+  const sentFromUpstream =
+    i.currentStage === "Finished" ||
+    (Array.isArray(i.completedStages) && (i.completedStages.includes("Lamination") || i.completedStages.includes("Finished")));
+  return Boolean(sentFromUpstream);
+}
+
+/**
+ * Checks whether an item is currently in either packing stage (IGU or Lami)
+ */
+export function isItemInPackingStage(i: any): boolean {
+  return isPackingIguItem(i) || isPackingLamiItem(i);
+}
+
+/**
+ * Checks whether an item has genuinely completed packing and is now in Finished Glass stage
+ */
+export function isItemInFinishedStage(i: any): boolean {
+  if (!i || isDispatchedItem(i) || i.status === "Rejected") return false;
+  if (isItemInPackingStage(i)) return false;
+  return (
+    Boolean(i.sentToFinished) ||
+    parseRackInfo(i.packingRackNo).rackNo === "Direct Finish" ||
+    (i.currentStage === "Finished" && Boolean(i.packingRackNo) && !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i))
+  );
+}
+
+const VALID_RACK_LETTERS: RackLetter[] = ["Rack A", "Rack B", "Rack C", "Rack D", "Rack E"];
+const DEFAULT_RACK_SLOTS: Record<RackLetter, string> = {
+  "Rack A": "25",
+  "Rack B": "50",
+  "Rack C": "1",
+  "Rack D": "1",
+  "Rack E": "1",
+};
+
+/**
+ * Resolves the currently allocated target rack + slot from localStorage
+ * (shared between Packing List - IGU, Auto Clave, DGU, and Lamination).
+ */
+export function getAllocatedPackingRack(): string {
+  try {
+    const savedLetter = (localStorage.getItem("sejal_finished_packing_rack_letter") || "").trim();
+    const letter: RackLetter = VALID_RACK_LETTERS.includes(savedLetter as RackLetter)
+      ? (savedLetter as RackLetter)
+      : "Rack A";
+
+    const rawSlotForLetter = localStorage.getItem(`sejal_finished_packing_rack_slot_${letter}`);
+    if (rawSlotForLetter !== null) {
+      const slot = rawSlotForLetter.trim();
+      return slot ? `${letter} - ${slot}` : letter;
+    }
+
+    const combined = (localStorage.getItem("sejal_finished_packing_rack") || "").trim();
+    if (combined && (!savedLetter || combined.toLowerCase().startsWith(letter.toLowerCase()))) {
+      return combined;
+    }
+
+    const legacySlot = (localStorage.getItem("sejal_finished_packing_rack_slot") || "").trim();
+    const slot = legacySlot || DEFAULT_RACK_SLOTS[letter];
+    return slot ? `${letter} - ${slot}` : letter;
+  } catch {
+    return "Rack A - 25";
+  }
+}
+
+/**
+ * Resolves the active packing shift ("Day" | "Night") from localStorage or Dubai time.
+ */
+export function getActivePackingShift(): "Day" | "Night" {
+  try {
+    const saved = localStorage.getItem("sejal_finished_packing_shift");
+    if (saved === "Day" || saved === "Night") return saved;
+    if (saved === "A") return "Day";
+    if (saved === "B") return "Night";
+    const dubaiHour = parseInt(
+      new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dubai", hour: "2-digit", hour12: false }).format(new Date()),
+      10
+    );
+    return dubaiHour >= 7 && dubaiHour < 19 ? "Day" : "Night";
+  } catch {
+    return "Day";
+  }
+}
+
 
 

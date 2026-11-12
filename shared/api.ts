@@ -1,4 +1,5 @@
 export type ProductionStage = "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished" | "Dispatched";
+export type WorkstationAssignment = ProductionStage | "Packing IGU" | "Auto Clave";
 export type ProcessRoute = "Route A (Cut -> Finish)" | "Route B (Cut -> Pairing -> DGU -> Finish)" | "Route C (Cut -> Lam -> Finish)" | "Route D (Cut -> Pairing -> Lam -> Pairing -> DGU -> Finish)" | "Route E (Cut -> Polish -> Pairing -> DGU -> Finish)";
 export type GlassStatus = "Pending" | "In Production" | "Completed" | "Rejected" | "Reworking";
 export type UserRole = "Admin" | "Operator" | "Supervisor";
@@ -56,6 +57,14 @@ export interface GlassItem {
   delDate?: string;     // e.g. 07/08/2026 (Sticker delivery date)
   optDate?: string;     // e.g. 08/08/2026 (Sticker optimization date)
   makeup?: string;      // e.g. 8MM SYP YBE 0140N / 16MM BLACK SPACER / 13.52MM CLEAR LAMINATED
+  packingRackNo?: string;  // e.g. "RACK A" or "RACK B" assigned at Finished Glass stage
+  packingShift?: "Day" | "Night" | "A" | "B"; // Day or Night shift
+  packedAt?: string;       // ISO timestamp when packed on rack
+  packedBy?: string;       // Operator who packed onto rack
+  packingStatus?: "Pending" | "Packed" | "Dispatched";
+  sentToFinished?: boolean; // Set when unit on rack is advanced/sent to Finished stage
+  sentToFinishedAt?: string;
+  sentToFinishedBy?: string;
   createdAt?: string;
   updatedAt: string;
 }
@@ -168,6 +177,8 @@ export interface DashboardStats {
   pendingPairing?: number;
   pendingLamination: number;
   pendingDGU: number;
+  pendingPackingIGU?: number;
+  pendingPackingLami?: number;
   finishedItems: number;
   dispatchedItems?: number;
   rejectItems: number;
@@ -316,7 +327,7 @@ export interface UserRecord {
   email: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   customPermissions?: Partial<RolePermissions>;
   plainPassword?: string;
   isActive: boolean;
@@ -330,7 +341,7 @@ export interface UserSession {
   username: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   ip: string;
   userAgent?: string;
   loginTime: string;
@@ -457,4 +468,209 @@ export function isBatchUploadHistory(h: { serialNumber?: string; action?: string
   const sn = (h.serialNumber || "").toUpperCase();
   const act = (h.action || "").toLowerCase();
   return sn.startsWith("BATCH-") || act.includes("batch upload") || act.includes("batch uploaded");
+}
+
+export function isDlguStickerPairMatch(paneA: any, paneB: any): boolean {
+  if (!paneA || !paneB) return false;
+  if ((paneA.serialNumber && paneB.serialNumber && paneA.serialNumber === paneB.serialNumber) || (paneA.id && paneB.id && paneA.id === paneB.id)) return false;
+
+  const isALamDone = Array.isArray(paneA.completedStages) && paneA.completedStages.includes("Lamination");
+  const isBLamDone = Array.isArray(paneB.completedStages) && paneB.completedStages.includes("Lamination");
+
+  const isAColour = paneA.colorOrClear === "Colour" || String(paneA.category || "").toLowerCase().includes("colour");
+  const isBColour = paneB.colorOrClear === "Colour" || String(paneB.category || "").toLowerCase().includes("colour");
+
+  // If one is Colour and one is Clear: Phase 2 (DGU Pairing)
+  if (isAColour !== isBColour) {
+    const clrPane = isAColour ? paneB : paneA;
+    const isClrReady =
+      clrPane.dlguPhase === "DguPairing" ||
+      isALamDone ||
+      isBLamDone ||
+      (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
+    if (!isClrReady) return false;
+  }
+
+  // 1. Order No / PI # must match
+  if (paneA.orderNo && paneB.orderNo) {
+    if (String(paneA.orderNo).trim().toLowerCase() !== String(paneB.orderNo).trim().toLowerCase()) return false;
+  } else if (paneA.obNo && paneB.obNo) {
+    if (String(paneA.obNo).trim().toLowerCase() !== String(paneB.obNo).trim().toLowerCase()) return false;
+  } else {
+    const colOrder = String(paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const clrOrder = String(paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  }
+
+  // 2. POS # (Position Number) must match
+  const colPos = String(paneA.posNo || "").trim();
+  const clrPos = String(paneB.posNo || "").trim();
+  if (colPos && clrPos && colPos !== clrPos) return false;
+
+  // 3. Exact Dimensions (Width & Height in mm) must match
+  const colW = Number(paneA.width);
+  const clrW = Number(paneB.width);
+  const colH = Number(paneA.height);
+  const clrH = Number(paneB.height);
+  if (isNaN(colW) || isNaN(clrW) || colW !== clrW) return false;
+  if (isNaN(colH) || isNaN(clrH) || colH !== clrH) return false;
+
+  // 4. OB # must match (when present on both)
+  const colOb = String(paneA.obNo || "").trim().toLowerCase();
+  const clrOb = String(paneB.obNo || "").trim().toLowerCase();
+  if (colOb && clrOb && colOb !== clrOb) return false;
+
+  // 5. Line QTY / Order Qty must match (when present on both)
+  const colQty = paneA.lineQty || paneA.totalQty;
+  const clrQty = paneB.lineQty || paneB.totalQty;
+  if (colQty && clrQty && colQty !== clrQty) return false;
+
+  return true;
+}
+
+export function isStickerPairMatch(col: any, clr: any): boolean {
+  if (!col || !clr) return false;
+  if ((col.serialNumber && clr.serialNumber && col.serialNumber === clr.serialNumber) || (col.id && clr.id && col.id === clr.id)) return false;
+
+  if (isDlguGlass(col) && isDlguGlass(clr)) {
+    return isDlguStickerPairMatch(col, clr);
+  }
+
+  // STRICT RULE: Both panes must strictly be DGU glass and NEVER Lamination glass
+  if (!isDguGlass(col) || !isDguGlass(clr)) return false;
+  if (isLaminatedGlass(col) || isLaminatedGlass(clr)) return false;
+  if (col.glassCategory === "Lamination" || clr.glassCategory === "Lamination") return false;
+
+  // STRICT RULE: DGU requires 1 Colour outer lite + 1 Clear inner lite
+  const isColFinishColour = (col.colorOrClear === "Colour" || col.colorOrClear === "Color" || String(col.category || "").toLowerCase().includes("colour"));
+  const isClrFinishColour = (clr.colorOrClear === "Colour" || clr.colorOrClear === "Color" || String(clr.category || "").toLowerCase().includes("colour"));
+  if (isColFinishColour === isClrFinishColour) return false;
+
+  // 1. Order No / PI # must match
+  if (col.orderNo && clr.orderNo) {
+    if (String(col.orderNo).trim().toLowerCase() !== String(clr.orderNo).trim().toLowerCase()) return false;
+  } else if (col.obNo && clr.obNo) {
+    if (String(col.obNo).trim().toLowerCase() !== String(clr.obNo).trim().toLowerCase()) return false;
+  } else {
+    const colOrder = String(col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const clrOrder = String(clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
+  }
+
+  // 2. POS # (Position Number) must match
+  const colPos = String(col.posNo || "").trim();
+  const clrPos = String(clr.posNo || "").trim();
+  if (colPos && clrPos && colPos !== clrPos) return false;
+
+  // 3. Exact Dimensions (Width & Height in mm) must match
+  const colW = Number(col.width);
+  const clrW = Number(clr.width);
+  const colH = Number(col.height);
+  const clrH = Number(clr.height);
+  if (isNaN(colW) || isNaN(clrW) || colW !== clrW) return false;
+  if (isNaN(colH) || isNaN(clrH) || colH !== clrH) return false;
+
+  // 4. OB # must match (when present on both)
+  const colOb = String(col.obNo || "").trim().toLowerCase();
+  const clrOb = String(clr.obNo || "").trim().toLowerCase();
+  if (colOb && clrOb && colOb !== clrOb) return false;
+
+  // 5. Line QTY / Order Qty must match (when present on both)
+  const colQty = col.lineQty || col.totalQty;
+  const clrQty = clr.lineQty || clr.totalQty;
+  if (colQty && clrQty && colQty !== clrQty) return false;
+
+  // 6. Glass Code must match (when present on both)
+  const colCode = String(col.glassCode || col.itemCode || "").trim().toLowerCase();
+  const clrCode = String(clr.glassCode || clr.itemCode || "").trim().toLowerCase();
+  if (colCode && clrCode && colCode !== clrCode) return false;
+
+  // 7. Client Name must match (when present on both)
+  const colCust = String(col.customerName || "").trim().toLowerCase();
+  const clrCust = String(clr.customerName || "").trim().toLowerCase();
+  if (colCust && clrCust && colCust !== clrCust) return false;
+
+  // 8. Project Name must match (when present on both)
+  const colProj = String(col.projectName || "").trim().toLowerCase();
+  const clrProj = String(clr.projectName || "").trim().toLowerCase();
+  if (colProj && clrProj && colProj !== clrProj) return false;
+
+  return true;
+}
+
+export const isDguStickerPairMatch = isStickerPairMatch;
+
+export function isLaminationStickerPairMatch(paneA: any, paneB: any): boolean {
+  if (!paneA || !paneB) return false;
+  if (
+    (paneA.serialNumber && paneB.serialNumber && paneA.serialNumber === paneB.serialNumber) ||
+    (paneA.id && paneB.id && paneA.id === paneB.id)
+  ) {
+    return false;
+  }
+
+  // 0. If already stamped with matching lamPairId, they are definitely a pair
+  const lamA = (paneA as any).lamPairId;
+  const lamB = (paneB as any).lamPairId;
+  if (lamA && lamB && lamA === lamB) return true;
+
+  // STRICT RULE: Both panes must strictly be Lamination glass and NEVER DGU glass
+  if (!isLaminatedGlass(paneA) || !isLaminatedGlass(paneB)) return false;
+  if (isDguGlass(paneA) || isDguGlass(paneB)) return false;
+  if (paneA.glassCategory === "DGU" || paneB.glassCategory === "DGU") return false;
+
+  // STRICT RULE: Two identical panes of the SAME lite/batch cannot pair with each other!
+  const barcodeA = String(paneA.barcode || "");
+  const barcodeB = String(paneB.barcode || "");
+  if (barcodeA && barcodeB && barcodeA === barcodeB) return false;
+
+  const piA = String(paneA.piId || paneA.piNumber || "");
+  const piB = String(paneB.piId || paneB.piNumber || "");
+  const thickA = (paneA.thickness || paneA.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
+  const thickB = (paneB.thickness || paneB.glassType?.match(/^\d+(\.\d+)?\s*MM/i)?.[0] || "").toUpperCase().replace(/\s+/g, "");
+
+  // If from the same PI/Batch with the same thickness and same glassType, they are the same single lite and cannot pair!
+  if (piA && piB && piA === piB && thickA && thickB && thickA === thickB && paneA.glassType === paneB.glassType) {
+    return false;
+  }
+
+  // Must have a distinguishing lite characteristic (different thickness, different batch/PI, or different glassType)
+  const isDifferentLite = (thickA && thickB && thickA !== thickB) || (piA && piB && piA !== piB) || (paneA.glassType !== paneB.glassType);
+  if (!isDifferentLite) return false;
+
+  // 1. Order No / PI # must match
+  if (paneA.orderNo && paneB.orderNo) {
+    if (String(paneA.orderNo).trim().toLowerCase() !== String(paneB.orderNo).trim().toLowerCase()) return false;
+  } else if (paneA.obNo && paneB.obNo) {
+    if (String(paneA.obNo).trim().toLowerCase() !== String(paneB.obNo).trim().toLowerCase()) return false;
+  } else {
+    const orderA = String(paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    const orderB = String(paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
+    if (orderA && orderB && orderA !== orderB) return false;
+  }
+
+  // 2. POS # (Position Number) must match
+  const posA = String(paneA.posNo || "").trim();
+  const posB = String(paneB.posNo || "").trim();
+  if (posA && posB && posA !== posB) return false;
+
+  // 3. Exact Dimensions (Width & Height in mm) must match
+  const wA = Number(paneA.width);
+  const wB = Number(paneB.width);
+  const hA = Number(paneA.height);
+  const hB = Number(paneB.height);
+  if (isNaN(wA) || isNaN(wB) || Math.abs(wA - wB) > 1) return false;
+  if (isNaN(hA) || isNaN(hB) || Math.abs(hA - hB) > 1) return false;
+
+  // 4. OB # must match (when present on both)
+  const obA = String(paneA.obNo || "").trim().toLowerCase();
+  const obB = String(paneB.obNo || "").trim().toLowerCase();
+  if (obA && obB && obA !== obB) return false;
+
+  // 5. Line QTY / Order Qty must match (when present on both)
+  const qtyA = paneA.lineQty || paneA.totalQty;
+  const qtyB = paneB.lineQty || paneB.totalQty;
+  if (qtyA && qtyB && qtyA !== qtyB) return false;
+
+  return true;
 }

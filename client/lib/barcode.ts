@@ -537,8 +537,8 @@ export function evaluateScanStatus(
       const currentLoc = firstItem.currentStage || "Next Stage";
 
       const message = totalCount > 1
-        ? `⚠️ Sticker already scanned! All ${totalCount} stickers for ${posLabel} have already completed ${preferredStage} (currently at ${currentLoc}).`
-        : `⚠️ Sticker already scanned! ${posLabel} (${firstItem.serialNumber}) has already completed ${preferredStage} (currently at ${currentLoc}).`;
+        ? `Sticker already scanned! All ${totalCount} stickers for ${posLabel} have already completed ${preferredStage} (currently at ${currentLoc}).`
+        : `Sticker already scanned! ${posLabel} (${firstItem.serialNumber}) has already completed ${preferredStage} (currently at ${currentLoc}).`;
 
       return {
         status: "already_scanned",
@@ -567,7 +567,7 @@ export function evaluateScanStatus(
         totalMatching: matches.length,
         remainingInStage: 0,
         stageName: preferredStage,
-        message: `⚠️ Sticker cannot be scanned at ${preferredStage} yet. ${posLabel} is currently at ${firstUpstream.currentStage}.`,
+        message: `Sticker cannot be scanned at ${preferredStage} yet. ${posLabel} is currently at ${firstUpstream.currentStage}.`,
       };
     }
   }
@@ -618,7 +618,7 @@ export function evaluateScanStatus(
     completedStageItems: matches,
     totalMatching: matches.length,
     remainingInStage: 0,
-    message: `ℹ️ All stickers for ${posLabel} have already completed all production stages.`,
+    message: `All stickers for ${posLabel} have already completed all production stages.`,
   };
 }
 

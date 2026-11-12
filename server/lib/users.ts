@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage } from "@shared/api";
+import { UserRole, UserRecord, UserSession, RolePermissions, WorkstationAssignment } from "@shared/api";
 import { logger } from "./logger";
 import { loadUsersFromMongo, saveUsersToMongo } from "./mongodb";
 
@@ -11,7 +11,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   customPermissions?: Partial<RolePermissions>;
   passwordHash: string;
   salt: string;
@@ -27,7 +27,7 @@ export interface UserProfile {
   email: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   customPermissions?: Partial<RolePermissions>;
 }
 
@@ -327,16 +327,65 @@ export function getAllUserRecords(): UserRecord[] {
   }));
 }
 
+const STAGE_TO_MODULE_MAP: Record<string, string> = {
+  cutting: "cutting",
+  polishing: "polishing",
+  pairing: "pairing",
+  dgu: "dgu",
+  "packing igu": "packing-igu",
+  "packing-igu": "packing-igu",
+  lamination: "lamination",
+  "auto clave": "packing-lami",
+  "packing-lami": "packing-lami",
+  finished: "finished",
+  dispatched: "finished",
+  dispatch: "finished",
+};
+
+const MODULE_TO_STAGE_MAP: Record<string, WorkstationAssignment> = {
+  cutting: "Cutting",
+  polishing: "Polishing",
+  pairing: "Pairing",
+  dgu: "DGU",
+  "packing-igu": "Packing IGU",
+  lamination: "Lamination",
+  "packing-lami": "Auto Clave",
+  finished: "Finished",
+};
+
+function deriveModulesFromStages(stages: WorkstationAssignment[]): string[] {
+  const modules = new Set<string>();
+  for (const stg of stages) {
+    const mod = STAGE_TO_MODULE_MAP[String(stg).toLowerCase()];
+    if (mod) modules.add(mod);
+  }
+  return Array.from(modules);
+}
+
 export function getUserEffectivePermissions(user: User): RolePermissions {
   const base = ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.Operator;
-  if (!user.customPermissions) return base;
+  const hasAssignedStages = user.role === "Operator" && Array.isArray(user.assignedStages) && user.assignedStages.length > 0;
+  const derivedModules = hasAssignedStages ? deriveModulesFromStages(user.assignedStages!) : base.allowedModules;
+  const derivedCanDispatch = hasAssignedStages
+    ? user.assignedStages!.some((s) => ["finished", "dispatched", "dispatch"].includes(String(s).toLowerCase()))
+    : base.canDispatch;
+
+  if (!user.customPermissions) {
+    if (!hasAssignedStages) return base;
+    return {
+      ...base,
+      allowedModules: derivedModules,
+      canDispatch: derivedCanDispatch,
+    };
+  }
 
   return {
     ...base,
+    canDispatch: derivedCanDispatch,
     ...user.customPermissions,
     allowedModules: Array.isArray(user.customPermissions.allowedModules)
       ? user.customPermissions.allowedModules
-      : base.allowedModules,
+      : derivedModules,
     role: user.role,
   };
 }
@@ -346,7 +395,7 @@ export function createUser(data: {
   email: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   password: string;
 }): UserRecord {
   const existing = findUserByUsernameOrEmail(data.username) || findUserByUsernameOrEmail(data.email);
@@ -395,7 +444,7 @@ export function updateUser(
     email: string;
     name: string;
     role: UserRole;
-    assignedStages?: ProductionStage[];
+    assignedStages?: WorkstationAssignment[];
     customPermissions?: Partial<RolePermissions> | null;
     password?: string;
     isActive?: boolean;
@@ -463,16 +512,20 @@ export function updateUserPermission(userId: string, key: string, value: boolean
   if (!user) throw new Error("User not found.");
 
   const base = ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.Operator;
+  const initialModules =
+    user.role === "Operator" && Array.isArray(user.assignedStages) && user.assignedStages.length > 0
+      ? deriveModulesFromStages(user.assignedStages)
+      : [...(base.allowedModules || [])];
   if (!user.customPermissions) {
     user.customPermissions = {
       ...base,
-      allowedModules: [...(base.allowedModules || [])],
+      allowedModules: initialModules,
     };
   }
 
   if (key.startsWith("module:")) {
     const moduleName = key.replace("module:", "");
-    const current = user.customPermissions.allowedModules ? [...user.customPermissions.allowedModules] : [...(base.allowedModules || [])];
+    const current = user.customPermissions.allowedModules ? [...user.customPermissions.allowedModules] : [...initialModules];
     if (value && !current.includes(moduleName)) {
       current.push(moduleName);
     } else if (!value) {
@@ -482,16 +535,8 @@ export function updateUserPermission(userId: string, key: string, value: boolean
     user.customPermissions.allowedModules = current;
 
     // Sync assignedStages if a workstation module is toggled
-    const stageMap: Record<string, ProductionStage> = {
-      cutting: "Cutting",
-      polishing: "Polishing",
-      pairing: "Pairing",
-      dgu: "DGU",
-      lamination: "Lamination",
-      finished: "Finished",
-    };
-    if (stageMap[moduleName]) {
-      const stg = stageMap[moduleName];
+    if (MODULE_TO_STAGE_MAP[moduleName]) {
+      const stg = MODULE_TO_STAGE_MAP[moduleName];
       const stages = new Set(user.assignedStages || []);
       if (value) stages.add(stg);
       else stages.delete(stg);
@@ -612,7 +657,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       "polishing",
       "pairing",
       "dgu",
+      "packing-igu",
       "lamination",
+      "packing-lami",
       "finished",
       "reports",
       "analytics",
@@ -647,7 +694,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       "polishing",
       "pairing",
       "dgu",
+      "packing-igu",
       "lamination",
+      "packing-lami",
       "finished",
       "reports",
       "analytics",
@@ -671,13 +720,15 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
   },
   Operator: {
     role: "Operator",
-    description: "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, Lamination, Finished Warehouse).",
+    description: "Workstation scan-and-advance access for factory floor lines (Cutting, Polishing, Pairing, DGU, IGU Packing List, Lamination, Auto Clave Packing List, Finished Warehouse).",
     allowedModules: [
       "cutting",
       "polishing",
       "pairing",
       "dgu",
+      "packing-igu",
       "lamination",
+      "packing-lami",
       "finished",
     ],
     canUploadPI: false,

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { generateToken, generateUserToken, verifyToken } from "./auth";
-import { 
-  findUserByUsernameOrEmail, 
-  validatePassword, 
-  hashPassword, 
-  getUserProfile, 
+import {
+  findUserByUsernameOrEmail,
+  validatePassword,
+  hashPassword,
+  getUserProfile,
   usersDatabase,
   createUser,
   updateUser,
@@ -168,10 +168,10 @@ describe("Authentication & RBAC System", () => {
 
   describe("Granular User Permission Customization (User A vs. User B)", () => {
     it("should allow giving custom permissions to User A while User B retains default role permissions", async () => {
-      const { 
-        getUserEffectivePermissions, 
-        updateUserPermission, 
-        resetUserPermissions 
+      const {
+        getUserEffectivePermissions,
+        updateUserPermission,
+        resetUserPermissions
       } = await import("./users");
 
       const existingA = findUserByUsernameOrEmail("operator_a");
@@ -283,7 +283,7 @@ describe("Authentication & RBAC System", () => {
         status: (s: number) => { meStatus = s; return meRes; },
         json: (b: any) => { meBody = b; return meRes; },
       };
-      handleGetCurrentUser(meReq, meRes, () => {});
+      handleGetCurrentUser(meReq, meRes, () => { });
       expect(meStatus).toBe(401);
 
       // 7. /api/auth/heartbeat must reject with 401
@@ -295,7 +295,7 @@ describe("Authentication & RBAC System", () => {
         status: (s: number) => { hbStatus = s; return hbRes; },
         json: () => hbRes,
       };
-      handleHeartbeat(hbReq, hbRes, () => {});
+      handleHeartbeat(hbReq, hbRes, () => { });
       expect(hbStatus).toBe(401);
 
       // 8. Attempting to log in with deleted credentials must reject
@@ -309,9 +309,37 @@ describe("Authentication & RBAC System", () => {
         status: (s: number) => { loginStatus = s; return loginRes; },
         json: (b: any) => { loginBody = b; return loginRes; },
       };
-      handleLogin(loginReq, loginRes, () => {});
+      handleLogin(loginReq, loginRes, () => { });
       expect(loginStatus).toBe(401);
       expect(loginBody.error).toContain("Invalid username or password");
+    });
+
+    it("supports assigning Packing IGU and Auto Clave modules when creating operators and syncing RBAC toggles", async () => {
+      const { getUserEffectivePermissions, updateUserPermission } = await import("./users");
+      const existing = findUserByUsernameOrEmail("packing_only_op");
+      if (existing) deleteUser(existing.id);
+
+      const created = createUser({
+        username: "packing_only_op",
+        email: "packing_only_op@sejalglass.com",
+        name: "Packing Operator",
+        role: "Operator",
+        assignedStages: ["Packing IGU", "Auto Clave"],
+        password: "Password@123",
+      });
+
+      try {
+        const stored = findUserByUsernameOrEmail("packing_only_op")!;
+        const perms = getUserEffectivePermissions(stored);
+        expect(perms.allowedModules).toEqual(["packing-igu", "packing-lami"]);
+        expect(perms.canDispatch).toBe(false);
+
+        const toggled = updateUserPermission(created.id, "module:packing-lami", false);
+        expect(toggled.permissions.allowedModules).toEqual(["packing-igu"]);
+        expect(toggled.user.assignedStages).toEqual(["Packing IGU"]);
+      } finally {
+        deleteUser(created.id);
+      }
     });
   });
 });

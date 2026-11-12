@@ -43,6 +43,8 @@ let resetTimer: ReturnType<typeof setTimeout> | null = null;
 let globalLastScannedBarcode = "";
 let globalLastScanEpoch = 0;
 let isGlobalListenerAttached = false;
+let focusedInputElement: (HTMLInputElement | HTMLTextAreaElement) | null = null;
+let valueBeforeBurst = "";
 
 function handleGlobalKeyDown(e: KeyboardEvent) {
   if (registeredScanners.length === 0) return;
@@ -52,6 +54,7 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     target &&
     (target.tagName === "INPUT" ||
       target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
       target.getAttribute("contenteditable") === "true");
 
   const now = performance.now();
@@ -68,6 +71,8 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     globalBuffer = "";
     isScannerBurst = false;
     charCountBurst = 0;
+    focusedInputElement = null;
+    valueBeforeBurst = "";
   }, 600);
 
   // Handle Enter or Tab (Scanner gun termination suffix)
@@ -80,6 +85,8 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     globalBuffer = "";
     isScannerBurst = false;
     charCountBurst = 0;
+    focusedInputElement = null;
+    valueBeforeBurst = "";
 
     if (!candidate) return;
 
@@ -136,16 +143,61 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     : 200;
 
   if (elapsed > maxInterval) {
-    // Gap too long: start fresh buffer with this character
+    // Gap too long: human typing or first character of a scanner burst
     globalBuffer = e.key;
     isScannerBurst = false;
     charCountBurst = 1;
+    if (isInputElement && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+      focusedInputElement = target;
+      // Record input value before this potential scanner burst begins
+      valueBeforeBurst = target.value;
+    } else {
+      focusedInputElement = null;
+      valueBeforeBurst = "";
+    }
   } else {
     // Fast burst typical of hardware barcode scanners (<100ms/char)
     globalBuffer += e.key;
     charCountBurst += 1;
     if (charCountBurst >= 2) {
       isScannerBurst = true;
+
+      // If an input was focused when the scanner gun fired, protect it from barcode pollution
+      if (
+        focusedInputElement &&
+        (focusedInputElement instanceof HTMLInputElement || focusedInputElement instanceof HTMLTextAreaElement)
+      ) {
+        const allowBarcode = focusedInputElement.getAttribute("data-allow-barcode-scan") === "true";
+        if (!allowBarcode) {
+          // Immediately revert any first character that leaked into the input using React-safe setter
+          try {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              "value"
+            )?.set;
+            if (nativeSetter) {
+              nativeSetter.call(focusedInputElement, valueBeforeBurst);
+            } else {
+              focusedInputElement.value = valueBeforeBurst;
+            }
+            focusedInputElement.dispatchEvent(new Event("input", { bubbles: true }));
+          } catch {
+            focusedInputElement.value = valueBeforeBurst;
+          }
+          focusedInputElement.blur();
+        }
+      }
+    }
+
+    if (isInputElement && isScannerBurst) {
+      const allowBarcode = target?.getAttribute("data-allow-barcode-scan") === "true";
+      if (!allowBarcode) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (target instanceof HTMLSelectElement) {
+          target.blur();
+        }
+      }
     }
   }
 }

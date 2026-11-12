@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { UserRole, RolePermissions, ProductionStage } from "@shared/api";
+import { UserRole, RolePermissions, WorkstationAssignment } from "@shared/api";
 import { toast } from "sonner";
 
 export interface UserProfile {
@@ -8,7 +8,7 @@ export interface UserProfile {
   email: string;
   name: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
 }
 
 interface AuthContextType {
@@ -328,6 +328,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (target === "pairing") {
         return Boolean(permissions.allowedModules?.includes("pairing") || permissions.allowedModules?.includes("cutting"));
       }
+      if (target === "packing-igu") {
+        return Boolean(permissions.allowedModules?.includes("packing-igu"));
+      }
+      if (target === "packing-lami") {
+        return Boolean(permissions.allowedModules?.includes("packing-lami"));
+      }
       if (["cutting", "polishing", "dgu", "lamination"].includes(target)) {
         return Boolean(permissions.allowedModules?.includes(target));
       }
@@ -352,8 +358,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             allowedTabs.add("pairing");
             allowedTabs.add("cutting"); // Pairing can be accessed under cutting or standalone
           }
-          else if (s === "dgu") allowedTabs.add("dgu");
-          else if (s === "lamination") allowedTabs.add("lamination");
+          else if (s === "dgu") {
+            allowedTabs.add("dgu");
+          }
+          else if (s === "packing igu" || s === "packing-igu") {
+            allowedTabs.add("packing-igu");
+          }
+          else if (s === "lamination") {
+            allowedTabs.add("lamination");
+          }
+          else if (s === "auto clave" || s === "packing-lami") {
+            allowedTabs.add("packing-lami");
+          }
           else if (s === "finished" || s === "dispatched" || s === "dispatch") {
             allowedTabs.add("finished");
             allowedTabs.add("dispatched-history");
@@ -361,7 +377,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return allowedTabs.has(target);
       }
-      return ["cutting", "polishing", "pairing", "dgu", "lamination", "finished"].includes(target);
+      return ["cutting", "polishing", "pairing", "dgu", "packing-igu", "lamination", "packing-lami", "finished"].includes(target);
     }
     return false;
   }, [isAdmin, isSupervisor, isOperator, user, permissions]);

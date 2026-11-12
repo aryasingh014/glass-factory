@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { UserRole, ProductionStage } from "@shared/api";
+import { UserRole, WorkstationAssignment } from "@shared/api";
 import { env } from "./env";
 import { UserProfile, isUserRevoked } from "./users";
 
@@ -11,7 +11,7 @@ export interface AuthPayload {
   email?: string;
   name?: string;
   role: UserRole;
-  assignedStages?: ProductionStage[];
+  assignedStages?: WorkstationAssignment[];
   sessionId?: string;
   exp: number;
 }

@@ -15,6 +15,8 @@ import {
   COLOURED_COATED_GLASS_REGEX,
   isGlassTypeColour,
   isBatchUploadHistory,
+  isStickerPairMatch,
+  isDlguStickerPairMatch,
 } from "../../shared/api";
 import { piDatabase, glassItemsDatabase, productionHistoryDatabase, rejectDatabase, reworkDatabase, notificationsDatabase, createAndBroadcastNotification, saveDatabaseToDisk, loadDatabaseFromDisk } from "./pi";
 import { logger } from "../lib/logger";
@@ -355,7 +357,7 @@ export const handleScanLookup: RequestHandler = (req, res) => {
         const history = productionHistoryDatabase.filter((h) => h.serialNumber === first.serialNumber || h.barcode === first.barcode);
         res.json({
           status: "already_scanned",
-          message: `⚠️ Sticker already scanned! All ${alreadyPast.length} sticker(s) for ${posLabel} have already completed ${effectiveStage} (currently at ${first.currentStage || "Next Stage"}).`,
+          message: `Sticker already scanned! All ${alreadyPast.length} sticker(s) for ${posLabel} have already completed ${effectiveStage} (currently at ${first.currentStage || "Next Stage"}).`,
           item: first,
           items: alreadyPast,
           pi,
@@ -380,11 +382,145 @@ export const handleScanLookup: RequestHandler = (req, res) => {
   res.json({ item, pi, history, status: "ready" });
 };
 
+export const isUndispatched = (i: any) =>
+  !i.isDispatched &&
+  i.currentStage !== "Dispatched" &&
+  !i.dispatchedAt;
+
+export function isDlguItem(item: any): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return true;
+  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
+  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
+  return (hasSpacer && hasLam) || str.includes("dlgu");
+}
+
+export function isDguItem(item: any): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return false;
+  if (item.glassCategory === "DGU") return true;
+  if (item.glassCategory === "Lamination") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("DGU") && !item.processRoute.includes("Lamination")) return true;
+    if (item.processRoute.includes("Lamination")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
+  return hasSpacer && !hasLam;
+}
+
+export function isLaminationItem(item: any): boolean {
+  if (!item) return false;
+  if (item.glassCategory === "DLGU") return false;
+  if (item.glassCategory === "Lamination") return true;
+  if (item.glassCategory === "DGU") return false;
+  if (Array.isArray(item.processRoute)) {
+    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return true;
+    if (item.processRoute.includes("DGU")) return false;
+  }
+  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
+  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
+  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
+  return hasLam && !hasSpacer;
+}
+
+export const isPackingIguServerItem = (i: any) => {
+  if (!isUndispatched(i) || i.status === "Rejected" || i.sentToFinished) return false;
+  const isIgu = isDguItem(i) || isDlguItem(i);
+  if (!isIgu) return false;
+  if (i.packingRackNo && String(i.packingRackNo).toLowerCase().includes("direct finish")) return false;
+  if (i.packingRackNo) return true;
+  const sentFromUpstream =
+    i.currentStage === "Finished" ||
+    (Array.isArray(i.completedStages) && (i.completedStages.includes("DGU") || i.completedStages.includes("Finished")));
+  return Boolean(sentFromUpstream);
+};
+
+export const isPackingLamiServerItem = (i: any) => {
+  if (!isUndispatched(i) || i.status === "Rejected" || i.sentToFinished) return false;
+  const isLami = isLaminationItem(i) && !isDguItem(i) && !isDlguItem(i);
+  if (!isLami) return false;
+  if (i.packingRackNo && String(i.packingRackNo).toLowerCase().includes("direct finish")) return false;
+  if (i.packingRackNo) return true;
+  const sentFromUpstream =
+    i.currentStage === "Finished" ||
+    (Array.isArray(i.completedStages) && (i.completedStages.includes("Lamination") || i.completedStages.includes("Finished")));
+  return Boolean(sentFromUpstream);
+};
+
+const normalizeRackNo = (rawRack: string): string => {
+  const cleanRack = String(rawRack || "").trim();
+  const upperRack = cleanRack.toUpperCase();
+  if (upperRack === "DIRECT" || upperRack === "DIRECT FINISH" || upperRack === "DIRECT-FINISH" || upperRack === "NO RACK" || upperRack === "UNASSIGNED") {
+    return "Direct Finish";
+  }
+  const letters = ["A", "B", "C", "D", "E"] as const;
+  for (let idx = 0; idx < letters.length; idx++) {
+    const L = letters[idx];
+    const numStr = `0${idx + 1}`;
+    if (upperRack === `RACK ${L}` || upperRack === `RACK-${numStr}` || upperRack === `RACK ${numStr}` || upperRack === L) {
+      return `Rack ${L}`;
+    }
+    if (
+      upperRack.startsWith(`RACK ${L} - `) ||
+      upperRack.startsWith(`RACK ${L}-`) ||
+      upperRack.startsWith(`RACK-${L}-`) ||
+      upperRack.startsWith(`${L} - `) ||
+      upperRack.startsWith(`${L}-`)
+    ) {
+      const slot = cleanRack.substring(cleanRack.indexOf("-") + 1).trim();
+      return slot ? `Rack ${L} - ${slot}` : `Rack ${L}`;
+    }
+  }
+  return cleanRack;
+};
+
+const applyFinishedRackAssignment = (
+  target: any,
+  assignedRack: string | undefined,
+  cleanOperator: string,
+  cleanShift: "Day" | "Night"
+) => {
+  if (assignedRack) {
+    const isDirectFinish = assignedRack === "Direct Finish";
+    target.packingRackNo = assignedRack;
+    target.packingStatus = "Packed";
+    target.packedAt = new Date().toISOString();
+    target.packedBy = cleanOperator;
+    target.shift = cleanShift;
+    target.sentToFinished = isDirectFinish;
+    if (isDirectFinish) {
+      target.sentToFinishedAt = new Date().toISOString();
+      target.sentToFinishedBy = cleanOperator;
+    } else {
+      delete target.sentToFinishedAt;
+      delete target.sentToFinishedBy;
+    }
+  } else {
+    delete target.packingRackNo;
+    delete target.packingStatus;
+    delete target.packedAt;
+    delete target.packedBy;
+    delete target.sentToFinished;
+    delete target.sentToFinishedAt;
+    delete target.sentToFinishedBy;
+  }
+};
+
 // Complete stage & advance to next stage in process route (Supports QTY-based piece-by-piece scanning)
 export const handleAdvanceStage: RequestHandler = (req, res) => {
-  const { serialNumbers, itemIds, stage, currentStage, advanceQty = 1, advanceAll = false, operator = "Operator", remarks = "Stage completed" } = req.body;
+  const { serialNumbers, itemIds, stage, currentStage, advanceQty = 1, advanceAll = false, operator = "Operator", remarks = "Stage completed", isHardwareScan, rackNo, shift } = req.body;
   const cleanOperator = sanitizeString(operator || "Operator", 100);
   const cleanRemarks = sanitizeString(remarks || "Stage completed", 500);
+  const cleanShift: "Day" | "Night" = shift === "Night" || shift === "B" ? "Night" : "Day";
+  const assignedRack = rackNo && String(rackNo).trim() ? normalizeRackNo(String(rackNo)) : undefined;
   const preferredStage = inferStageFromRequest(req, stage || currentStage, cleanOperator);
 
   const idList = Array.isArray(itemIds) ? itemIds.map((s) => String(s).trim()).filter(Boolean) : [];
@@ -453,6 +589,8 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         const stageMatch = findBestMatchingItem(glassItemsDatabase, rawVal, preferredStage);
         if (stageMatch && stageMatch.currentStage?.toLowerCase() === preferredStage.toLowerCase()) {
           item = stageMatch;
+        } else if (alreadyProcessedIds.has(item.id)) {
+          continue;
         } else {
           // Check if item has already completed preferredStage
           const normPref = preferredStage.trim().toLowerCase();
@@ -479,6 +617,10 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       continue;
     }
 
+    if (alreadyProcessedIds.has(item.id)) {
+      continue;
+    }
+
     // Guard: if preferredStage was provided and the resolved item is not in that stage, prevent advancing from the wrong stage
     if (preferredStage && item.currentStage?.toLowerCase() !== preferredStage.toLowerCase()) {
       const normPref = preferredStage.trim().toLowerCase();
@@ -500,10 +642,6 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         serialNumber: item.serialNumber,
         reason: `Item ${item.serialNumber} is currently at stage "${item.currentStage}" and cannot be scanned at "${preferredStage}".`,
       });
-      continue;
-    }
-
-    if (alreadyProcessedIds.has(item.id)) {
       continue;
     }
     if (item.status === "Rejected") {
@@ -713,13 +851,12 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       }
     }
 
-    const isDguStage = currentStage === "DGU";
     const currentQty = parseInt(String(item.qty || 1), 10) || 1;
-    const qtyToAdvance = (advanceAll || isDguStage) ? currentQty : Math.min(parseInt(String(advanceQty || 1), 10) || 1, currentQty);
+    const qtyToAdvance = advanceAll ? currentQty : Math.min(parseInt(String(advanceQty || 1), 10) || 1, currentQty);
 
     // QTY Decrement & Per-Piece Scan Logic:
-    // If the item has qty > 1 and we are scanning piece-by-piece (!advanceAll && !isDguStage)
-    if (currentQty > qtyToAdvance && !advanceAll && !isDguStage) {
+    // If the item has qty > 1 and we are scanning piece-by-piece (!advanceAll)
+    if (currentQty > qtyToAdvance && !advanceAll) {
       // 1. Reduce remaining quantity in current stage
       const remainingQty = currentQty - qtyToAdvance;
       item.qty = remainingQty;
@@ -739,6 +876,10 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         status: nextStage === "Finished" ? "Completed" : "In Production",
         updatedAt: new Date().toISOString(),
       };
+
+      if (nextStage === "Finished") {
+        applyFinishedRackAssignment(advancedItem, assignedRack, cleanOperator, cleanShift);
+      }
 
       // DGU Stage Rule: After cutting process, DGU glass quantity is reduced to actual DGU unit quantity (standard DGU only)
       const descLower = `${advancedItem.glassType || ""} ${advancedItem.glassCode || ""}`.toLowerCase();
@@ -798,8 +939,52 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
       if (nextStage === "Finished") {
         item.status = "Completed";
 
+        // Assign the allocated target rack directly when rackNo is provided (skipping pending rack queue).
+        applyFinishedRackAssignment(item, assignedRack, cleanOperator, cleanShift);
+
+        // If this item is part of a Lamination pair (lamPairId) and only a single piece was scanned,
+        // also advance its partner pane in Lamination onto the same allocated rack.
+        const isSingleTargetScan = (idList.length <= 1 && serialList.length <= 1) || Boolean((item as any).dguPairId) || Boolean((item as any).lamPairId);
+        if (isLaminationItem(item) && !isDguItem(item) && !isDlguItem(item) && (item as any).lamPairId && isSingleTargetScan) {
+          const itemLamPairId = (item as any).lamPairId;
+          const lamPartners = glassItemsDatabase.filter(
+            (other) =>
+              other.id !== item.id &&
+              (other as any).lamPairId === itemLamPairId &&
+              other.currentStage === "Lamination" &&
+              other.status !== "Completed" &&
+              other.status !== "Rejected" &&
+              !alreadyProcessedIds.has(other.id)
+          );
+          lamPartners.forEach((partner) => {
+            alreadyProcessedIds.add(partner.id);
+            partner.currentStage = "Finished";
+            partner.status = "Completed";
+            if (!partner.completedStages.includes("Lamination")) partner.completedStages.push("Lamination");
+            applyFinishedRackAssignment(partner, assignedRack, cleanOperator, cleanShift);
+            partner.updatedAt = new Date().toISOString();
+            updatedItems.push(partner);
+
+            productionHistoryDatabase.unshift({
+              id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              serialNumber: partner.serialNumber,
+              barcode: partner.barcode,
+              piNumber: partner.piNumber,
+              itemOrBatch: partner.serialNumber,
+              action: "Dispatched to Finished",
+              prevStatus: "Lamination",
+              newStatus: "Completed",
+              stage: "Lamination",
+              status: "Completed",
+              operator: cleanOperator,
+              user: cleanOperator,
+              timestamp: new Date().toISOString(),
+              remarks: `${cleanRemarks} (Lamination partner pane auto-advanced with #${item.serialNumber})`,
+            });
+          });
+        }
+
         // If this item is part of a DGU or DLGU unit, and only a single piece was scanned/submitted,
-        const isSingleTargetScan = (idList.length <= 1 && serialList.length <= 1) || Boolean((item as any).dguPairId);
         if ((item.glassCategory === "DLGU" || item.glassCategory === "DGU" || item.processRoute.includes("DGU")) && isSingleTargetScan) {
           const itemDguPairId = (item as any).dguPairId;
           const itemLamPairId = (item as any).lamPairId;
@@ -874,6 +1059,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
             partner.currentStage = "Finished";
             partner.status = "Completed";
             if (!partner.completedStages.includes("DGU")) partner.completedStages.push("DGU");
+            applyFinishedRackAssignment(partner, assignedRack, cleanOperator, cleanShift);
             partner.updatedAt = new Date().toISOString();
             updatedItems.push(partner);
 
@@ -950,11 +1136,12 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
         (i.sfoNo && (i.sfoNo === pi.piNumber || i.sfoNo === cleanPiNo))
     );
     if (piItems.length === 0) continue;
-    const completedCount = piItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected").length;
+    const isPackingServerItem = (i: any) => isPackingIguServerItem(i) || isPackingLamiServerItem(i);
+    const completedCount = piItems.filter((i) => (i.currentStage === "Finished" || i.currentStage === "Dispatched" || i.isDispatched || i.status === "Completed") && i.status !== "Rejected" && !isPackingServerItem(i)).length;
     pi.completedItemsCount = completedCount;
     if (completedCount >= piItems.length && piItems.length > 0) {
       pi.status = "Completed";
-    } else if (completedCount > 0 || piItems.some((i) => i.currentStage !== "Cutting" || i.completedStages?.length)) {
+    } else if (completedCount > 0 || piItems.some((i) => i.currentStage !== "Cutting" || i.completedStages?.length || isPackingServerItem(i))) {
       pi.status = "In Production";
     }
   }
@@ -981,97 +1168,112 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   const formatStageDisplay = (stg: string) => {
     if (!stg) return "";
     const s = stg.trim().toLowerCase();
-    if (s === "pairing") return "Glass Pairing Buffer";
-    if (s === "finished") return "Finished Warehouse";
-    if (s === "dgu") return "DGU Assembly Line";
-    if (s === "lamination") return "Lamination Workstation";
-    if (s === "cutting") return "Cutting Workstation";
-    if (s === "polishing") return "Polishing Workstation";
+    if (s === "pairing") return "Glass Pairing";
+    if (s === "finished") return "Finished Glass";
+    if (s === "dgu") return "DGU";
+    if (s === "lamination") return "Lamination";
+    if (s === "cutting") return "Cutting";
+    if (s === "polishing") return "Polishing";
     return stg;
   };
 
-  let richMessage = "";
-  if (advanceDetails.length === 1) {
-    const d = advanceDetails[0];
-    const humanTo = formatStageDisplay(d.toStage);
-    const humanFrom = formatStageDisplay(d.fromStage);
-    const posLabel = d.posNo ? `POS ${d.posNo}` : "Glass Unit";
-
-    const refItem = updatedItems[0];
-    const barcode = refItem?.barcode?.trim();
-    const stickerQty = parseInt(String(refItem?.lineQty || refItem?.qty || 1), 10) || 1;
-
-    // Find all sibling items in the batch that share this exact barcode
-    const barcodeSiblings = refItem && barcode
-      ? glassItemsDatabase.filter(
-          (g) =>
-            ((refItem.piId && g.piId === refItem.piId) || (refItem.piNumber && g.piNumber === refItem.piNumber)) &&
-            g.barcode && g.barcode.trim() === barcode &&
-            g.status !== "Rejected"
-        )
-      : [];
-
-    const totalStickers = Math.max(
-      stickerQty,
-      barcodeSiblings.length,
-      barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
-      d.advancedQty + d.remainingQty
-    );
-
-    // Calculate how many pieces for this barcode have completed or moved past fromStage
-    const completedOrAdvanced = barcodeSiblings
-      .filter((g) => {
-        if (g.currentStage === "Finished" || g.status === "Completed") return true;
-        const r = g.processRoute || [];
-        const fromIdx = r.indexOf(d.fromStage as ProductionStage);
-        const curIdx = r.indexOf(g.currentStage as ProductionStage);
-        return curIdx > fromIdx || (g.completedStages && g.completedStages.includes(d.fromStage as ProductionStage));
-      })
-      .reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0);
-
-    const scanCount = Math.min(totalStickers, Math.max(1, completedOrAdvanced || d.advancedQty));
-
-    if (totalStickers > 1) {
-      if (scanCount >= totalStickers) {
-        richMessage = `Advanced ${posLabel} (${totalStickers} of ${totalStickers} scanned) from ${humanFrom} ➔ ${humanTo}`;
-      } else {
-        const remaining = totalStickers - scanCount;
-        richMessage = `Advanced ${posLabel} (${scanCount} of ${totalStickers} scanned) from ${humanFrom} ➔ ${humanTo}${remaining > 0 ? ` (${remaining} remaining in ${humanFrom})` : ""}`;
+  // Count logical glass units (e.g. DLGU 3 panes = 1 unit, DGU 2 panes = 1 unit, Lamination 2 panes = 1 unit)
+  const seenUnitKeys = new Set<string>();
+  let unitCount = 0;
+  for (const it of updatedItems) {
+    const dguId = (it as any).dguPairId;
+    const lamId = (it as any).lamPairId;
+    if (dguId) {
+      const key = `dgu:${dguId}`;
+      if (!seenUnitKeys.has(key)) {
+        seenUnitKeys.add(key);
+        unitCount++;
+      }
+    } else if (lamId && !isDguItem(it) && !isDlguItem(it)) {
+      const key = `lam:${lamId}`;
+      if (!seenUnitKeys.has(key)) {
+        seenUnitKeys.add(key);
+        unitCount++;
       }
     } else {
-      richMessage = `Advanced ${posLabel} (1 of 1 scanned) from ${humanFrom} ➔ ${humanTo}`;
+      unitCount++;
     }
-  } else if (advanceDetails.length > 1) {
-    const firstDetail = advanceDetails[0];
-    const secondDetail = advanceDetails[1];
-    if (advanceDetails.length === 2 && firstDetail.toStage === secondDetail.toStage && firstDetail.posNo && firstDetail.posNo === secondDetail.posNo) {
-      richMessage = `Paired & Advanced POS ${firstDetail.posNo} ➔ ${formatStageDisplay(firstDetail.toStage)}`;
-    } else {
-      const targetStageName = formatStageDisplay(updatedItems[0]?.currentStage || "Next Stage");
-      const distinctPos = Array.from(
-        new Set(advanceDetails.map((a) => a.posNo).filter((p): p is string => Boolean(p && String(p).trim())))
-      );
-      const distinctBatches = Array.from(
-        new Set(updatedItems.map((a) => a.batchNo).filter((b): b is string => Boolean(b && String(b).trim())))
-      );
-      const batchPrefix = distinctBatches.length === 1 ? `Batch ${distinctBatches[0]}` : "";
+  }
 
-      if (distinctPos.length === 1) {
-        richMessage = `Advanced POS ${distinctPos[0]} (${updatedItems.length} pcs) ➔ ${targetStageName}`;
-      } else if (distinctPos.length > 1 && distinctPos.length <= 3) {
-        const posList = distinctPos.map((p) => `POS ${p}`).join(", ");
-        richMessage = `Advanced ${posList} (${updatedItems.length} pcs) ➔ ${targetStageName}`;
-      } else if (distinctPos.length > 3) {
-        if (batchPrefix) {
-          richMessage = `Advanced ${batchPrefix} (${updatedItems.length} pcs across ${distinctPos.length} POS items) ➔ ${targetStageName}`;
-        } else {
-          richMessage = `Advanced ${updatedItems.length} pcs across ${distinctPos.length} POS items (POS ${distinctPos.slice(0, 3).join(", POS ")}, +${distinctPos.length - 3} more) ➔ ${targetStageName}`;
-        }
+  const firstUpdated = updatedItems[0];
+  const resolvedDest =
+    firstUpdated?.currentStage === "Finished" && firstUpdated?.packingRackNo
+      ? firstUpdated.packingRackNo
+      : formatStageDisplay(firstUpdated?.currentStage || advanceDetails[0]?.toStage || "Next Stage");
+
+  let richMessage = "";
+  if (unitCount === 1 && advanceDetails.length > 0) {
+    const d = advanceDetails[0];
+    const posLabel = d.posNo ? `POS ${d.posNo}` : "1 unit";
+
+    // Only track per-sticker progress when a single unpaired piece was scanned from a multi-qty sticker
+    if (advanceDetails.length === 1 && !(firstUpdated as any)?.dguPairId && !(firstUpdated as any)?.lamPairId) {
+      const refItem = firstUpdated;
+      const barcode = refItem?.barcode?.trim();
+      const stickerQty = parseInt(String(refItem?.lineQty || refItem?.qty || 1), 10) || 1;
+      const barcodeSiblings = refItem && barcode
+        ? glassItemsDatabase.filter(
+            (g) =>
+              ((refItem.piId && g.piId === refItem.piId) || (refItem.piNumber && g.piNumber === refItem.piNumber)) &&
+              g.barcode && g.barcode.trim() === barcode &&
+              g.status !== "Rejected"
+          )
+        : [];
+      const totalStickers = Math.max(
+        stickerQty,
+        barcodeSiblings.length,
+        barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+        d.advancedQty + d.remainingQty
+      );
+      const completedOrAdvanced = barcodeSiblings
+        .filter((g) => {
+          if (g.currentStage === "Finished" || g.status === "Completed") return true;
+          const r = g.processRoute || [];
+          const fromIdx = r.indexOf(d.fromStage as ProductionStage);
+          const curIdx = r.indexOf(g.currentStage as ProductionStage);
+          return curIdx > fromIdx || (g.completedStages && g.completedStages.includes(d.fromStage as ProductionStage));
+        })
+        .reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0);
+      const scanCount = Math.min(totalStickers, Math.max(1, completedOrAdvanced || d.advancedQty));
+
+      if (totalStickers > 1) {
+        richMessage = `Advanced ${posLabel} (${scanCount} of ${totalStickers}) to ${resolvedDest}`;
       } else {
-        richMessage = batchPrefix
-          ? `Advanced ${batchPrefix} (${updatedItems.length} pcs) ➔ ${targetStageName}`
-          : `${updatedItems.length} items advanced ➔ ${targetStageName}`;
+        richMessage = d.posNo
+          ? `Advanced 1 unit (${posLabel}) to ${resolvedDest}`
+          : `Advanced 1 unit to ${resolvedDest}`;
       }
+    } else {
+      richMessage = d.posNo
+        ? `Advanced 1 unit (${posLabel}) to ${resolvedDest}`
+        : `Advanced 1 unit to ${resolvedDest}`;
+    }
+  } else if (unitCount > 1) {
+    const distinctPos = Array.from(
+      new Set(advanceDetails.map((a) => a.posNo).filter((p): p is string => Boolean(p && String(p).trim())))
+    );
+    const distinctBatches = Array.from(
+      new Set(updatedItems.map((a) => a.batchNo).filter((b): b is string => Boolean(b && String(b).trim())))
+    );
+    const batchPrefix = distinctBatches.length === 1 ? `Batch ${distinctBatches[0]}` : "";
+
+    if (distinctPos.length === 1) {
+      richMessage = `Advanced ${unitCount} units (POS ${distinctPos[0]}) to ${resolvedDest}`;
+    } else if (distinctPos.length > 1 && distinctPos.length <= 3) {
+      richMessage = `Advanced ${unitCount} units (${distinctPos.map((p) => `POS ${p}`).join(", ")}) to ${resolvedDest}`;
+    } else if (distinctPos.length > 3) {
+      richMessage = batchPrefix
+        ? `Advanced ${batchPrefix} (${unitCount} units across ${distinctPos.length} POS items) to ${resolvedDest}`
+        : `Advanced ${unitCount} units across ${distinctPos.length} POS items to ${resolvedDest}`;
+    } else {
+      richMessage = batchPrefix
+        ? `Advanced ${batchPrefix} (${unitCount} units) to ${resolvedDest}`
+        : `Advanced ${unitCount} units to ${resolvedDest}`;
     }
   }
 
@@ -1081,7 +1283,7 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     const operatorName = (req as any).user?.username || req.body?.operator || "Operator";
     createAndBroadcastNotification({
       title: `${targetStageName} Stage Advanced`,
-      message: richMessage || `${updatedItems.length} item(s) advanced to ${formatStageDisplay(targetStageName)} by ${operatorName}`,
+      message: richMessage || `Advanced ${unitCount} unit(s) to ${resolvedDest}`,
       category: "STAGE_ADVANCE",
       type: "success",
       stage: targetStageName,
@@ -1128,179 +1330,16 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
   }
 
   res.json({
-    message: richMessage || (updatedItems.length > 0 ? "Item(s) advanced successfully" : "No items were advanced"),
+    message: richMessage || (unitCount > 0 ? `Advanced ${unitCount} unit(s)` : "No items were advanced"),
     items: updatedItems,
+    unitCount,
     skippedItems,
     skippedCount: skippedItems.length,
     advanceDetails,
   });
 };
 
-export function isDlguItem(item: any): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return true;
-  if (item.glassCategory === "Lamination" || item.glassCategory === "Laminated") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("Lamination") && item.processRoute.includes("DGU")) return true;
-    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double|dlgu)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva|dlgu)\b/i.test(str);
-  return (hasSpacer && hasLam) || str.includes("dlgu");
-}
-
-export function isDguItem(item: any): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return false;
-  if (item.glassCategory === "DGU") return true;
-  if (item.glassCategory === "Lamination") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("DGU") && !item.processRoute.includes("Lamination")) return true;
-    if (item.processRoute.includes("Lamination")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
-  return hasSpacer && !hasLam;
-}
-
-export function isLaminationItem(item: any): boolean {
-  if (!item) return false;
-  if (item.glassCategory === "DLGU") return false;
-  if (item.glassCategory === "Lamination") return true;
-  if (item.glassCategory === "DGU") return false;
-  if (Array.isArray(item.processRoute)) {
-    if (item.processRoute.includes("Lamination") && !item.processRoute.includes("DGU")) return true;
-    if (item.processRoute.includes("DGU")) return false;
-  }
-  const str = `${item.glassType || ""} ${item.glassCode || ""} ${item.itemCode || ""}`.toLowerCase();
-  const hasSpacer = /\b(spacer|dgu|igu|double)\b/i.test(str);
-  const hasLam = /\b(lam|lamination|laminated|pvb|sgp|eva)\b/i.test(str);
-  return hasLam && !hasSpacer;
-}
-
-export function isDlguStickerPairMatch(paneA: any, paneB: any): boolean {
-  if (!paneA || !paneB) return false;
-  if ((paneA.serialNumber && paneB.serialNumber && paneA.serialNumber === paneB.serialNumber) || (paneA.id && paneB.id && paneA.id === paneB.id)) return false;
-
-  const isALamDone = Array.isArray(paneA.completedStages) && paneA.completedStages.includes("Lamination");
-  const isBLamDone = Array.isArray(paneB.completedStages) && paneB.completedStages.includes("Lamination");
-  const isAInLam = paneA.currentStage === "Lamination";
-  const isBInLam = paneB.currentStage === "Lamination";
-
-  const isAColour = paneA.colorOrClear === "Colour" || String(paneA.category || "").toLowerCase().includes("colour");
-  const isBColour = paneB.colorOrClear === "Colour" || String(paneB.category || "").toLowerCase().includes("colour");
-
-  // If one is Colour and one is Clear: Phase 2 (DGU Pairing)
-  if (isAColour !== isBColour) {
-    const clrPane = isAColour ? paneB : paneA;
-    const isClrReady =
-      clrPane.dlguPhase === "DguPairing" ||
-      isALamDone ||
-      isBLamDone ||
-      (Array.isArray(clrPane.completedStages) && clrPane.completedStages.includes("Lamination"));
-    if (!isClrReady) return false;
-  } else {
-    // Phase 1: Lamination Pairing (e.g. 6mm Clear + 13.52mm Clear Lam partner, or 2 identical clear lites)
-    // As long as they are distinct physical panes (serials/IDs verified above), they are valid pairing candidates.
-  }
-
-  // 1. Order No / PI # must match
-  if (paneA.orderNo && paneB.orderNo) {
-    if (String(paneA.orderNo).trim().toLowerCase() !== String(paneB.orderNo).trim().toLowerCase()) return false;
-  } else if (paneA.obNo && paneB.obNo) {
-    if (String(paneA.obNo).trim().toLowerCase() !== String(paneB.obNo).trim().toLowerCase()) return false;
-  } else {
-    const orderA = String(paneA.piNumber || paneA.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    const orderB = String(paneB.piNumber || paneB.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    if (orderA && orderB && orderA !== orderB) return false;
-  }
-
-  // 2. POS # must match
-  const posA = String(paneA.posNo || "").trim();
-  const posB = String(paneB.posNo || "").trim();
-  if (posA && posB && posA !== posB) return false;
-
-  // 3. Exact Dimensions
-  const wA = Number(paneA.width);
-  const wB = Number(paneB.width);
-  const hA = Number(paneA.height);
-  const hB = Number(paneB.height);
-  if (isNaN(wA) || isNaN(wB) || wA !== wB) return false;
-  if (isNaN(hA) || isNaN(hB) || hA !== hB) return false;
-
-  return true;
-}
-
-export function isStickerPairMatch(col: any, clr: any): boolean {
-  if (!col || !clr) return false;
-
-  if (isDlguItem(col) && isDlguItem(clr)) {
-    return isDlguStickerPairMatch(col, clr);
-  }
-
-  // STRICT RULE: Both panes must strictly be DGU glass and NEVER Lamination glass
-  if (!isDguItem(col) || !isDguItem(clr)) return false;
-  if (isLaminationItem(col) || isLaminationItem(clr)) return false;
-  if (col.glassCategory === "Lamination" || clr.glassCategory === "Lamination") return false;
-
-  // STRICT RULE: DGU requires 1 Colour outer lite + 1 Clear inner lite (cannot pair two Colour or two Clear panes)
-  const isColFinishColour = (col.colorOrClear === "Colour" || col.colorOrClear === "Color" || String(col.category || "").toLowerCase().includes("colour"));
-  const isClrFinishColour = (clr.colorOrClear === "Colour" || clr.colorOrClear === "Color" || String(clr.category || "").toLowerCase().includes("colour"));
-  if (isColFinishColour === isClrFinishColour) return false;
-
-  // 1. Order No / PI # must match
-  if (col.orderNo && clr.orderNo) {
-    if (String(col.orderNo).trim().toLowerCase() !== String(clr.orderNo).trim().toLowerCase()) return false;
-  } else if (col.obNo && clr.obNo) {
-    if (String(col.obNo).trim().toLowerCase() !== String(clr.obNo).trim().toLowerCase()) return false;
-  } else {
-    const colOrder = String(col.piNumber || col.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    const clrOrder = String(clr.piNumber || clr.piId || "").replace(/^STK-/i, "").trim().toLowerCase();
-    if (colOrder && clrOrder && colOrder !== clrOrder) return false;
-  }
-
-  // 2. POS # (Position Number) must match
-  const colPos = String(col.posNo || "").trim();
-  const clrPos = String(clr.posNo || "").trim();
-  if (colPos && clrPos && colPos !== clrPos) return false;
-
-  // 3. Exact Dimensions (Width & Height in mm) must match
-  const colW = Number(col.width);
-  const clrW = Number(clr.width);
-  const colH = Number(col.height);
-  const clrH = Number(clr.height);
-  if (isNaN(colW) || isNaN(clrW) || colW !== clrW) return false;
-  if (isNaN(colH) || isNaN(clrH) || colH !== clrH) return false;
-
-  // 4. OB # must match (when present on both)
-  const colOb = String(col.obNo || "").trim().toLowerCase();
-  const clrOb = String(clr.obNo || "").trim().toLowerCase();
-  if (colOb && clrOb && colOb !== clrOb) return false;
-
-  // 5. Line QTY / Order Qty must match (when present on both)
-  const colQty = col.lineQty || col.totalQty;
-  const clrQty = clr.lineQty || clr.totalQty;
-  if (colQty && clrQty && colQty !== clrQty) return false;
-
-  // 6. Glass Code must match (when present on both)
-  const colCode = String(col.glassCode || col.itemCode || "").trim().toLowerCase();
-  const clrCode = String(clr.glassCode || clr.itemCode || "").trim().toLowerCase();
-  if (colCode && clrCode && colCode !== clrCode) return false;
-
-  // 7. Client Name must match (when present on both)
-  const colCust = String(col.customerName || "").trim().toLowerCase();
-  const clrCust = String(clr.customerName || "").trim().toLowerCase();
-  if (colCust && clrCust && colCust !== clrCust) return false;
-
-  // 8. Project Name must match (when present on both)
-  const colProj = String(col.projectName || "").trim().toLowerCase();
-  const clrProj = String(clr.projectName || "").trim().toLowerCase();
-  if (colProj && clrProj && colProj !== clrProj) return false;
-
-  return true;
-}
+export { isStickerPairMatch, isDlguStickerPairMatch };
 
 export function autoAdvancePairedDguItems(): number {
   const pairingItems = glassItemsDatabase.filter(
@@ -1496,6 +1535,10 @@ export function autoAdvancePairedLaminationItems(filterPosNo?: string, filterPi?
     if (match) {
       usedPanes.add(paneA.serialNumber);
       usedPanes.add(match.serialNumber);
+
+      const pairId = `lam-${paneA.serialNumber}-${match.serialNumber}`;
+      (paneA as any).lamPairId = pairId;
+      (match as any).lamPairId = pairId;
 
       // Auto-advance both paired panes from "Pairing" to "Lamination"
       paneA.currentStage = "Lamination";
@@ -2375,6 +2418,14 @@ export const handleRejectItem: RequestHandler = (req, res) => {
           delete (partner as any).lamPairId;
           delete (partner as any).dguPairId;
         }
+        delete (partner as any).packingRackNo;
+        delete (partner as any).packingShift;
+        delete (partner as any).packedAt;
+        delete (partner as any).packedBy;
+        delete (partner as any).packingStatus;
+        delete (partner as any).sentToFinished;
+        delete (partner as any).sentToFinishedAt;
+        delete (partner as any).sentToFinishedBy;
         partner.currentStage = "Pairing";
         partner.status = "Pending";
         partner.updatedAt = new Date().toISOString();
@@ -2419,6 +2470,14 @@ export const handleRejectItem: RequestHandler = (req, res) => {
   allItemsToReject.forEach((targetItem) => {
     delete (targetItem as any).lamPairId;
     delete (targetItem as any).dguPairId;
+    delete (targetItem as any).packingRackNo;
+    delete (targetItem as any).packingShift;
+    delete (targetItem as any).packedAt;
+    delete (targetItem as any).packedBy;
+    delete (targetItem as any).packingStatus;
+    delete (targetItem as any).sentToFinished;
+    delete (targetItem as any).sentToFinishedAt;
+    delete (targetItem as any).sentToFinishedBy;
     const prevStage = targetItem.currentStage;
     const distinctPi = (targetItem.orderNo && targetItem.orderNo !== targetItem.batchNo) ? targetItem.orderNo : undefined;
     const resolvedIncomingPi = (piNumber && piNumber !== targetItem.batchNo) ? piNumber : undefined;
@@ -3046,6 +3105,14 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       partners.forEach((partner) => {
         delete (partner as any).lamPairId;
         delete (partner as any).dguPairId;
+        delete (partner as any).packingRackNo;
+        delete (partner as any).packingShift;
+        delete (partner as any).packedAt;
+        delete (partner as any).packedBy;
+        delete (partner as any).packingStatus;
+        delete (partner as any).sentToFinished;
+        delete (partner as any).sentToFinishedAt;
+        delete (partner as any).sentToFinishedBy;
         partner.currentStage = "Pairing";
         partner.status = "Pending";
         partner.updatedAt = new Date().toISOString();
@@ -3085,6 +3152,14 @@ export const handleReworkItem: RequestHandler = (req, res) => {
   allItemsToRework.forEach((targetItem) => {
     delete (targetItem as any).lamPairId;
     delete (targetItem as any).dguPairId;
+    delete (targetItem as any).packingRackNo;
+    delete (targetItem as any).packingShift;
+    delete (targetItem as any).packedAt;
+    delete (targetItem as any).packedBy;
+    delete (targetItem as any).packingStatus;
+    delete (targetItem as any).sentToFinished;
+    delete (targetItem as any).sentToFinishedAt;
+    delete (targetItem as any).sentToFinishedBy;
     const prevStage = targetItem.currentStage;
     targetItem.completedStages = targetStage === "Cutting" ? [] : targetItem.completedStages.filter((s) => s !== targetStage);
     targetItem.currentStage = targetStage as ProductionStage;
@@ -4054,7 +4129,14 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
     return dlguUnits + pureDguUnits + lamUnits + monoUnits;
   };
 
-  const finishedPendingList = glassItemsDatabase.filter((i) => isUndispatched(i) && i.currentStage === "Finished" && i.status !== "Rejected");
+  const finishedPendingList = glassItemsDatabase.filter(
+    (i) =>
+      isUndispatched(i) &&
+      i.currentStage === "Finished" &&
+      i.status !== "Rejected" &&
+      !isPackingIguServerItem(i) &&
+      !isPackingLamiServerItem(i)
+  );
   const dispatchedList = glassItemsDatabase.filter((i) => (!isUndispatched(i) || (i as any).isDispatched === true || (i as any).currentStage === "Dispatched") && i.status !== "Rejected");
 
   const finishedItems = computeUnits(finishedPendingList);
@@ -4137,6 +4219,12 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
     reworkItems,
     userThroughputByStage,
   };
+
+  const pendingPackingIGU = computeUnits(glassItemsDatabase.filter(isPackingIguServerItem));
+  const pendingPackingLami = computeUnits(glassItemsDatabase.filter(isPackingLamiServerItem));
+
+  stats.pendingPackingIGU = pendingPackingIGU;
+  stats.pendingPackingLami = pendingPackingLami;
 
   res.json({
     ...stats,
@@ -4518,7 +4606,8 @@ export const handleDispatchItems: RequestHandler = (req, res) => {
 
     targetItems = glassItemsDatabase.filter((i) => {
       if (i.status === "Rejected" || i.isDispatched) return false;
-      if (serialSet.has(i.serialNumber) || idSet.has(i.id)) return true;
+      if (idSet.size > 0) return idSet.has(i.id);
+      if (serialSet.size > 0) return serialSet.has(i.serialNumber);
       return false;
     });
 
@@ -4622,5 +4711,433 @@ export const handleDispatchItems: RequestHandler = (req, res) => {
     count: targetItems.length,
     dispatchNoteNo: cleanNoteNo,
     dispatchedSerials: targetItems.map((i) => i.serialNumber),
+  });
+};
+
+export const handlePackToRack: RequestHandler = (req, res) => {
+  const {
+    serialNumbers,
+    itemIds,
+    rackNo,
+    shift = "Day",
+    operator = "Operator",
+    advanceQty = 1,
+    advanceAll = false,
+    packPartners = true,
+    sentToFinished,
+  } = req.body;
+  if (!rackNo || !String(rackNo).trim()) {
+    res.status(400).json({ error: "Rack Number is required" });
+    return;
+  }
+
+  const cleanRack = normalizeRackNo(String(rackNo));
+  const cleanShift = shift === "Night" || shift === "B" ? "Night" : "Day";
+  const cleanOperator = typeof operator === "string" && operator.trim() ? operator.trim() : "Operator";
+  const nowIso = new Date().toISOString();
+
+  const serialSet = new Set<string>(Array.isArray(serialNumbers) ? serialNumbers.map((s) => String(s).trim()) : []);
+  const idSet = new Set<string>(Array.isArray(itemIds) ? itemIds.map((id) => String(id).trim()) : []);
+
+  const targetItems = glassItemsDatabase.filter((i) => {
+    if (i.status === "Rejected" || i.isDispatched) return false;
+    if (idSet.size > 0) return idSet.has(i.id);
+    if (serialSet.size > 0) return serialSet.has(i.serialNumber);
+    return false;
+  });
+
+  // Physical rack packing stores items strictly on the rack in Packing (sentToFinished: false).
+  // Only send to Finished stage if "Direct Finish" or sentToFinished is explicitly requested as true.
+  const shouldSendToFinished =
+    cleanRack === "Direct Finish" ||
+    sentToFinished === true ||
+    (req.body as any).sendToFinished === true ||
+    (req.body as any).advanceToFinished === true;
+
+  // Include partner panes if packPartners is true (keeps assembled DGU/DLGU units unified on the rack)
+  const additionalPartners: typeof glassItemsDatabase = [];
+  if (packPartners !== false) {
+    for (const item of targetItems) {
+      const lamPairId = (item as any).lamPairId;
+      if (lamPairId) {
+        const partners = glassItemsDatabase.filter(
+          (other) => other.id !== item.id && !other.isDispatched && (other as any).lamPairId === lamPairId
+        );
+        for (const p of partners) {
+          if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+            additionalPartners.push(p);
+          }
+        }
+      } else if (isLaminationItem(item)) {
+        // Fallback matching for Lamination partner pane
+        const partner = glassItemsDatabase.find(
+          (other) =>
+            other.id !== item.id &&
+            !other.isDispatched &&
+            !other.packingRackNo &&
+            (other.currentStage === "Finished" || other.currentStage === "Lamination") &&
+            isLaminationStickerPairMatch(item, other) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !additionalPartners.some((t) => t.id === other.id)
+        );
+        if (partner) {
+          additionalPartners.push(partner);
+        }
+      }
+
+      const isDgu =
+        (item as any).glassCategory === "DGU" ||
+        (item as any).glassCategory === "DLGU" ||
+        Boolean((item as any).dguPairId);
+
+      if (isDgu) {
+        const pairId = (item as any).dguPairId;
+        if (pairId) {
+          const partners = glassItemsDatabase.filter(
+            (other) => other.id !== item.id && !other.isDispatched && (other as any).dguPairId === pairId
+          );
+          for (const p of partners) {
+            if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+              additionalPartners.push(p);
+            }
+          }
+        } else {
+          // Fallback matching by opposite finish (one Colour + one Clear) for DGU only
+          const itemFinish =
+            (item as any).colorOrClear ||
+            ((item as any).glassType?.toLowerCase().includes("colour") ? "Colour" : "Clear");
+          const partner = glassItemsDatabase.find(
+            (other) =>
+              other.id !== item.id &&
+              !other.isDispatched &&
+              !other.packingRackNo &&
+              (other.currentStage === "Finished" || other.currentStage === "DGU") &&
+              ((other as any).glassCategory === "DGU" || (other as any).glassCategory === "DLGU") &&
+              (other as any).colorOrClear !== itemFinish &&
+              ((item.posNo && other.posNo && String(item.posNo).trim() === String(other.posNo).trim()) ||
+                (Math.abs((other.width || 0) - (item.width || 0)) < 2 && Math.abs((other.height || 0) - (item.height || 0)) < 2)) &&
+              ((item.piId && other.piId === item.piId) || (item.orderNo && other.orderNo === item.orderNo)) &&
+              !targetItems.some((t) => t.id === other.id) &&
+              !additionalPartners.some((t) => t.id === other.id)
+          );
+          if (partner) {
+            additionalPartners.push(partner);
+          }
+        }
+      }
+    }
+  }
+
+  const allToPack = [...targetItems, ...additionalPartners];
+  if (allToPack.length === 0) {
+    res.status(400).json({ error: "No eligible finished glass units found to pack." });
+    return;
+  }
+
+  const packedItems: GlassItem[] = [];
+
+  for (const item of allToPack) {
+    const currentQty = parseInt(String(item.qty || 1), 10) || 1;
+    const qtyToPack = advanceAll ? currentQty : Math.min(parseInt(String(advanceQty || 1), 10) || 1, currentQty);
+
+    if (currentQty > qtyToPack && !advanceAll) {
+      // 1. Decrement remaining pending quantity in pending queue
+      item.qty = currentQty - qtyToPack;
+      item.lineQty = item.qty;
+      item.sqm = parseFloat(((item.width * item.height * item.qty) / 1000000).toFixed(2));
+      item.updatedAt = nowIso;
+
+      // 2. Spawn the packed piece on the rack with qty: qtyToPack (1 pc)
+      const packedPiece: GlassItem = {
+        ...item,
+        id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        qty: qtyToPack,
+        lineQty: qtyToPack,
+        sqm: parseFloat(((item.width * item.height * qtyToPack) / 1000000).toFixed(2)),
+        packingRackNo: cleanRack,
+        packingShift: cleanShift,
+        packedAt: nowIso,
+        packedBy: cleanOperator,
+        packingStatus: "Packed",
+        currentStage: "Finished",
+        completedStages: Array.from(new Set([...(item.completedStages || []), "Finished"])),
+        sentToFinished: shouldSendToFinished,
+        sentToFinishedAt: shouldSendToFinished ? nowIso : undefined,
+        sentToFinishedBy: shouldSendToFinished ? cleanOperator : undefined,
+        updatedAt: nowIso,
+      };
+      glassItemsDatabase.push(packedPiece);
+      packedItems.push(packedPiece);
+
+      productionHistoryDatabase.unshift({
+        id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: packedPiece.serialNumber,
+        barcode: packedPiece.barcode,
+        piNumber: packedPiece.piNumber,
+        itemOrBatch: packedPiece.serialNumber,
+        action: `Packed 1 pc onto ${cleanRack}`,
+        prevStatus: "Pending Packing",
+        newStatus: "Packed",
+        stage: "Finished",
+        status: "Completed",
+        operator: cleanOperator,
+        user: cleanOperator,
+        timestamp: nowIso,
+        remarks: `Sticker scanned & packed onto ${cleanRack} (${item.qty} pcs remaining in pending)`,
+      });
+    } else {
+      // Single piece item or all pieces packed
+      item.packingRackNo = cleanRack;
+      item.packingShift = cleanShift;
+      item.packedAt = nowIso;
+      item.packedBy = cleanOperator;
+      item.packingStatus = "Packed";
+      item.currentStage = "Finished";
+      if (shouldSendToFinished) {
+        item.sentToFinished = true;
+        item.sentToFinishedAt = nowIso;
+        item.sentToFinishedBy = cleanOperator;
+      } else {
+        item.sentToFinished = false;
+        delete (item as any).sentToFinishedAt;
+        delete (item as any).sentToFinishedBy;
+      }
+      if (!item.completedStages) item.completedStages = [];
+      if (!item.completedStages.includes("Finished")) {
+        item.completedStages.push("Finished");
+      }
+      item.updatedAt = nowIso;
+      packedItems.push(item);
+
+      productionHistoryDatabase.unshift({
+        id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        serialNumber: item.serialNumber,
+        barcode: item.barcode,
+        piNumber: item.piNumber,
+        itemOrBatch: item.serialNumber,
+        action: `Packed onto ${cleanRack}`,
+        prevStatus: "Pending Packing",
+        newStatus: "Packed",
+        stage: "Finished",
+        status: "Completed",
+        operator: cleanOperator,
+        user: cleanOperator,
+        timestamp: nowIso,
+        remarks: `Sticker scanned & packed onto ${cleanRack}`,
+      });
+    }
+  }
+
+  saveDatabaseToDisk(true);
+  broadcastUpdate("stage_advanced", { count: packedItems.length, action: "rack_packed", rackNo: cleanRack });
+
+  res.json({
+    success: true,
+    message: `${packedItems.length} piece(s) packed onto ${cleanRack} (Shift ${cleanShift})`,
+    count: packedItems.length,
+    rackNo: cleanRack,
+    shift: cleanShift,
+    packedSerials: packedItems.map((i) => i.serialNumber),
+  });
+};
+
+export const handleUnpackFromRack: RequestHandler = (req, res) => {
+  const { serialNumbers, itemIds } = req.body;
+  const serialSet = new Set<string>(Array.isArray(serialNumbers) ? serialNumbers.map((s) => String(s).trim()) : []);
+  const idSet = new Set<string>(Array.isArray(itemIds) ? itemIds.map((id) => String(id).trim()) : []);
+
+  const targetItems = glassItemsDatabase.filter((i) => {
+    if (idSet.size > 0) return idSet.has(i.id);
+    if (serialSet.size > 0) return serialSet.has(i.serialNumber);
+    return false;
+  });
+
+  const additionalPartners: typeof glassItemsDatabase = [];
+  for (const item of targetItems) {
+    const pairId = (item as any).dguPairId;
+    if (pairId) {
+      const partners = glassItemsDatabase.filter((o) => (o as any).dguPairId === pairId);
+      for (const p of partners) {
+        if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+          additionalPartners.push(p);
+        }
+      }
+    }
+  }
+
+  const allToUnpack = [...targetItems, ...additionalPartners];
+  for (const item of allToUnpack) {
+    delete item.packingRackNo;
+    delete item.packingShift;
+    delete item.packedAt;
+    delete item.packedBy;
+    delete item.packingStatus;
+    delete item.sentToFinished;
+    delete item.sentToFinishedAt;
+    delete item.sentToFinishedBy;
+    item.updatedAt = new Date().toISOString();
+  }
+
+  saveDatabaseToDisk(true);
+  broadcastUpdate("stage_advanced", { count: allToUnpack.length, action: "rack_unpacked" });
+
+  res.json({
+    success: true,
+    message: `${allToUnpack.length} piece(s) removed from rack`,
+    count: allToUnpack.length,
+  });
+};
+
+export const handleSendToFinished: RequestHandler = (req, res) => {
+  const { serialNumbers, itemIds, rackNo, operator, sendPartners = true, advanceAll = false, sendEntireRack = false } = req.body;
+  const nowIso = new Date().toISOString();
+  const cleanOperator = typeof operator === "string" && operator.trim() ? operator.trim() : "Operator";
+
+  const serialSet = new Set<string>(Array.isArray(serialNumbers) ? serialNumbers.map((s) => String(s).trim()) : []);
+  const idSet = new Set<string>(Array.isArray(itemIds) ? itemIds.map((id) => String(id).trim()) : []);
+
+  let targetItems: typeof glassItemsDatabase = [];
+
+  if (idSet.size > 0) {
+    // 1. Strict match by unique item ID (preferred for single unit / selected row actions)
+    targetItems = glassItemsDatabase.filter(
+      (i) => !i.isDispatched && i.status !== "Rejected" && idSet.has(i.id)
+    );
+  } else if (serialSet.size > 0) {
+    // 2. Fallback to serial / sticker number matching when no itemIds provided
+    const matching = glassItemsDatabase.filter(
+      (i) => !i.isDispatched && i.status !== "Rejected" && serialSet.has(i.serialNumber)
+    );
+    if (advanceAll) {
+      targetItems = matching;
+    } else {
+      // Single sticker scan mode: take only the first matching unit per unique serialNumber
+      const seenSerials = new Set<string>();
+      targetItems = [];
+      for (const m of matching) {
+        if (!seenSerials.has(m.serialNumber)) {
+          seenSerials.add(m.serialNumber);
+          targetItems.push(m);
+        }
+      }
+    }
+  } else if (rackNo && sendEntireRack) {
+    // 3. Explicit whole-rack clearance only when no specific IDs or Serials are provided
+    const cleanTarget = String(rackNo).trim().toLowerCase();
+    targetItems = glassItemsDatabase.filter((i) => {
+      if (i.status === "Rejected" || i.isDispatched || !i.packingRackNo) return false;
+      const cleanItem = String(i.packingRackNo).trim().toLowerCase();
+      if (cleanItem === cleanTarget) return true;
+      if (cleanTarget === "rack a" && cleanItem.startsWith("rack a")) return true;
+      if (cleanTarget === "rack b" && cleanItem.startsWith("rack b")) return true;
+      if (cleanTarget === "rack c" && cleanItem.startsWith("rack c")) return true;
+      if (cleanTarget === "rack d" && cleanItem.startsWith("rack d")) return true;
+      if (cleanTarget === "rack e" && cleanItem.startsWith("rack e")) return true;
+      return false;
+    });
+  }
+
+  const additionalPartners: typeof glassItemsDatabase = [];
+  if (sendPartners !== false) {
+    for (const item of targetItems) {
+      const pairId = (item as any).dguPairId || (item as any).lamPairId;
+      if (pairId) {
+        const partners = glassItemsDatabase.filter(
+          (o) =>
+            !o.isDispatched &&
+            o.status !== "Rejected" &&
+            ((o as any).dguPairId === pairId || (o as any).lamPairId === pairId)
+        );
+        for (const p of partners) {
+          if (!targetItems.some((t) => t.id === p.id) && !additionalPartners.some((t) => t.id === p.id)) {
+            additionalPartners.push(p);
+          }
+        }
+      } else if (item.packingRackNo) {
+        // Fallback matching by opposite finish on same rack
+        const itemFinish =
+          (item as any).colorOrClear ||
+          ((item as any).glassType?.toLowerCase().includes("colour") ? "Colour" : "Clear");
+        const partners = glassItemsDatabase.filter(
+          (other) =>
+            other.id !== item.id &&
+            !other.isDispatched &&
+            other.packingRackNo === item.packingRackNo &&
+            !other.sentToFinished &&
+            (other as any).colorOrClear !== itemFinish &&
+            ((item.posNo && other.posNo && String(item.posNo).trim() === String(other.posNo).trim()) ||
+              (Math.abs((other.width || 0) - (item.width || 0)) < 2 && Math.abs((other.height || 0) - (item.height || 0)) < 2)) &&
+            ((item.piId && other.piId === item.piId) || (item.orderNo && other.orderNo === item.orderNo)) &&
+            !targetItems.some((t) => t.id === other.id) &&
+            !additionalPartners.some((t) => t.id === other.id)
+        );
+        for (const p of partners) {
+          additionalPartners.push(p);
+        }
+      }
+    }
+  }
+
+  // Also reconcile any orphaned partner panes in database whose assembled partner was already sent to Finished
+  for (const g of glassItemsDatabase) {
+    if (!g.isDispatched && g.status !== "Rejected" && g.packingRackNo && !g.sentToFinished) {
+      const gPairId = (g as any).dguPairId || (g as any).lamPairId;
+      if (gPairId) {
+        const isPartnerSent = glassItemsDatabase.some(
+          (other) => other.id !== g.id && ((other as any).dguPairId === gPairId || (other as any).lamPairId === gPairId) && other.sentToFinished
+        );
+        if (isPartnerSent) {
+          if (!targetItems.some((t) => t.id === g.id) && !additionalPartners.some((t) => t.id === g.id)) {
+            additionalPartners.push(g);
+          }
+        }
+      }
+    }
+  }
+
+  const allToSend = [...targetItems, ...additionalPartners];
+  if (allToSend.length === 0) {
+    res.status(400).json({ error: "No eligible glass units found to send to Finished stage." });
+    return;
+  }
+
+  for (const item of allToSend) {
+    item.currentStage = "Finished";
+    item.sentToFinished = true;
+    item.sentToFinishedAt = nowIso;
+    item.sentToFinishedBy = cleanOperator;
+    item.packingStatus = "Packed";
+    if (!item.completedStages) item.completedStages = [];
+    if (!item.completedStages.includes("Finished")) {
+      item.completedStages.push("Finished");
+    }
+    item.updatedAt = nowIso;
+
+    productionHistoryDatabase.unshift({
+      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      serialNumber: item.serialNumber,
+      barcode: item.barcode,
+      piNumber: item.piNumber,
+      itemOrBatch: item.serialNumber,
+      action: "Sent to Finished Stage",
+      prevStatus: "Packing",
+      newStatus: "Finished",
+      stage: "Finished",
+      status: "Completed",
+      operator: cleanOperator,
+      user: cleanOperator,
+      timestamp: nowIso,
+      remarks: `Sent from ${item.packingRackNo || "Packing"} to Finished Glass stage by ${cleanOperator}`,
+    });
+  }
+
+  saveDatabaseToDisk(true);
+  broadcastUpdate("stage_advanced", { count: allToSend.length, action: "sent_to_finished" });
+
+  res.json({
+    success: true,
+    message: `Successfully sent ${allToSend.length} piece(s) to Finished Glass stage`,
+    count: allToSend.length,
+    items: allToSend.map((i) => ({ id: i.id, serialNumber: i.serialNumber })),
   });
 };

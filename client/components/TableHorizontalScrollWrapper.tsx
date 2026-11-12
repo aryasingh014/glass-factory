@@ -142,7 +142,7 @@ export const TableHorizontalScrollWrapper: React.FC<TableHorizontalScrollWrapper
     <div className={`relative w-full flex flex-col ${className}`}>
       {/* Top Synchronized Scrollbar Bar */}
       {hasOverflow && (
-        <div className="w-full flex justify-end items-center bg-slate-50/90 border-b border-slate-200/90 px-3 py-1.5 shrink-0 select-none">
+        <div className="w-full flex justify-end items-center bg-slate-50/90 border-b border-slate-200/90 px-3 py-1.5 shrink-0 select-none print:hidden">
           <div className="flex items-center gap-2 w-1/2 max-w-xl">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">↔ Scroll</span>
             
@@ -192,7 +192,7 @@ export const TableHorizontalScrollWrapper: React.FC<TableHorizontalScrollWrapper
       <div
         ref={bottomScrollRef}
         onScroll={handleTableScroll}
-        className="table-scrollbar-bottom overflow-x-auto w-full"
+        className="table-scrollbar-bottom overflow-x-auto w-full print:overflow-visible"
       >
         {children}
       </div>

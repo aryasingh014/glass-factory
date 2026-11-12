@@ -33,7 +33,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GlassItem, PIMaster, DashboardStats, ProductionStage } from "@shared/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, calculateAssembledUnits } from "@/lib/utils";
+import {
+  formatBatchNumber,
+  formatPlatformDate,
+  formatPlatformTime,
+  getItemFinish,
+  isDguGlass,
+  isLaminatedGlass,
+  isDlguGlass,
+  isDispatchedItem,
+  calculateAssembledUnits,
+  isPackingIguItem,
+  isPackingLamiItem,
+  isItemInPackingStage,
+  isItemInFinishedStage,
+  parseRackInfo,
+} from "@/lib/utils";
 
 interface ProductionOverviewViewProps {
   items: GlassItem[];
@@ -50,7 +65,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
   onNavigateTab,
   onOpenPIDetails,
 }) => {
-  const [stageFilter, setStageFilter] = useState<"ALL" | "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
+  const [stageFilter, setStageFilter] = useState<"ALL" | "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
   const [stationMenuOpen, setStationMenuOpen] = useState(false);
   const stationMenuRef = useRef<HTMLDivElement>(null);
@@ -83,9 +98,12 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const cuttingItemsList = items.filter((i) => !isDispatchedItem(i) && (i.currentStage === "Cutting" || (!i.currentStage && i.status !== "Rejected")) && i.status !== "Rejected");
     const polishingItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Polishing" && i.status !== "Rejected");
     const pairingItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Pairing" && i.status !== "Rejected");
-    const dguItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "DGU" && i.status !== "Rejected");
-    const laminationItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Lamination" && i.status !== "Rejected");
-    const finishedItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Finished" && i.status !== "Rejected");
+    const dguItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "DGU" && !isItemInPackingStage(i) && !isItemInFinishedStage(i) && i.status !== "Rejected");
+    const laminationItemsList = items.filter((i) => !isDispatchedItem(i) && i.currentStage === "Lamination" && !isItemInPackingStage(i) && !isItemInFinishedStage(i) && i.status !== "Rejected");
+    const packingIguItemsList = items.filter((i) => isPackingIguItem(i));
+    const packingLamiItemsList = items.filter((i) => isPackingLamiItem(i));
+    const packingItemsList = items.filter((i) => isItemInPackingStage(i));
+    const finishedItemsList = items.filter((i) => isItemInFinishedStage(i));
     const rejectedItemsList = items.filter((i) => i.status === "Rejected");
     const reworkItemsList = items.filter((i) => i.status === "Reworking" || ((i as any).reworkCount && (i as any).reworkCount > 0));
 
@@ -94,6 +112,11 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const pairingCount = pairingItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const dguCount = dguItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const laminationCount = laminationItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const packingIguCount = packingIguItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const packingLamiCount = packingLamiItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const packingCount = packingIguCount + packingLamiCount;
+    const packingIguUnits = Math.ceil(packingIguCount / 2);
+    const packingLamiUnits = Math.ceil(packingLamiCount / 2);
     const finishedCount = finishedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const rejectedCount = Math.max(stats?.rejectItems ?? 0, rejectedItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0));
     const reworkCount = Math.max(stats?.reworkItems ?? 0, reworkItemsList.reduce((acc, curr) => acc + (curr.qty || 1), 0));
@@ -110,11 +133,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
     const pairingSqm = parseFloat(pairingItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const dguSqm = parseFloat(dguItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
     const laminationSqm = parseFloat(laminationItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const packingIguSqm = parseFloat(packingIguItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const packingLamiSqm = parseFloat(packingLamiItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
+    const packingSqm = parseFloat((packingIguSqm + packingLamiSqm).toFixed(2));
     const finishedSqm = parseFloat(finishedItemsList.reduce((acc, curr) => acc + (curr.sqm || 0), 0).toFixed(2));
 
-    // In Progress Quantity (Active panes in Cutting, Polishing, Pairing, DGU, Lamination)
-    const inProgressCount = cuttingCount + polishingCount + pairingCount + dguCount + laminationCount;
-    const inProgressSqm = parseFloat((cuttingSqm + polishingSqm + pairingSqm + dguSqm + laminationSqm).toFixed(2));
+    // In Progress Quantity (Active panes in Cutting, Polishing, Pairing, DGU, Lamination, Packing)
+    const inProgressCount = cuttingCount + polishingCount + pairingCount + dguCount + laminationCount + packingCount;
+    const inProgressSqm = parseFloat((cuttingSqm + polishingSqm + pairingSqm + dguSqm + laminationSqm + packingSqm).toFixed(2));
 
     // Pending Cutting / Unprocessed Panes
     const pendingCuttingCount = cuttingItemsList.filter((i) => !i.completedStages || i.completedStages.length === 0).reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -212,6 +238,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
     // Overall Progress & Quality Yield
     const completionPercent = totalItems > 0 ? Math.round((finishedCount / totalItems) * 100) : 0;
+    const packingPercent = totalItems > 0 ? parseFloat(((packingCount / totalItems) * 100).toFixed(1)) : 0;
     const inProgressPercent = totalItems > 0 ? Math.round((inProgressCount / totalItems) * 100) : 0;
     const pendingPercent = totalItems > 0 ? Math.round((pendingCuttingCount / totalItems) * 100) : 0;
     const rejectedPercent = totalItems > 0 ? parseFloat(((rejectedCount / totalItems) * 100).toFixed(1)) : 0;
@@ -248,6 +275,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       dguSqm,
       laminationCount,
       laminationSqm,
+      packingIguCount,
+      packingIguUnits,
+      packingIguSqm,
+      packingLamiCount,
+      packingLamiUnits,
+      packingLamiSqm,
+      packingCount,
+      packingSqm,
       // Workstation Stage Queue WIP
       assemblyCount,
       assemblyUnits,
@@ -279,6 +314,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       monoTotalSqm,
       // Percentages & Rates
       completionPercent,
+      packingPercent,
       inProgressPercent,
       pendingPercent,
       rejectedPercent,
@@ -304,13 +340,18 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       pairingCount: number;
       dguCount: number;
       laminationCount: number;
+      packingIguCount: number;
+      packingLamiCount: number;
+      packingCount: number;
+      packingType?: "IGU" | "LAMI";
       finishedCount: number;
       rejectedCount: number;
       reworkCount: number;
       totalSqm: number;
       finish: "Clear" | "Colour";
       glassTypes: Set<string>;
-      primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished";
+      primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished";
+      primaryTab: "cutting" | "polishing" | "pairing" | "dgu" | "lamination" | "packing-igu" | "packing-lami" | "finished";
       progress: number;
       createdAt: string | Date;
       fileName?: string;
@@ -335,6 +376,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
+          packingIguCount: 0,
+          packingLamiCount: 0,
+          packingCount: 0,
+          packingType: undefined,
           finishedCount: 0,
           rejectedCount: 0,
           reworkCount: 0,
@@ -342,6 +387,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           finish: "Clear",
           glassTypes: new Set<string>(),
           primaryStage: "Cutting",
+          primaryTab: "cutting",
           progress: 0,
           createdAt: parentPI?.createdAt || item.updatedAt || new Date().toISOString(),
         });
@@ -358,6 +404,16 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
       if (isDispatchedItem(item)) {
         // Dispatched items belong only in Dispatched History
+      } else if (isPackingIguItem(item)) {
+        b.packingIguCount += itemPieces;
+        b.packingCount += itemPieces;
+        b.packingType = "IGU";
+      } else if (isPackingLamiItem(item)) {
+        b.packingLamiCount += itemPieces;
+        b.packingCount += itemPieces;
+        b.packingType = "LAMI";
+      } else if (isItemInFinishedStage(item)) {
+        b.finishedCount += itemPieces;
       } else if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
       else if (st === "polishing") b.polishingCount += itemPieces;
       else if (st === "pairing") b.pairingCount += itemPieces;
@@ -383,6 +439,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
+          packingIguCount: 0,
+          packingLamiCount: 0,
+          packingCount: 0,
+          packingType: undefined,
           finishedCount: p.completedItemsCount || 0,
           rejectedCount: 0,
           reworkCount: 0,
@@ -390,6 +450,7 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           finish: p.colorOrClear === "Colour" ? "Colour" : "Clear",
           glassTypes: new Set<string>(),
           primaryStage: "Cutting",
+          primaryTab: "cutting",
           progress: (p.totalQty || p.itemsCount) ? Math.round(((p.completedItemsCount || 0) / (p.totalQty || p.itemsCount)) * 100) : 0,
           createdAt: p.createdAt || new Date(),
         });
@@ -409,13 +470,34 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
 
       const finish: "Clear" | "Colour" = isColourBatch ? "Colour" : "Clear";
 
-      let primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished" = "Cutting";
-      if (b.cuttingCount > 0) primaryStage = "Cutting";
-      else if (b.polishingCount > 0) primaryStage = "Polishing";
-      else if (b.pairingCount > 0) primaryStage = "Pairing";
-      else if (b.dguCount > 0) primaryStage = "DGU";
-      else if (b.laminationCount > 0) primaryStage = "Lamination";
-      else if (b.finishedCount > 0) primaryStage = "Finished";
+      let primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished" = "Cutting";
+      let primaryTab: "cutting" | "polishing" | "pairing" | "dgu" | "lamination" | "packing-igu" | "packing-lami" | "finished" = "cutting";
+
+      if (b.cuttingCount > 0) {
+        primaryStage = "Cutting";
+        primaryTab = "cutting";
+      } else if (b.polishingCount > 0) {
+        primaryStage = "Polishing";
+        primaryTab = "polishing";
+      } else if (b.pairingCount > 0) {
+        primaryStage = "Pairing";
+        primaryTab = "pairing";
+      } else if (b.dguCount > 0) {
+        primaryStage = "DGU";
+        primaryTab = "dgu";
+      } else if (b.laminationCount > 0) {
+        primaryStage = "Lamination";
+        primaryTab = "lamination";
+      } else if (b.packingIguCount > 0) {
+        primaryStage = "Packing IGU";
+        primaryTab = "packing-igu";
+      } else if (b.packingLamiCount > 0) {
+        primaryStage = "Auto Clave";
+        primaryTab = "packing-lami";
+      } else if (b.finishedCount > 0) {
+        primaryStage = "Finished";
+        primaryTab = "finished";
+      }
 
       const totalPieces = b.items.reduce((acc, curr) => acc + (curr.qty || 1), 0) || parentPI?.totalQty || parentPI?.itemsCount || 1;
       const progress = Math.min(100, Math.round((b.finishedCount / totalPieces) * 100));
@@ -447,6 +529,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
         if (stageFilter === "Pairing" && b.pairingCount === 0) return false;
         if (stageFilter === "DGU" && b.dguCount === 0) return false;
         if (stageFilter === "Lamination" && b.laminationCount === 0) return false;
+        if (stageFilter === "Packing IGU" && b.packingIguCount === 0) return false;
+        if (stageFilter === "Auto Clave" && b.packingLamiCount === 0) return false;
         if (stageFilter === "Finished" && b.finishedCount === 0) return false;
       }
 
@@ -623,7 +707,51 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                   </span>
                 </button>
 
-                {/* 6. Dispatch & Shipping */}
+                {/* 6. Packing List - IGU */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("packing-igu");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-teal-50 text-slate-800 hover:text-teal-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
+                      <Boxes className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">IGU Packing List</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">DGU / DLGU Warehouse Racks</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200">
+                    {metrics.packingIguUnits > 0 ? `${metrics.packingIguUnits} Units` : `${metrics.packingIguCount} Pcs`}
+                  </span>
+                </button>
+
+                {/* 7. Auto Clave Packing List */}
+                <button
+                  onClick={() => {
+                    onNavigateTab("packing-lami");
+                    setStationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl text-left hover:bg-amber-50 text-slate-800 hover:text-amber-900 transition-colors group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-none">Auto Clave Packing List</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">Lamination Racks &amp; Autoclave</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                    {metrics.packingLamiUnits > 0 ? `${metrics.packingLamiUnits} Pairs` : `${metrics.packingLamiCount} Pcs`}
+                  </span>
+                </button>
+
+                {/* 8. Dispatch & Shipping */}
                 <button
                   onClick={() => {
                     onNavigateTab("finished");
@@ -653,187 +781,200 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
       {/* ── Section 1: Executive Production Summary Grid ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
         {/* 1. Total Production */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pis")} style={{cursor:'pointer'}} title="View all Production Instructions & Batches">
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pis")} style={{ cursor: 'pointer' }} title="View all Production Instructions & Batches">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-blue"><Boxes className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Total Production</h3>
-              <strong>{metrics.totalItems} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
+              <strong>{metrics.totalItems} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Plant Total</span></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-blue" title={`${metrics.totalSqm.toFixed(1)} m² • ${batchRows.length} Active Batches`}>
-            <span style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">{metrics.totalSqm.toFixed(1)} m² • {batchRows.length} Batches</span>
           </div>
         </div>
 
         {/* 2. In-Progress Quantity */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{cursor:'pointer'}} title="View Active Work in Progress">
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("cutting")} style={{ cursor: 'pointer' }} title="View Active Work in Progress">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-blue"><Clock className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>In-Progress WIP</h3>
-              <strong>{metrics.inProgressCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
+              <strong>{metrics.inProgressCount} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Active</span><small>Pipeline</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-blue" title={`${metrics.inProgressSqm.toFixed(1)} m² Active WIP Volume`}>
-            <span style={{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">{metrics.inProgressSqm.toFixed(1)} m² WIP</span>
           </div>
         </div>
 
         {/* 3. Pairing Buffer */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pairing")} style={{cursor:'pointer'}} title="View Glass Pairing & Assembly Buffer">
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("pairing")} style={{ cursor: 'pointer' }} title="View Glass Pairing & Assembly Buffer">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-purple"><Layers className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Pairing Buffer</h3>
-              <strong>{metrics.pairingCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
-              <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>{metrics.pairingPairs}</span><small>Pairs Ready</small></div>
+              <strong>{metrics.pairingCount} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
+              <div className="ppb-metric-change"><span style={{ color: '#7e22ce', fontWeight: 700 }}>{metrics.pairingPairs}</span><small>Pairs Ready</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-purple" title={`${metrics.pairingSqm.toFixed(1)} m² Pairing Buffer Volume`}>
-            <span style={{width:6,height:6,borderRadius:'50%',background:'#a855f7',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#a855f7', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">{metrics.pairingSqm.toFixed(1)} m² Volume</span>
           </div>
         </div>
 
         {/* 4. Completed Pieces & Units */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{cursor:'pointer'}} title={`Quality Inspected: ${metrics.finishedUnits} Units ready for dispatch (${metrics.finishedCount} Glass Panes)`}>
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("finished")} style={{ cursor: 'pointer' }} title={`Quality Inspected: ${metrics.finishedUnits} Units ready for dispatch (${metrics.finishedCount} Glass Panes)`}>
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-green"><CheckCircle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Completed Pieces</h3>
-              <strong>{metrics.finishedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
+              <strong>{metrics.finishedCount} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
               <div className="ppb-metric-change"><span className="ppb-metric-change-up">Ready</span><small>Dispatch ({metrics.finishedUnits} Units)</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-green" title="Quality Inspected - Completed and Ready for Dispatch">
-            <span style={{width:6,height:6,borderRadius:'50%',background:'#10b981',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">Quality Inspected • {metrics.finishedUnits} Units Ready</span>
           </div>
         </div>
 
         {/* 5. Rejected Glass */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rejection Reports & Quality Logs">
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{ cursor: 'pointer' }} title="View Rejection Reports & Quality Logs">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-red"><AlertTriangle className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rejected Glass</h3>
-              <strong>{metrics.rejectedCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
-              <div className="ppb-metric-change"><span style={{color: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', fontWeight:700}}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>{metrics.rejectedCount === 0 ? "Quality" : "Audit"}</small></div>
+              <strong>{metrics.rejectedCount} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
+              <div className="ppb-metric-change"><span style={{ color: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>{metrics.rejectedCount === 0 ? "Zero Defect" : "Logged"}</span><small>{metrics.rejectedCount === 0 ? "Quality" : "Audit"}</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-red" title={metrics.rejectedCount === 0 ? "No rejection today - Zero Defects" : `${metrics.rejectedCount} items rejected`}>
-            <span style={{width:6,height:6,borderRadius:'50%',background: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: metrics.rejectedCount === 0 ? '#10b981' : '#ef4444', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">{metrics.rejectedCount === 0 ? "No rejection today" : "Rejection logged"}</span>
           </div>
         </div>
 
         {/* 6. Rework Glass */}
-        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{cursor:'pointer'}} title="View Rework Routing & History">
+        <div className="ppb-metric-card overview-small-card" onClick={() => onNavigateTab("reports")} style={{ cursor: 'pointer' }} title="View Rework Routing & History">
           <div className="ppb-metric-main">
             <span className="ppb-metric-icon ppb-metric-icon-purple"><RotateCw className="w-5 h-5" /></span>
             <div className="ppb-metric-copy">
               <h3>Rework Glass</h3>
-              <strong>{metrics.reworkCount} <small style={{fontSize:'10px',color:'#94a3b8'}}>Pcs</small></strong>
-              <div className="ppb-metric-change"><span style={{color:'#7e22ce', fontWeight:700}}>{metrics.reworkCount === 0 ? "Normal" : "Active"}</span><small>Routing</small></div>
+              <strong>{metrics.reworkCount} <small style={{ fontSize: '10px', color: '#94a3b8' }}>Pcs</small></strong>
+              <div className="ppb-metric-change"><span style={{ color: '#7e22ce', fontWeight: 700 }}>{metrics.reworkCount === 0 ? "Normal" : "Active"}</span><small>Routing</small></div>
             </div>
           </div>
           <div className="ppb-metric-note ppb-note-purple" title="Secondary Route Activity">
-            <span style={{width:6,height:6,borderRadius:'50%',background:'#a855f7',display:'inline-block',flexShrink:0}} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#a855f7', display: 'inline-block', flexShrink: 0 }} />
             <span className="truncate">{metrics.reworkCount === 0 ? "No active rework" : "Secondary Route Active"}</span>
           </div>
         </div>
       </div>
 
-      {/* ── Section 2 & 3: Horizontal Queues ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        {/* Section 2: Specialty Glass */}
-        <section className="ppb-panel h-full flex flex-col justify-between">
-          <div className="ppb-panel-heading">
-            <div><Sparkles className="ppb-heading-icon" size={20} /><h3>Specialty Glass Assembly</h3></div>
-            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Queue WIP &amp; Order Targets</div>
+      {/* ── Section 2: Stage-Wise Workflows (Full Plant Pipeline) ── */}
+      <section className="ppb-panel w-full mb-4">
+        <div className="ppb-panel-heading">
+          <div><Activity className="ppb-heading-icon" size={20} /><h3>Stage-Wise Workflows</h3></div>
+          <div style={{ fontSize: 10, color: '#607d8b', fontWeight: 700 }}>Cutting ➔ Polishing ➔ Pairing ➔ Assembly ➔ Packing ➔ Dispatch</div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+          <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-blue cursor-pointer" onClick={() => onNavigateTab("cutting")}>
+            <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={16} /></span>
+            <div><strong>1. Cutting</strong><span className="ppb-count"><b>{metrics.cuttingCount}</b> Pcs</span></div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <div className="ppb-queue-tile ppb-queue-tile-emerald cursor-pointer" onClick={() => onNavigateTab("dgu")} title={`DGU Station Queue: ${metrics.dguStageUnits} Units in line (${metrics.dguCount} panes) • Total Order Target: ${metrics.dguTotalUnits} Units`}>
-              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={20} /></span>
-              <div>
-                <strong style={{fontSize:'11.5px'}}>DGU / IGU Units</strong>
-                <span className="ppb-count">
-                  <b>{metrics.dguStageUnits}</b> in Line <small style={{fontSize:'10px', color:'#64748b', fontWeight:600}}>({metrics.dguTotalUnits} Target)</small>
-                </span>
-              </div>
-            </div>
-            <div className="ppb-queue-tile ppb-queue-tile-purple cursor-pointer" onClick={() => onNavigateTab("pairing")} title={`DLGU Multi-Layer Queue: ${metrics.dlguStageUnits} Units in line • Total Order Target: ${metrics.dlguTotalUnits} Units`}>
-              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
-              <div>
-                <strong style={{fontSize:'11.5px'}}>DLGU Multi-Layer</strong>
-                <span className="ppb-count">
-                  <b>{metrics.dlguStageUnits}</b> in Line <small style={{fontSize:'10px', color:'#64748b', fontWeight:600}}>({metrics.dlguTotalUnits} Target)</small>
-                </span>
-              </div>
-            </div>
-            <div className="ppb-queue-tile ppb-queue-tile-amber cursor-pointer" onClick={() => onNavigateTab("lamination")} title={`Lamination Line Queue: ${metrics.laminationStageUnits} Pairs in autoclave • Total Order Target: ${metrics.lamTotalUnits} Pairs`}>
-              <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={20} /></span>
-              <div>
-                <strong style={{fontSize:'11.5px'}}>Lamination Line</strong>
-                <span className="ppb-count">
-                  <b>{metrics.laminationStageUnits}</b> in Autoclave <small style={{fontSize:'10px', color:'#64748b', fontWeight:600}}>({metrics.lamTotalUnits} Target)</small>
-                </span>
-              </div>
-            </div>
+          <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-cyan cursor-pointer" onClick={() => onNavigateTab("polishing")}>
+            <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={16} /></span>
+            <div><strong>2. Polish</strong><span className="ppb-count"><b>{metrics.polishingCount}</b> Pcs</span></div>
           </div>
-        </section>
+          <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-purple cursor-pointer" onClick={() => onNavigateTab("pairing")}>
+            <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={16} /></span>
+            <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Pcs</span></div>
+          </div>
+          <div
+            className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald cursor-pointer"
+            onClick={() => onNavigateTab("dgu")}
+            title={`${metrics.assemblyUnits} Assembled Units in DGU & Lamination Lines (${metrics.assemblyCount} Glass Panes)`}
+          >
+            <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={16} /></span>
+            <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.assemblyUnits}</b> Units</span></div>
+          </div>
+          <div
+            className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-teal cursor-pointer"
+            onClick={() => onNavigateTab("packing-igu")}
+            title={`${metrics.packingIguUnits} Units in IGU Packing List (${metrics.packingIguCount} Panes, ${metrics.packingIguSqm.toFixed(1)} m²)`}
+          >
+            <span className="ppb-queue-icon ppb-queue-icon-teal"><Boxes size={16} /></span>
+            <div><strong>5. IGU Packing List</strong><span className="ppb-count"><b>{metrics.packingIguUnits}</b> Units</span></div>
+          </div>
+          <div
+            className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-amber cursor-pointer"
+            onClick={() => onNavigateTab("packing-lami")}
+            title={`${metrics.packingLamiUnits} Units in Auto Clave Packing List (${metrics.packingLamiCount} Panes, ${metrics.packingLamiSqm.toFixed(1)} m²)`}
+          >
+            <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={16} /></span>
+            <div><strong>6. Auto Clave Packing List</strong><span className="ppb-count"><b>{metrics.packingLamiUnits}</b> Units</span></div>
+          </div>
+          <div
+            className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green cursor-pointer"
+            onClick={() => onNavigateTab("finished")}
+            title={`${metrics.finishedUnits} Finished Units Ready for Dispatch (${metrics.finishedCount} Glass Panes)`}
+          >
+            <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={16} /></span>
+            <div><strong>7. Dispatch</strong><span className="ppb-count"><b>{metrics.finishedUnits}</b> Units</span></div>
+          </div>
+        </div>
+      </section>
 
-        {/* Section 3: Stage-Wise Workflows */}
-        <section className="ppb-panel h-full flex flex-col justify-between">
-          <div className="ppb-panel-heading">
-            <div><Activity className="ppb-heading-icon" size={20} /><h3>Stage-Wise Workflows</h3></div>
-            <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>Cutting ➔ Polishing ➔ Assembly ➔ Dispatch</div>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-blue" onClick={() => onNavigateTab("cutting")}>
-              <span className="ppb-queue-icon ppb-queue-icon-blue"><Scissors size={14} /></span>
-              <div><strong>1. Cutting</strong><span className="ppb-count"><b>{metrics.cuttingCount}</b> Pcs</span></div>
-            </div>
-            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-cyan" onClick={() => onNavigateTab("polishing")} style={{cursor: 'pointer'}}>
-              <span className="ppb-queue-icon ppb-queue-icon-cyan"><Sparkles size={14} /></span>
-              <div><strong>2. Polish</strong><span className="ppb-count"><b>{metrics.polishingCount}</b> Pcs</span></div>
-            </div>
-            <div className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-purple" onClick={() => onNavigateTab("pairing")}>
-              <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={14} /></span>
-              <div><strong>3. Pairing</strong><span className="ppb-count"><b>{metrics.pairingCount}</b> Pcs</span></div>
-            </div>
-            <div
-              className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-emerald cursor-pointer"
-              onClick={() => onNavigateTab("dgu")}
-              title={`${metrics.assemblyUnits} Assembled Units in DGU & Lamination Lines (${metrics.assemblyCount} Glass Panes)`}
-            >
-              <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={14} /></span>
-              <div><strong>4. Assembly</strong><span className="ppb-count"><b>{metrics.assemblyUnits}</b> Units</span></div>
-            </div>
-            <div
-              className="ppb-queue-tile ppb-workflow-tile ppb-queue-tile-green cursor-pointer"
-              onClick={() => onNavigateTab("finished")}
-              title={`${metrics.finishedUnits} Finished Units Ready for Dispatch (${metrics.finishedCount} Glass Panes)`}
-            >
-              <span className="ppb-queue-icon ppb-queue-icon-green"><CheckCircle size={14} /></span>
-              <div><strong>5. Dispatch</strong><span className="ppb-count"><b>{metrics.finishedUnits}</b> Units</span></div>
+      {/* ── Section 3: Specialty Glass Assembly Lines ── */}
+      <section className="ppb-panel w-full mb-4">
+        <div className="ppb-panel-heading">
+          <div><Sparkles className="ppb-heading-icon" size={20} /><h3>Specialty Glass Assembly Lines</h3></div>
+          <div style={{ fontSize: 10, color: '#607d8b', fontWeight: 700 }}>Queue WIP &amp; Order Targets</div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="ppb-queue-tile ppb-queue-tile-emerald cursor-pointer" onClick={() => onNavigateTab("dgu")} title={`DGU Station Queue: ${metrics.dguStageUnits} Units in line (${metrics.dguCount} panes) • Total Order Target: ${metrics.dguTotalUnits} Units`}>
+            <span className="ppb-queue-icon ppb-queue-icon-emerald"><ClipboardList size={20} /></span>
+            <div>
+              <strong style={{ fontSize: '12px' }}>DGU / IGU Units</strong>
+              <span className="ppb-count">
+                <b>{metrics.dguStageUnits}</b> in Line <small style={{ fontSize: '10.5px', color: '#64748b', fontWeight: 600 }}>({metrics.dguTotalUnits} Target)</small>
+              </span>
             </div>
           </div>
-        </section>
-      </div>
+          <div className="ppb-queue-tile ppb-queue-tile-purple cursor-pointer" onClick={() => onNavigateTab("pairing")} title={`DLGU Multi-Layer Queue: ${metrics.dlguStageUnits} Units in line • Total Order Target: ${metrics.dlguTotalUnits} Units`}>
+            <span className="ppb-queue-icon ppb-queue-icon-purple"><Layers size={20} /></span>
+            <div>
+              <strong style={{ fontSize: '12px' }}>DLGU Multi-Layer</strong>
+              <span className="ppb-count">
+                <b>{metrics.dlguStageUnits}</b> in Line <small style={{ fontSize: '10.5px', color: '#64748b', fontWeight: 600 }}>({metrics.dlguTotalUnits} Target)</small>
+              </span>
+            </div>
+          </div>
+          <div className="ppb-queue-tile ppb-queue-tile-amber cursor-pointer" onClick={() => onNavigateTab("lamination")} title={`Lamination Line Queue: ${metrics.laminationStageUnits} Pairs in autoclave • Total Order Target: ${metrics.lamTotalUnits} Pairs`}>
+            <span className="ppb-queue-icon ppb-queue-icon-amber"><Flame size={20} /></span>
+            <div>
+              <strong style={{ fontSize: '12px' }}>Lamination Line</strong>
+              <span className="ppb-count">
+                <b>{metrics.laminationStageUnits}</b> in Autoclave <small style={{ fontSize: '10.5px', color: '#64748b', fontWeight: 600 }}>({metrics.lamTotalUnits} Target)</small>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* ── Section 4: Plant-Level Progress Bar & Live Batch Matrix Table ── */}
       <section className="ppb-panel ppb-summary-panel w-full">
         <div className="ppb-panel-heading">
           <div><TrendingUp className="ppb-heading-icon" size={20} /><h3>Plant Completion Matrix</h3><span className="ppb-live-badge"><i />Live</span></div>
-          <div style={{fontSize:10,color:'#607d8b',fontWeight:700}}>{metrics.completionPercent}% Completed</div>
+          <div style={{ fontSize: 10, color: '#607d8b', fontWeight: 700 }}>{metrics.completionPercent}% Completed</div>
         </div>
-        
+
         <div className="space-y-4 mb-4">
           <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden flex shadow-inner">
             {metrics.completionPercent > 0 && (
@@ -841,6 +982,13 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                 className="bg-emerald-500 h-full transition-all duration-500"
                 style={{ width: `${metrics.completionPercent}%` }}
                 title={`Completed: ${metrics.finishedCount} pcs (${metrics.completionPercent}%)`}
+              />
+            )}
+            {metrics.packingPercent > 0 && (
+              <div
+                className="bg-teal-500 h-full transition-all duration-500"
+                style={{ width: `${metrics.packingPercent}%` }}
+                title={`In IGU / Auto Clave Packing List: ${metrics.packingCount} pcs (${metrics.packingPercent}%)`}
               />
             )}
             {metrics.activeDownstreamPercent > 0 && (
@@ -872,6 +1020,10 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
                 <span>Completed: <strong className="text-slate-800">{metrics.finishedCount} Pcs ({metrics.finishedUnits} Units)</strong> ({metrics.completionPercent}%)</span>
               </span>
+              <span className="flex items-center gap-1.5 cursor-pointer" onClick={() => setStageFilter("Packing IGU")} title="Filter by IGU Packing List & Auto Clave Packing List">
+                <span className="w-2.5 h-2.5 rounded-full bg-teal-500 flex-shrink-0" />
+                <span>Packing: <strong className="text-slate-800">{metrics.packingCount} Pcs</strong> ({metrics.packingPercent}%)</span>
+              </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 flex-shrink-0" />
                 <span>In Process: <strong className="text-slate-800">{metrics.activeDownstreamCount} Pcs</strong> ({metrics.activeDownstreamPercent}%)</span>
@@ -897,17 +1049,22 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             {/* Stage Filters */}
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-              {(["ALL", "Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Finished"] as const).map((st) => (
+              {(["ALL", "Cutting", "Polishing", "Pairing", "DGU", "Lamination", "Packing IGU", "Auto Clave", "Finished"] as const).map((st) => (
                 <button
                   key={st}
                   onClick={() => setStageFilter(st)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                    stageFilter === st
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${stageFilter === st
                       ? "bg-blue-600 text-white shadow-xs"
                       : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                  }`}
+                    }`}
                 >
-                  {st === "ALL" ? "All Stages" : st}
+                  {st === "ALL"
+                    ? "All Stages"
+                    : st === "Packing IGU"
+                    ? "IGU Packing List"
+                    : st === "Auto Clave"
+                    ? "Auto Clave Packing List"
+                    : st}
                 </button>
               ))}
             </div>
@@ -958,15 +1115,14 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {/* Product Category Badge: DGU / DLGU / Lamination / Monolithic */}
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide border shadow-2xs ${
-                              b.productCategory === "DLGU"
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide border shadow-2xs ${b.productCategory === "DLGU"
                                 ? "bg-purple-600 text-white border-purple-700"
                                 : b.productCategory === "DGU"
-                                ? "bg-teal-600 text-white border-teal-700"
-                                : b.productCategory === "Lamination"
-                                ? "bg-amber-600 text-white border-amber-700"
-                                : "bg-slate-700 text-white border-slate-800"
-                            }`}
+                                  ? "bg-teal-600 text-white border-teal-700"
+                                  : b.productCategory === "Lamination"
+                                    ? "bg-amber-600 text-white border-amber-700"
+                                    : "bg-slate-700 text-white border-slate-800"
+                              }`}
                           >
                             {b.productCategory}
                           </span>
@@ -1003,49 +1159,57 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                     <td className="py-3 px-3 text-center">
                       <div className="flex items-center justify-center gap-1.5 flex-wrap">
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.cuttingCount > 0 ? "bg-purple-100 text-purple-800 border border-purple-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.cuttingCount > 0 ? "bg-purple-100 text-purple-800 border border-purple-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="Cutting Floor Panes"
                         >
                           Cut: {b.cuttingCount}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.polishingCount > 0 ? "bg-cyan-100 text-cyan-800 border border-cyan-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.polishingCount > 0 ? "bg-cyan-100 text-cyan-800 border border-cyan-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="Polishing Workstation Panes"
                         >
                           Polish: {b.polishingCount}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.pairingCount > 0 ? "bg-indigo-100 text-indigo-800 border border-indigo-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.pairingCount > 0 ? "bg-indigo-100 text-indigo-800 border border-indigo-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="Pairing Buffer Panes"
                         >
                           Pair: {b.pairingCount}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.dguCount > 0 ? "bg-teal-100 text-teal-800 border border-teal-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.dguCount > 0 ? "bg-teal-100 text-teal-800 border border-teal-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="DGU Assembly Station"
                         >
                           DGU: {b.dguCount}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.laminationCount > 0 ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.laminationCount > 0 ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="Lamination Autoclave"
                         >
                           Lam: {b.laminationCount}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
-                            b.finishedCount > 0 ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-slate-100 text-slate-400"
-                          }`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.packingIguCount > 0 ? "bg-teal-100 text-teal-800 border border-teal-200" : "bg-slate-100 text-slate-400"
+                            }`}
+                          title="IGU Packing List"
+                        >
+                          IGU Packing: {b.packingIguCount}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.packingLamiCount > 0 ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-slate-100 text-slate-400"
+                            }`}
+                          title="Auto Clave Packing List"
+                        >
+                          Auto Clave Packing: {Math.ceil(b.packingLamiCount / 2)}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black ${b.finishedCount > 0 ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-slate-100 text-slate-400"
+                            }`}
                           title="Finished Warehouse Ready"
                         >
                           Fin: {b.finishedCount}
@@ -1071,16 +1235,17 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
                         size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (b.primaryStage === "Cutting") onNavigateTab("cutting");
-                          else if (b.primaryStage === "Polishing") onNavigateTab("polishing");
-                          else if (b.primaryStage === "Pairing") onNavigateTab("pairing");
-                          else if (b.primaryStage === "DGU") onNavigateTab("dgu");
-                          else if (b.primaryStage === "Lamination") onNavigateTab("lamination");
-                          else onNavigateTab("finished");
+                          onNavigateTab(b.primaryTab);
                         }}
                         className="h-7 px-2.5 text-xs font-black bg-purple-50 hover:bg-purple-600 hover:text-white text-purple-700 rounded-lg transition-all"
                       >
-                        <span>Enter {b.primaryStage}</span>
+                        <span>
+                          {b.primaryStage === "Packing IGU"
+                            ? "Enter IGU Packing List"
+                            : b.primaryStage === "Auto Clave"
+                              ? "Enter Auto Clave Packing List"
+                              : `Enter ${b.primaryStage}`}
+                        </span>
                         <ArrowRight className="w-3 h-3 ml-1" />
                       </Button>
                     </td>
@@ -1096,8 +1261,8 @@ export const ProductionOverviewView: React.FC<ProductionOverviewViewProps> = ({
             <div className="text-[11px] text-slate-500 mt-0.5">Try changing stage or glass type filter to see all production batches.</div>
           </div>
         )}
-        
-          
+
+
       </section>
 
     </div>

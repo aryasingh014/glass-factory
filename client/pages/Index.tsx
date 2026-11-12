@@ -76,7 +76,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/context/AuthContext";
-import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, calculateAssembledUnits } from "@/lib/utils";
+import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, calculateAssembledUnits, countPackingUnits, parseRackInfo, isPackingIguItem, isPackingLamiItem, isItemInPackingStage, isItemInFinishedStage, getAllocatedPackingRack, getActivePackingShift } from "@/lib/utils";
 import { exportStageWipToExcel, exportBatchProgressMatrixToExcel } from "@/lib/excelExport";
 
 import { StickerUploaderModal } from "@/components/StickerUploaderModal";
@@ -109,6 +109,9 @@ const PerformanceAnalyticsView = React.lazy(() =>
 );
 const DispatchedHistoryView = React.lazy(() =>
   import("@/components/DispatchedHistoryView").then((m) => ({ default: m.DispatchedHistoryView }))
+);
+const PackingListView = React.lazy(() =>
+  import("@/components/PackingListView").then((m) => ({ default: m.PackingListView }))
 );
 
 // Standalone Dubai Live Clock to avoid re-rendering entire Index component every 1 second
@@ -147,7 +150,7 @@ const DubaiClock: React.FC = React.memo(() => {
 export default function Index() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const validTabs = ["overview", "production-overview", "pis", "cutting", "polishing", "pairing", "dgu", "lamination", "finished", "dispatched-history", "reports", "analytics", "settings"] as const;
+  const validTabs = ["overview", "production-overview", "pis", "cutting", "polishing", "pairing", "dgu", "packing-igu", "lamination", "packing-lami", "finished", "dispatched-history", "reports", "analytics", "settings"] as const;
   type TabType = typeof validTabs[number];
 
   const currentTabFromUrl = searchParams.get("tab") as TabType | null;
@@ -193,16 +196,18 @@ export default function Index() {
 
     // If Operator is assigned to specific workstation stages:
     if (user?.role === "Operator" && user.assignedStages && user.assignedStages.length > 0) {
+      const assignedProductionStages = user.assignedStages.filter(
+        (s): s is ProductionStage => s !== "Packing IGU" && s !== "Auto Clave"
+      );
       // 1. If current active tab matches ANY of the operator's assigned stages, use that active stage!
-      if (activeStage && user.assignedStages.includes(activeStage)) {
+      if (activeStage && assignedProductionStages.includes(activeStage)) {
         return activeStage;
       }
-      // 2. If operator has a single assigned stage, lock to it
-      if (user.assignedStages.length === 1) {
-        return user.assignedStages[0];
+      // 2. If operator has assigned workstation stages, default to the primary production stage
+      if (assignedProductionStages.length > 0) {
+        return assignedProductionStages[0];
       }
-      // 3. For multi-stage operators viewing non-workstation tabs (e.g. overview), default to primary stage
-      return user.assignedStages[0];
+      return activeStage;
     }
 
     // For Admin, Supervisor, or unassigned users: follows active workstation tab directly
@@ -526,11 +531,27 @@ export default function Index() {
             idx = route.indexOf(fromStage);
           }
           const nextStage: ProductionStage = idx >= 0 && idx < route.length - 1 ? route[idx + 1] : "Finished";
+          const goesToPackingQueue =
+            fromStage === "DGU" ||
+            fromStage === "Lamination" ||
+            isDguGlass(item) ||
+            isDlguGlass(item) ||
+            isLaminatedGlass(item);
+          const allocatedRack = nextStage === "Finished" && !goesToPackingQueue ? getAllocatedPackingRack() : undefined;
+          const activeShift = nextStage === "Finished" && !goesToPackingQueue ? getActivePackingShift() : undefined;
           return {
             ...item,
             currentStage: nextStage,
             completedStages: Array.from(new Set([...(item.completedStages || []), fromStage])),
             status: nextStage === "Finished" ? "Completed" : "In Production",
+            ...(allocatedRack
+              ? {
+                  packingRackNo: allocatedRack,
+                  packingStatus: "Packed" as const,
+                  shift: activeShift,
+                  sentToFinished: false,
+                }
+              : {}),
           };
         }
         return item;
@@ -566,7 +587,7 @@ export default function Index() {
             } else if (notif.type === "success") {
               // Routine stage advances already have direct on-screen feedback at the workstation.
               // Keep them recorded in the notification drawer without spamming repetitive bottom toasts.
-              if (notif.title !== "Stage Advanced") {
+              if (notif.title !== "Stage Advanced" && notif.category !== "STAGE_ADVANCE") {
                 toast.success(notif.message || notif.title, { id: notif.id });
               }
             }
@@ -772,6 +793,14 @@ export default function Index() {
     }
     const nextStage: ProductionStage = currentIndex >= 0 && currentIndex < route.length - 1 ? route[currentIndex + 1] : "Finished";
 
+    const goesToPackingQueue =
+      currentStage === "DGU" ||
+      currentStage === "Lamination" ||
+      isDguGlass(item) ||
+      isDlguGlass(item) ||
+      isLaminatedGlass(item);
+    const allocatedRack = nextStage === "Finished" && !goesToPackingQueue ? getAllocatedPackingRack() : undefined;
+    const activeShift = nextStage === "Finished" && !goesToPackingQueue ? getActivePackingShift() : undefined;
     handleOptimisticAdvance([item.serialNumber, item.id], currentStage);
     try {
       const res = await fetch("/api/production/stage-complete", {
@@ -789,12 +818,14 @@ export default function Index() {
           advanceAll: false,
           operator: user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff"),
           remarks: `Advanced via Barcode Scanner from ${currentStage}`,
+          isHardwareScan: true,
+          ...(allocatedRack ? { rackNo: allocatedRack, shift: activeShift } : {}),
         }),
       });
       if (res.ok) {
         scannerAudio.playSuccess();
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `Advanced POS ${item.posNo || item.itemCode} from ${currentStage} ➔ ${nextStage}!`, { id: "stage-advance" });
+        toast.success(data.message || `Advanced 1 unit (POS ${item.posNo || item.itemCode}) to ${nextStage}.`, { id: "stage-advance" });
         fetchData(true);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -922,7 +953,7 @@ export default function Index() {
         setScanModalOpen(true);
         if (!currentWorkstationStage) {
           toast.info(
-            `📍 POS ${matchedItem.posNo || matchedItem.itemCode} is currently at ${matchedItem.currentStage}. Open the ${matchedItem.currentStage} workstation tab to scan & advance.`
+            `POS ${matchedItem.posNo || matchedItem.itemCode} is at ${matchedItem.currentStage}. Open ${matchedItem.currentStage} to scan.`
           );
         }
         return;
@@ -1026,7 +1057,7 @@ export default function Index() {
             const isColour = getItemFinish(matchedItem) === "Colour";
             const neededFinish = isColour ? "Clear" : "Colour";
             toast.warning(
-              `⚠️ Cannot advance from Pairing: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane to be cut in Cutting Workstation. Both panes must be in Pairing Buffer before advancing to ${nextStage}.`
+              `POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane in Pairing.`
             );
             return;
           }
@@ -1050,7 +1081,7 @@ export default function Index() {
           if (!partnerInDgu) {
             scannerAudio.playWarning();
             toast.warning(
-              `⚠️ Cannot complete DGU: Glass pane POS ${matchedItem.posNo || matchedItem.itemCode} is missing its assembled partner pane in DGU Assembly. Both Colour + Clear panes must be present before completing to Finished.`
+              `POS ${matchedItem.posNo || matchedItem.itemCode} is missing its partner pane in DGU Assembly.`
             );
             return;
           }
@@ -1062,6 +1093,14 @@ export default function Index() {
       const idsToAdvance = partnerToPair ? [matchedItem.id, partnerToPair.id] : [matchedItem.id];
 
       // Optimistic UI update
+      const goesToPackingQueue =
+        currentStage === "DGU" ||
+        currentStage === "Lamination" ||
+        isDguGlass(matchedItem) ||
+        isDlguGlass(matchedItem) ||
+        isLaminatedGlass(matchedItem);
+      const allocatedRack = nextStage === "Finished" && !goesToPackingQueue ? getAllocatedPackingRack() : undefined;
+      const activeShift = nextStage === "Finished" && !goesToPackingQueue ? getActivePackingShift() : undefined;
       handleOptimisticAdvance(idsToAdvance, currentStage);
       idsToAdvance.forEach((id) => recentLocalScansRef.current.set(id, Date.now()));
       serialsToAdvance.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
@@ -1083,14 +1122,22 @@ export default function Index() {
             remarks: partnerToPair
               ? `Paired & Advanced via Scanner Gun (${matchedItem.serialNumber} + ${partnerToPair.serialNumber}) at ${currentStage}`
               : `Scanned by Hardware Scanner Gun at ${currentStage}${stickerLabel}`,
+            isHardwareScan: true,
+            ...(allocatedRack ? { rackNo: allocatedRack, shift: activeShift } : {}),
           }),
         });
 
         if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const posDisplay = matchedItem.posNo ? `POS ${matchedItem.posNo}` : (matchedItem.itemCode || "Glass Unit");
+          const nextStageDest =
+            nextStage === "Finished"
+              ? (allocatedRack || (goesToPackingQueue ? (isLaminatedGlass(matchedItem) && !isDguGlass(matchedItem) && !isDlguGlass(matchedItem) ? "Auto Clave (Pending Rack)" : "Packing IGU (Pending Rack)") : "Finished Glass"))
+              : nextStage;
           if (partnerToPair) {
             scannerAudio.playPairSuccess();
             toast.success(
-              `✨ Paired & Advanced POS ${matchedItem.posNo || matchedItem.itemCode} from Pairing ➔ ${nextStage}!`,
+              data.message || `Paired and advanced 1 unit (${posDisplay}) to ${nextStageDest}.`,
               { id: "stage-advance" }
             );
           } else {
@@ -1099,14 +1146,8 @@ export default function Index() {
             } else {
               scannerAudio.playSuccess();
             }
-            const nextStageLabel = nextStage === "Pairing"
-              ? "➔ Glass Pairing Buffer (Queued for 1+1 pairing before DGU/Lamination)"
-              : nextStage === "Finished"
-                ? "➔ Finished Warehouse (Quality Inspected)"
-                : `➔ ${nextStage}`;
-            const posDisplay = matchedItem.posNo ? `POS ${matchedItem.posNo}` : (matchedItem.itemCode || "Glass Unit");
             toast.success(
-              `🔫 Advanced ${posDisplay}${stickerLabel} from ${currentStage} ${nextStageLabel}!${remainingNote}`,
+              data.message || `Advanced 1 unit (${posDisplay}) to ${nextStageDest}.`,
               { id: "stage-advance" }
             );
           }
@@ -1184,25 +1225,23 @@ export default function Index() {
 
     if (batchItems.length > 0) {
       const totalPieces = batchItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-      const completedPieces = batchItems
-        .filter((i) => i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
-        .reduce((acc, curr) => acc + (curr.qty || 1), 0);
-      const totalSqm = batchItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
-
       const inCutting = batchItems.filter((i) => i.currentStage === "Cutting" && !i.completedStages?.includes("Cutting")).length;
       const inPolishing = batchItems.filter((i) => i.currentStage?.toLowerCase() === "polishing").length;
       const inPairing = batchItems.filter((i) => i.currentStage === "Pairing").length;
-      const inLamination = batchItems.filter((i) => i.currentStage === "Lamination").length;
-      const inDgu = batchItems.filter((i) => i.currentStage === "DGU").length;
-      const inFinished = completedPieces;
+      const inDgu = batchItems.filter((i) => i.currentStage === "DGU" && !isItemInPackingStage(i) && !isItemInFinishedStage(i)).length;
+      const inLamination = batchItems.filter((i) => i.currentStage === "Lamination" && !isItemInPackingStage(i) && !isItemInFinishedStage(i)).length;
+      const inPacking = batchItems.filter((i) => isItemInPackingStage(i)).length;
+      const inFinished = batchItems.filter((i) => isItemInFinishedStage(i)).length;
+      const completedPieces = inFinished;
+      const totalSqm = batchItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
 
       const isCompleted = totalPieces > 0 && completedPieces >= totalPieces;
-      const isPending = completedPieces === 0 && batchItems.every((i) => i.currentStage === "Cutting" && !i.completedStages?.length);
+      const isPending = completedPieces === 0 && inPacking === 0 && inDgu === 0 && inLamination === 0 && inPairing === 0 && inPolishing === 0 && batchItems.every((i) => i.currentStage === "Cutting" && !i.completedStages?.length);
       const status = isCompleted ? "Completed" : isPending ? (pi.status === "Pending" ? "Pending" : "In Production") : "In Production";
 
       // Calculate primary active stage
       let activeStageName = "Cutting Workstation";
-      let activeStageTab: "cutting" | "polishing" | "pairing" | "lamination" | "dgu" | "finished" = "cutting";
+      let activeStageTab: "cutting" | "polishing" | "pairing" | "lamination" | "dgu" | "packing-igu" | "packing-lami" | "finished" = "cutting";
       let activeStageBadgeClass = "bg-purple-100 text-purple-800 border-purple-200";
 
       if (inFinished > 0 && inFinished === totalPieces) {
@@ -1210,6 +1249,11 @@ export default function Index() {
         activeStageName = allDispatched ? "Dispatched" : "Finished Warehouse";
         activeStageTab = "finished";
         activeStageBadgeClass = allDispatched ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-emerald-100 text-emerald-800 border-emerald-200";
+      } else if (inPacking > 0) {
+        const isIguPack = batchItems.some((i) => isPackingIguItem(i));
+        activeStageName = isIguPack ? `IGU Packing List (${inPacking} pcs)` : `Auto Clave Packing List (${inPacking} pcs)`;
+        activeStageTab = isIguPack ? "packing-igu" : "packing-lami";
+        activeStageBadgeClass = isIguPack ? "bg-teal-100 text-teal-800 border-teal-200" : "bg-amber-100 text-amber-800 border-amber-200";
       } else if (inDgu > 0) {
         activeStageName = `DLGU / IGU (${inDgu} pcs)`;
         activeStageTab = "dgu";
@@ -1565,7 +1609,7 @@ export default function Index() {
 
   // Pipeline Overview States & Computations
   const [pipelineBatchSearch, setPipelineBatchSearch] = useState("");
-  const [pipelineStageFilter, setPipelineStageFilter] = useState<"ALL" | "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished">("ALL");
+  const [pipelineStageFilter, setPipelineStageFilter] = useState<"ALL" | "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished">("ALL");
 
   const pipelineMetrics = React.useMemo(() => {
     const isColour = (i: GlassItem) => getItemFinish(i) === "Colour";
@@ -1727,6 +1771,65 @@ export default function Index() {
       pis.map((p) => (p.customerName || "Unassigned Customer").trim()).filter(Boolean)
     ).size;
 
+    const isPackingIguItem = (i: GlassItem) => {
+      if (isDispatchedItem(i) || i.status === "Rejected") return false;
+      const isIgu = isDguGlass(i) || isDlguGlass(i) || (i as any).glassCategory === "DGU" || (i as any).glassCategory === "DLGU";
+      if (!isIgu) return false;
+      // If already sent to Finished Glass stage, it is not pending in Packing
+      if (i.sentToFinished) return false;
+      if (i.packingRackNo && parseRackInfo(i.packingRackNo).rackNo === "Direct Finish") return false;
+
+      // Currently on a physical rack awaiting send to Finished
+      if (i.packingRackNo) return true;
+
+      // Or pending unpacked from upstream assembly line
+      const sentFromUpstream =
+        i.currentStage === "Finished" ||
+        (i.completedStages && (i.completedStages.includes("DGU") || i.completedStages.includes("Finished")));
+      return Boolean(sentFromUpstream);
+    };
+
+    const isPackingLamiItem = (i: GlassItem) => {
+      if (isDispatchedItem(i) || i.status === "Rejected") return false;
+      const isIgu = isDguGlass(i) || isDlguGlass(i) || (i as any).glassCategory === "DGU" || (i as any).glassCategory === "DLGU";
+      if (isIgu) return false;
+      const isLami = isLaminatedGlass(i) || (i as any).glassCategory === "Lamination";
+      if (!isLami) return false;
+
+      if (i.sentToFinished) return false;
+      if (i.packingRackNo && parseRackInfo(i.packingRackNo).rackNo === "Direct Finish") return false;
+
+      if (i.packingRackNo) return true;
+
+      const sentFromUpstream =
+        i.currentStage === "Finished" ||
+        (i.completedStages && (i.completedStages.includes("Lamination") || i.completedStages.includes("Finished")));
+      return Boolean(sentFromUpstream);
+    };
+
+    const packingIguCount = countPackingUnits(items.filter(isPackingIguItem), "IGU");
+    const packingLamiCount = countPackingUnits(items.filter(isPackingLamiItem), "LAMI");
+    const finishedIguUnits = countPackingUnits(
+      items.filter(
+        (i) =>
+          isItemInFinishedStage(i) &&
+          (isDguGlass(i) || isDlguGlass(i) || (i as any).glassCategory === "DGU" || (i as any).glassCategory === "DLGU")
+      ),
+      "IGU"
+    );
+    const finishedLamiUnits = countPackingUnits(
+      items.filter(
+        (i) =>
+          isItemInFinishedStage(i) &&
+          !isDguGlass(i) &&
+          !isDlguGlass(i) &&
+          (i as any).glassCategory !== "DGU" &&
+          (i as any).glassCategory !== "DLGU"
+      ),
+      "LAMI"
+    );
+    const packedFinishedUnits = finishedIguUnits + finishedLamiUnits;
+
     return {
       totalPI: pis.length || (stats?.totalPI ?? 0),
       stickerUploadCount: pis.length > 0 ? uniqueStickerUploads : (stats?.stickerUploadCount ?? 0),
@@ -1737,13 +1840,15 @@ export default function Index() {
       pendingPairing: pipelineMetrics.pairingItems,
       pendingDGU: dguUnitsCount,
       pendingLamination: pipelineMetrics.laminationItems,
-      finishedItems: pipelineMetrics.finishedItems,
+      pendingPackingIGU: packingIguCount,
+      pendingPackingLami: packingLamiCount,
+      finishedItems: packedFinishedUnits,
       dispatchedItems: stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems,
-      totalCompletedItems: pipelineMetrics.finishedItems + (stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems),
+      totalCompletedItems: packedFinishedUnits + (stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems),
       rejectItems: Math.max(stats?.rejectItems ?? 0, rejects.length, pipelineMetrics.rejectedItems),
       reworkItems: Math.max(stats?.reworkItems ?? 0, reworks.length, pipelineMetrics.reworkItems),
     };
-  }, [stats, pis, pipelineMetrics, rejects, reworks]);
+  }, [stats, pis, items, pipelineMetrics, rejects, reworks]);
 
   const pipelineBatches = React.useMemo(() => {
     const map = new Map<string, {
@@ -1759,10 +1864,12 @@ export default function Index() {
       pairingCount: number;
       dguCount: number;
       laminationCount: number;
+      packingIguCount: number;
+      packingLamiCount: number;
       finishedCount: number;
       totalSqm: number;
       finish: "Clear" | "Colour";
-      primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished";
+      primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished";
       progress: number;
     }>();
 
@@ -1783,6 +1890,8 @@ export default function Index() {
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
+          packingIguCount: 0,
+          packingLamiCount: 0,
           finishedCount: 0,
           totalSqm: 0,
           finish: "Clear",
@@ -1798,6 +1907,12 @@ export default function Index() {
       const itemPieces = item.qty || 1;
       if (isDispatchedItem(item)) {
         // Dispatched items belong strictly in Dispatched History
+      } else if (isPackingIguItem(item)) {
+        b.packingIguCount += itemPieces;
+      } else if (isPackingLamiItem(item)) {
+        b.packingLamiCount += itemPieces;
+      } else if (isItemInFinishedStage(item)) {
+        b.finishedCount += itemPieces;
       } else if (st === "cutting" || (!item.currentStage && item.status !== "Rejected")) b.cuttingCount += itemPieces;
       else if (st === "polishing") b.polishingCount += itemPieces;
       else if (st === "pairing") b.pairingCount += itemPieces;
@@ -1822,6 +1937,8 @@ export default function Index() {
           pairingCount: 0,
           dguCount: 0,
           laminationCount: 0,
+          packingIguCount: 0,
+          packingLamiCount: 0,
           finishedCount: p.completedItemsCount || 0,
           totalSqm: p.totalSqm || 0,
           finish: p.colorOrClear === "Colour" ? "Colour" : "Clear",
@@ -1845,12 +1962,14 @@ export default function Index() {
 
       const finish: "Clear" | "Colour" = isColour ? "Colour" : "Clear";
 
-      let primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Finished" = "Cutting";
+      let primaryStage: "Cutting" | "Polishing" | "Pairing" | "DGU" | "Lamination" | "Packing IGU" | "Auto Clave" | "Finished" = "Cutting";
       if (b.cuttingCount > 0) primaryStage = "Cutting";
       else if (b.polishingCount > 0) primaryStage = "Polishing";
       else if (b.pairingCount > 0) primaryStage = "Pairing";
       else if (b.dguCount > 0) primaryStage = "DGU";
       else if (b.laminationCount > 0) primaryStage = "Lamination";
+      else if (b.packingIguCount > 0) primaryStage = "Packing IGU";
+      else if (b.packingLamiCount > 0) primaryStage = "Auto Clave";
       else if (b.finishedCount > 0) primaryStage = "Finished";
 
       const totalPieces = b.items.reduce((acc, curr) => acc + (curr.qty || 1), 0) || parentPI?.totalQty || parentPI?.itemsCount || 1;
@@ -1870,8 +1989,11 @@ export default function Index() {
       if (pipelineStageFilter !== "ALL" && b.primaryStage !== pipelineStageFilter) {
         if (pipelineStageFilter === "Cutting" && b.cuttingCount === 0) return false;
         if (pipelineStageFilter === "Polishing" && b.polishingCount === 0) return false;
+        if (pipelineStageFilter === "Pairing" && b.pairingCount === 0) return false;
         if (pipelineStageFilter === "DGU" && b.dguCount === 0) return false;
         if (pipelineStageFilter === "Lamination" && b.laminationCount === 0) return false;
+        if (pipelineStageFilter === "Packing IGU" && b.packingIguCount === 0) return false;
+        if (pipelineStageFilter === "Auto Clave" && b.packingLamiCount === 0) return false;
         if (pipelineStageFilter === "Finished" && b.finishedCount === 0) return false;
       }
       const q = pipelineBatchSearch.toLowerCase().trim();
@@ -1886,6 +2008,115 @@ export default function Index() {
     });
   }, [pipelineBatches, pipelineStageFilter, pipelineBatchSearch]);
 
+  // Live Warehouse Rack statistics for Dashboard Overview
+  const dashboardRackOverview = React.useMemo(() => {
+    let rackACount = 0;
+    let rackASqm = 0;
+    let rackBCount = 0;
+    let rackBSqm = 0;
+    let rackCCount = 0;
+    let rackCSqm = 0;
+    let rackDCount = 0;
+    let rackDSqm = 0;
+    let rackECount = 0;
+    let rackESqm = 0;
+
+    items.forEach((item) => {
+      if (!item.packingRackNo) return;
+      if (isDispatchedItem(item)) return;
+      const { rackNo } = parseRackInfo(item.packingRackNo);
+      const pieceQty = item.qty || 1;
+      const pieceSqm = item.sqm || 0;
+      if (rackNo === "Rack B") {
+        rackBCount += pieceQty;
+        rackBSqm += pieceSqm;
+      } else if (rackNo === "Rack C") {
+        rackCCount += pieceQty;
+        rackCSqm += pieceSqm;
+      } else if (rackNo === "Rack D") {
+        rackDCount += pieceQty;
+        rackDSqm += pieceSqm;
+      } else if (rackNo === "Rack E") {
+        rackECount += pieceQty;
+        rackESqm += pieceSqm;
+      } else if (rackNo === "Rack A") {
+        rackACount += pieceQty;
+        rackASqm += pieceSqm;
+      }
+    });
+
+    return {
+      rackACount,
+      rackASqm: parseFloat(rackASqm.toFixed(2)),
+      rackBCount,
+      rackBSqm: parseFloat(rackBSqm.toFixed(2)),
+      rackCCount,
+      rackCSqm: parseFloat(rackCSqm.toFixed(2)),
+      rackDCount,
+      rackDSqm: parseFloat(rackDSqm.toFixed(2)),
+      rackECount,
+      rackESqm: parseFloat(rackESqm.toFixed(2)),
+      totalRacked: rackACount + rackBCount + rackCCount + rackDCount + rackECount,
+      totalSqm: parseFloat((rackASqm + rackBSqm + rackCSqm + rackDSqm + rackESqm).toFixed(2)),
+    };
+  }, [items]);
+
+  // Active slots for Rack A to Rack E
+  const activeRackASlot = React.useMemo(() => {
+    try {
+      return (
+        localStorage.getItem("sejal_finished_packing_rack_slot_Rack A") ||
+        localStorage.getItem("sejal_finished_packing_rack_slot") ||
+        "25"
+      );
+    } catch {
+      return "25";
+    }
+  }, [activeTab]);
+
+  const activeRackBSlot = React.useMemo(() => {
+    try {
+      return localStorage.getItem("sejal_finished_packing_rack_slot_Rack B") || "50";
+    } catch {
+      return "50";
+    }
+  }, [activeTab]);
+
+  const activeRackCSlot = React.useMemo(() => {
+    try {
+      return localStorage.getItem("sejal_finished_packing_rack_slot_Rack C") || "1";
+    } catch {
+      return "1";
+    }
+  }, [activeTab]);
+
+  const activeRackDSlot = React.useMemo(() => {
+    try {
+      return localStorage.getItem("sejal_finished_packing_rack_slot_Rack D") || "1";
+    } catch {
+      return "1";
+    }
+  }, [activeTab]);
+
+  const activeRackESlot = React.useMemo(() => {
+    try {
+      return localStorage.getItem("sejal_finished_packing_rack_slot_Rack E") || "1";
+    } catch {
+      return "1";
+    }
+  }, [activeTab]);
+
+  // Recent floor activity feed for Dashboard Overview
+  const dashboardRecentActivity = React.useMemo(() => {
+    return [...items]
+      .filter((i) => i.currentStage && !isDispatchedItem(i))
+      .sort((a, b) => {
+        const timeB = new Date(b.updatedAt || b.packedAt || b.createdAt || 0).getTime();
+        const timeA = new Date(a.updatedAt || a.packedAt || a.createdAt || 0).getTime();
+        return timeB - timeA;
+      })
+      .slice(0, 4);
+  }, [items]);
 
   return (
     <div className="h-screen bg-[#f8fafc] text-slate-900 flex font-sans overflow-hidden">
@@ -2765,6 +2996,22 @@ export default function Index() {
                             ◉&nbsp; Lam <b>{effectiveStats.pendingLamination ?? 0}</b>
                           </span>
                           <span
+                            onClick={() => setActiveTab("packing-igu")}
+                            className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                            style={{ color: '#0d9488' }}
+                            title="View IGU Packing List"
+                          >
+                            ◉&nbsp; IGU Packing List <b>{effectiveStats.pendingPackingIGU ?? 0}</b>
+                          </span>
+                          <span
+                            onClick={() => setActiveTab("packing-lami")}
+                            className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                            style={{ color: '#d97706' }}
+                            title="View Auto Clave Packing List"
+                          >
+                            ◉&nbsp; Auto Clave Packing List <b>{effectiveStats.pendingPackingLami ?? 0}</b>
+                          </span>
+                          <span
                             onClick={() => setActiveTab("finished")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#10b981' }}
@@ -2772,6 +3019,283 @@ export default function Index() {
                           >
                             ◉&nbsp; Fin <b>{effectiveStats.finishedItems ?? Math.round(completedItems / 2)}</b>
                           </span>
+                        </div>
+                      </section>
+
+                      {/* Warehouse Racks & Storage Overview */}
+                      <section className="ppb-panel">
+                        <div className="ppb-panel-heading">
+                          <div className="flex items-center gap-1.5">
+                            <Boxes className="ppb-heading-icon text-emerald-600" size={18} />
+                            <h3>Warehouse Racks &amp; Storage</h3>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("packing-igu")}
+                            className="text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100/70 px-2 py-0.5 rounded flex items-center gap-1 transition-colors"
+                            title="Open Packing Lists"
+                          >
+                            <span>Packing Lists</span>
+                            <ArrowUpRight size={13} />
+                          </button>
+                        </div>
+
+                        {/* Rack Cards Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 2xl:grid-cols-3 gap-2 mb-2.5">
+                          {[
+                            { name: "Rack A", count: dashboardRackOverview.rackACount, sqm: dashboardRackOverview.rackASqm, slot: activeRackASlot || "25", color: "teal", tab: "packing-igu" },
+                            { name: "Rack B", count: dashboardRackOverview.rackBCount, sqm: dashboardRackOverview.rackBSqm, slot: activeRackBSlot || "50", color: "amber", tab: "packing-lami" },
+                            { name: "Rack C", count: dashboardRackOverview.rackCCount, sqm: dashboardRackOverview.rackCSqm, slot: activeRackCSlot || "1", color: "indigo", tab: "packing-igu" },
+                            { name: "Rack D", count: dashboardRackOverview.rackDCount, sqm: dashboardRackOverview.rackDSqm, slot: activeRackDSlot || "1", color: "sky", tab: "packing-igu" },
+                            { name: "Rack E", count: dashboardRackOverview.rackECount, sqm: dashboardRackOverview.rackESqm, slot: activeRackESlot || "1", color: "emerald", tab: "packing-igu" },
+                            { name: "Total Storage", count: dashboardRackOverview.totalRacked, sqm: dashboardRackOverview.totalSqm, slot: "5 Racks", color: "blue", tab: "packing-igu" },
+                          ].map((rk) => {
+                            const colorClasses: Record<string, { border: string; bg: string; text: string; dot: string; badge: string; barBg: string; bar: string }> = {
+                              teal: { border: "border-teal-200/90 hover:border-teal-400", bg: "from-teal-50/70 via-white to-emerald-50/40", text: "text-teal-800", dot: "bg-teal-500", badge: "bg-teal-100/80 text-teal-800 border-teal-200", barBg: "bg-teal-100/70", bar: "bg-teal-500" },
+                              amber: { border: "border-amber-200/90 hover:border-amber-400", bg: "from-amber-50/70 via-white to-orange-50/40", text: "text-amber-900", dot: "bg-amber-500", badge: "bg-amber-100/80 text-amber-800 border-amber-200", barBg: "bg-amber-100/70", bar: "bg-amber-500" },
+                              indigo: { border: "border-indigo-200/90 hover:border-indigo-400", bg: "from-indigo-50/70 via-white to-purple-50/40", text: "text-indigo-900", dot: "bg-indigo-500", badge: "bg-indigo-100/80 text-indigo-800 border-indigo-200", barBg: "bg-indigo-100/70", bar: "bg-indigo-500" },
+                              sky: { border: "border-sky-200/90 hover:border-sky-400", bg: "from-sky-50/70 via-white to-blue-50/40", text: "text-sky-900", dot: "bg-sky-500", badge: "bg-sky-100/80 text-sky-800 border-sky-200", barBg: "bg-sky-100/70", bar: "bg-sky-500" },
+                              emerald: { border: "border-emerald-200/90 hover:border-emerald-400", bg: "from-emerald-50/70 via-white to-teal-50/40", text: "text-emerald-900", dot: "bg-emerald-500", badge: "bg-emerald-100/80 text-emerald-800 border-emerald-200", barBg: "bg-emerald-100/70", bar: "bg-emerald-500" },
+                              blue: { border: "border-blue-200/90 hover:border-blue-400", bg: "from-blue-50/70 via-white to-indigo-50/40", text: "text-blue-900", dot: "bg-blue-600", badge: "bg-blue-100/80 text-blue-800 border-blue-200", barBg: "bg-blue-100/70", bar: "bg-blue-600" },
+                            };
+                            const cls = colorClasses[rk.color];
+                            const isTotal = rk.name === "Total Storage";
+                            return (
+                              <div
+                                key={rk.name}
+                                onClick={() => {
+                                  if (!isTotal) {
+                                    try {
+                                      localStorage.setItem("sejal_finished_packing_rack_letter", rk.name);
+                                      const slotVal = rk.slot ? `${rk.name} - ${rk.slot}` : rk.name;
+                                      localStorage.setItem("sejal_finished_packing_rack", slotVal);
+                                    } catch {}
+                                  }
+                                  setActiveTab(rk.tab as any);
+                                }}
+                                className={`p-2.5 rounded-xl border ${cls.border} bg-gradient-to-br ${cls.bg} hover:shadow-xs cursor-pointer transition-all min-w-0 flex flex-col justify-between`}
+                                title={isTotal ? "View All Racks in Packing List" : `View ${rk.name} in Packing List`}
+                              >
+                                <div className="flex items-center justify-between mb-1.5 gap-1 min-w-0">
+                                  <span className={`text-[11px] font-black tracking-wide ${cls.text} uppercase flex items-center gap-1.5 min-w-0`}>
+                                    <span className={`w-2 h-2 rounded-full ${cls.dot} ${rk.count > 0 ? "animate-pulse" : "opacity-60"} shrink-0`} />
+                                    <span className="truncate whitespace-nowrap">{rk.name}</span>
+                                  </span>
+                                  <span className={`text-[10px] font-mono font-bold ${cls.badge} px-1.5 py-0.5 rounded border shrink-0 whitespace-nowrap`}>
+                                    {isTotal ? rk.slot : `Slot: ${rk.slot}`}
+                                  </span>
+                                </div>
+                                <div className="flex items-baseline justify-between gap-1 min-w-0">
+                                  <div className="whitespace-nowrap shrink-0">
+                                    <span className="text-base font-black text-slate-800 leading-none">{rk.count}</span>
+                                    <span className="text-[10px] text-slate-500 ml-1 font-semibold">pcs</span>
+                                  </div>
+                                  <span className={`text-[11px] font-bold font-mono ${cls.text} whitespace-nowrap truncate`}>
+                                    {rk.sqm.toFixed(1)} m²
+                                  </span>
+                                </div>
+                                <div className={`w-full ${cls.barBg} h-1.5 rounded-full mt-2 overflow-hidden`}>
+                                  <div
+                                    className={`${cls.bar} h-full rounded-full transition-all duration-500`}
+                                    style={{
+                                      width: isTotal
+                                        ? (dashboardRackOverview.totalRacked > 0 ? "100%" : "0%")
+                                        : (rk.count === 0
+                                          ? "0%"
+                                          : `${Math.min(100, Math.max(10, dashboardRackOverview.totalRacked > 0 ? (rk.count / dashboardRackOverview.totalRacked) * 100 : 20))}%`)
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Quick Action Navigation Buttons */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("packing-igu")}
+                            className="text-[10px] font-bold py-1.5 px-2 rounded-lg bg-slate-50 hover:bg-teal-50 hover:text-teal-700 border border-slate-200 text-slate-700 flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                          >
+                            <Boxes size={12} className="text-teal-600 shrink-0" />
+                            <span className="truncate">IGU Packing List</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("packing-lami")}
+                            className="text-[10px] font-bold py-1.5 px-2 rounded-lg bg-slate-50 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 text-slate-700 flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                          >
+                            <Layers size={12} className="text-amber-600 shrink-0" />
+                            <span className="truncate">Auto Clave Packing List</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("dispatched-history")}
+                            className="text-[10px] font-bold py-1.5 px-2 rounded-lg bg-slate-50 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 text-slate-700 flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                          >
+                            <Truck size={12} className="text-blue-600 shrink-0" />
+                            <span className="truncate">Dispatched</span>
+                          </button>
+                        </div>
+                      </section>
+
+                      {/* Recent Floor Activity & Quick Workstation Launchpad */}
+                      <section className="ppb-panel">
+                        <div className="ppb-panel-heading">
+                          <div className="flex items-center gap-1.5">
+                            <Activity className="ppb-heading-icon text-indigo-600" size={18} />
+                            <h3>Recent Floor Activity</h3>
+                            <span className="ppb-live-badge"><i />Live</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("production-overview")}
+                            className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-0.5"
+                            title="View Production Line Overview"
+                          >
+                            <span>Overview</span>
+                            <ChevronRight size={13} />
+                          </button>
+                        </div>
+
+                        {/* Activity list */}
+                        <div className="space-y-1.5 mb-2.5">
+                          {dashboardRecentActivity.length === 0 ? (
+                            <div className="text-center py-4 text-xs text-slate-400">
+                              No recent activity logged yet.
+                            </div>
+                          ) : (
+                            dashboardRecentActivity.map((item) => {
+                              const displayStage = isPackingIguItem(item)
+                                ? "IGU Packing List"
+                                : isPackingLamiItem(item)
+                                ? "Auto Clave Packing List"
+                                : item.currentStage;
+
+                              const stageColor =
+                                displayStage === "Cutting"
+                                  ? "bg-purple-50 text-purple-700 border-purple-200"
+                                  : displayStage === "Polishing"
+                                  ? "bg-cyan-50 text-cyan-700 border-cyan-200"
+                                  : displayStage === "Pairing"
+                                  ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                  : displayStage === "DGU"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : displayStage === "Lamination"
+                                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                                  : displayStage === "IGU Packing List"
+                                  ? "bg-teal-50 text-teal-700 border-teal-200"
+                                  : displayStage === "Auto Clave Packing List"
+                                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                                  : displayStage === "Finished"
+                                  ? "bg-green-50 text-green-700 border-green-200"
+                                  : "bg-blue-50 text-blue-700 border-blue-200";
+
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50/80 hover:bg-blue-50/60 border border-slate-100 transition-colors text-xs"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-mono font-bold text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200 shrink-0 text-[10.5px]">
+                                      POS {item.posNo || "—"}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="font-semibold text-slate-800 truncate text-[11px]" title={item.customerName || ""}>
+                                        {item.customerName || "Customer Glass Order"}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono">
+                                        {item.width} × {item.height} mm
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col items-end shrink-0 ml-2">
+                                    <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-full border ${stageColor}`}>
+                                      {displayStage}
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 mt-0.5">
+                                      {formatPlatformTime(item.updatedAt || item.packedAt || item.createdAt)}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {/* Quick Workstation Launchpad */}
+                        <div className="pt-2 border-t border-slate-100">
+                          <div className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                            <span>Workstation Launchpad</span>
+                            <span className="text-[8.5px] text-slate-400">Direct Jump</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("cutting")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Scissors size={11} className="text-purple-600 shrink-0" />
+                              <span className="truncate">Cutting</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("polishing")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-cyan-50 hover:text-cyan-700 hover:border-cyan-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Sparkles size={11} className="text-cyan-600 shrink-0" />
+                              <span className="truncate">Polishing</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("pairing")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Layers size={11} className="text-indigo-600 shrink-0" />
+                              <span className="truncate">Pairing</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("dgu")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Factory size={11} className="text-emerald-600 shrink-0" />
+                              <span className="truncate">DGU Line</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("lamination")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Layers size={11} className="text-amber-600 shrink-0" />
+                              <span className="truncate">Lamination</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("packing-igu")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Boxes size={11} className="text-teal-600 shrink-0" />
+                              <span className="truncate">IGU Packing List</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("packing-lami")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Flame size={11} className="text-amber-600 shrink-0" />
+                              <span className="truncate">Auto Clave Packing List</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("finished")}
+                              className="px-2 py-1 rounded bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 text-[10px] font-semibold text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <CheckCircle2 size={11} className="text-emerald-600 shrink-0" />
+                              <span className="truncate">Finished</span>
+                            </button>
+                          </div>
                         </div>
                       </section>
                     </div>
@@ -2828,18 +3352,20 @@ export default function Index() {
                   </span>
                   <span>/</span>
                   <span className="text-slate-800 font-extrabold">
-                    {activeTab === "pis" ? "Sticker & Batch" :
+                    {activeTab === "pis" ? "Sticker & Batches Upload" :
                       activeTab === "production-overview" ? "Production Overview" :
                         activeTab === "dispatched-history" ? "Dispatched History" :
                           activeTab === "cutting" ? "Cutting Workstation" :
                             activeTab === "polishing" ? "Polishing Workstation" :
                               activeTab === "pairing" ? "Glass Pairing" :
                                 activeTab === "dgu" ? "DGU/IGU Assembly" :
-                                  activeTab === "lamination" ? "Lamination Line" :
-                                    activeTab === "finished" ? "Finished Glass" :
-                                      activeTab === "reports" ? "Reports & Analytics" :
-                                        activeTab === "analytics" ? "Daily Reports" :
-                                          activeTab === "settings" ? "System Settings" : activeTab}
+                                  activeTab === "packing-igu" ? "IGU Packing List" :
+                                    activeTab === "lamination" ? "Lamination Line" :
+                                      activeTab === "packing-lami" ? "Auto Clave Packing List" :
+                                        activeTab === "finished" ? "Finished Glass" :
+                                          activeTab === "reports" ? "Reports & Analytics" :
+                                            activeTab === "analytics" ? "Daily Reports" :
+                                              activeTab === "settings" ? "System Settings" : activeTab}
                   </span>
                 </div>
               </div>
@@ -2858,7 +3384,7 @@ export default function Index() {
             )}
 
             {/* OTHER WORKSTATION TABS (Cutting, DGU, Lamination, Finished) */}
-            {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && activeTab !== "dispatched-history" && activeTab !== "settings" && (
+            {activeTab !== "overview" && activeTab !== "production-overview" && activeTab !== "pis" && activeTab !== "reports" && activeTab !== "analytics" && activeTab !== "dispatched-history" && activeTab !== "settings" && activeTab !== "packing-igu" && activeTab !== "packing-lami" && (
               <ProductionStageView
                 stage={
                   activeTab === "cutting" ? "Cutting" :
@@ -2879,6 +3405,52 @@ export default function Index() {
                 onRework={handleOpenRework}
                 onNavigateTab={(tab) => setActiveTab(tab as any)}
               />
+            )}
+
+            {/* TAB: PACKING LIST IGU */}
+            {activeTab === "packing-igu" && (
+              <React.Suspense
+                fallback={
+                  <div className="py-24 flex flex-col items-center justify-center text-slate-500">
+                    <Boxes className="w-10 h-10 text-teal-500 animate-spin mb-3" />
+                    <p className="text-sm font-bold">Loading IGU Packing List...</p>
+                  </div>
+                }
+              >
+                <PackingListView
+                  type="IGU"
+                  items={items}
+                  pis={pis}
+                  operator={user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff")}
+                  onRefresh={() => fetchData(true)}
+                  onNavigateTab={(tab) => setActiveTab(tab as any)}
+                  onReject={handleOpenReject}
+                  onRework={handleOpenRework}
+                />
+              </React.Suspense>
+            )}
+
+            {/* TAB: AUTO CLAVE (LAMI PACKING) */}
+            {activeTab === "packing-lami" && (
+              <React.Suspense
+                fallback={
+                  <div className="py-24 flex flex-col items-center justify-center text-slate-500">
+                    <Layers className="w-10 h-10 text-amber-500 animate-spin mb-3" />
+                    <p className="text-sm font-bold">Loading Auto Clave Packing List...</p>
+                  </div>
+                }
+              >
+                <PackingListView
+                  type="LAMI"
+                  items={items}
+                  pis={pis}
+                  operator={user?.name || user?.username || (userRole === "Admin" ? "Administrator" : "Staff")}
+                  onRefresh={() => fetchData(true)}
+                  onNavigateTab={(tab) => setActiveTab(tab as any)}
+                  onReject={handleOpenReject}
+                  onRework={handleOpenRework}
+                />
+              </React.Suspense>
             )}
 
             {/* TAB: DISPATCHED HISTORY */}
@@ -2904,7 +3476,7 @@ export default function Index() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight whitespace-nowrap">
-                          Sticker &amp; Batch Status
+                          Sticker &amp; Batches Upload
                         </h2>
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1 shadow-2xs shrink-0">
                           <FileText className="w-3 h-3 text-rose-600" />

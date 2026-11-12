@@ -13,7 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { getDguEffectiveQtyAndSqm, formatBatchNumber, getDistinctPiDisplay, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { getDguEffectiveQtyAndSqm, formatBatchNumber, getDistinctPiDisplay, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem, isItemInFinishedStage, isLaminationStickerPairMatch, getAllocatedPackingRack, getActivePackingShift } from "@/lib/utils";
 import { formatSejalBarcode, isItemMatchingCode } from "@/lib/barcode";
 import { scannerAudio } from "@/lib/audioBeep";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
@@ -231,6 +231,138 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
   const isVerifyingScanRef = useRef<boolean>(false);
 
   const isFinished = stage === "Finished";
+  const [rackLetter, setRackLetter] = useState<"Rack A" | "Rack B" | "Rack C" | "Rack D" | "Rack E">(() => {
+    try {
+      const saved = localStorage.getItem("sejal_finished_packing_rack_letter");
+      if (saved && ["Rack A", "Rack B", "Rack C", "Rack D", "Rack E"].includes(saved)) return saved as any;
+      if (saved === "Rack B" || saved === "RACK B") return "Rack B";
+      if (saved === "Rack C" || saved === "RACK C") return "Rack C";
+      if (saved === "Rack D" || saved === "RACK D") return "Rack D";
+      if (saved === "Rack E" || saved === "RACK E") return "Rack E";
+      return "Rack A";
+    } catch {
+      return "Rack A";
+    }
+  });
+
+  const [rackSlot, setRackSlot] = useState<string>(() => {
+    try {
+      return localStorage.getItem("sejal_finished_packing_rack_slot") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const finishedPackingRack = useMemo(() => {
+    const slot = rackSlot.trim();
+    return slot ? `${rackLetter} - ${slot}` : rackLetter;
+  }, [rackLetter, rackSlot]);
+
+  const [finishedPackingShift, setFinishedPackingShiftState] = useState<"A" | "B">(() => {
+    try {
+      return (localStorage.getItem("sejal_finished_packing_shift") as "A" | "B") || "A";
+    } catch {
+      return "A";
+    }
+  });
+
+  const handleSelectRackLetter = (val: "Rack A" | "Rack B" | "Rack C" | "Rack D" | "Rack E") => {
+    setRackLetter(val);
+    try {
+      localStorage.setItem("sejal_finished_packing_rack_letter", val);
+      const slot = rackSlot.trim();
+      const combined = slot ? `${val} - ${slot}` : val;
+      localStorage.setItem("sejal_finished_packing_rack", combined);
+    } catch {}
+  };
+
+  const handleSetRackSlot = (val: string) => {
+    const cleaned = val.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 20);
+    setRackSlot(cleaned);
+    try {
+      localStorage.setItem("sejal_finished_packing_rack_slot", cleaned);
+      const combined = cleaned.trim() ? `${rackLetter} - ${cleaned.trim()}` : rackLetter;
+      localStorage.setItem("sejal_finished_packing_rack", combined);
+    } catch {}
+  };
+
+  const handleIncrementRackSlot = (delta: number) => {
+    const currentNum = parseInt(rackSlot, 10);
+    const nextNum = isNaN(currentNum) ? (delta > 0 ? 1 : 0) : Math.max(1, currentNum + delta);
+    handleSetRackSlot(String(nextNum));
+  };
+
+  const setFinishedPackingShift = (val: "A" | "B") => {
+    setFinishedPackingShiftState(val);
+    try {
+      localStorage.setItem("sejal_finished_packing_shift", val);
+    } catch {}
+  };
+
+  const handlePackRowToRack = async (row: StageRowItem, customRack?: string) => {
+    const rackToUse = (customRack || finishedPackingRack || "RACK A").trim();
+    const itemIds = [row.item?.id, (row as any).partnerItem?.id].filter(Boolean) as string[];
+    setLoading(true);
+    try {
+      const res = await fetch("/api/production/pack-to-rack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          serialNumbers: row.allSerials,
+          itemIds,
+          rackNo: rackToUse,
+          shift: finishedPackingShift,
+          operator: effectiveOperator,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to assign to rack");
+      scannerAudio.playSuccess();
+      toast.success(
+        `Moved POS ${row.item.posNo || row.item.itemCode} to ${rackToUse}.`
+      );
+      onRefresh();
+    } catch (err: any) {
+      scannerAudio.playError();
+      toast.error(err.message || "Error assigning unit to rack");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePackSelectedToRack = async () => {
+    if (selectedRowIds.length === 0) return;
+    const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
+    const serials = Array.from(new Set(selectedRows.flatMap((r) => r.allSerials)));
+    const itemIds = Array.from(
+      new Set(
+        selectedRows.flatMap((r) => [r.item?.id, (r as any).partnerItem?.id].filter(Boolean) as string[])
+      )
+    );
+    setLoading(true);
+    try {
+      const res = await fetch("/api/production/pack-to-rack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          serialNumbers: serials,
+          itemIds,
+          rackNo: finishedPackingRack.trim() || "RACK A",
+          shift: finishedPackingShift,
+          operator: effectiveOperator,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to assign to rack");
+      scannerAudio.playSuccess();
+      toast.success(`Packed ${selectedRows.length} unit(s) to ${finishedPackingRack}.`);
+      setSelectedRowIds([]);
+      onRefresh();
+    } catch (err: any) {
+      scannerAudio.playError();
+      toast.error(err.message || "Error assigning selected units to rack");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Helper to determine if an item is Clear or Coloured
   // Helper to determine exact DGU pairing status for an individual pane (1 Colour + 1 Clear)
@@ -929,7 +1061,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       const data = await res.json();
       toast.success(
-        `Successfully dispatched ${dispatchDialog.rows.length} units (${data.count} pieces)!`,
+        `Dispatched ${dispatchDialog.rows.length} unit(s).`,
         {
           action: onNavigateTab
             ? {
@@ -966,6 +1098,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       if (isDispatchedItem(item)) return false;
       if (item.currentStage?.toLowerCase() !== stage?.toLowerCase()) return false;
       if (item.status === "Rejected") return false;
+      // In Finished Glass stage, strictly show items that have genuinely arrived in Finished stage (sent from packing or Direct Finish)
+      if (stage === "Finished" && !isItemInFinishedStage(item)) return false;
       if (stage === "Cutting" && selectedBatchId) {
         const cleanSelected = selectedBatchId.replace(/^STK-/i, "");
         const parentPI = pis.find(
@@ -1229,7 +1363,16 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           (paneB) =>
             paneB.serialNumber !== paneA.serialNumber &&
             !usedLam.has(paneB.serialNumber) &&
-            isDguStickerPairMatch(paneA, paneB)
+            (
+              ((paneA as any).lamPairId && (paneB as any).lamPairId && (paneA as any).lamPairId === (paneB as any).lamPairId) ||
+              isLaminationStickerPairMatch(paneA, paneB) ||
+              (
+                String(paneB.posNo || "").trim() === String(paneA.posNo || "").trim() &&
+                Number(paneB.width) === Number(paneA.width) &&
+                Number(paneB.height) === Number(paneA.height) &&
+                (paneB.glassType !== paneA.glassType || paneB.piNumber !== paneA.piNumber || paneB.batchNo !== paneA.batchNo)
+              )
+            )
         );
         if (match) {
           usedLam.add(paneA.serialNumber);
@@ -1400,9 +1543,39 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       const usedDguClear = new Set<string>();
 
       dguColourPanes.forEach((col) => {
-        const match = dguClearPanes.find(
-          (clr) => !usedDguClear.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
-        );
+        const colDguPairId = (col as any).dguPairId;
+        let match = colDguPairId
+          ? dguClearPanes.find(
+              (clr) => !usedDguClear.has(clr.serialNumber) && (clr as any).dguPairId === colDguPairId
+            )
+          : undefined;
+
+        if (!match) {
+          match = dguClearPanes.find(
+            (clr) => !usedDguClear.has(clr.serialNumber) && isDguStickerPairMatch(col, clr)
+          );
+        }
+
+        if (!match) {
+          match = items.find(
+            (other) =>
+              other.id !== col.id &&
+              other.serialNumber !== col.serialNumber &&
+              !usedDguClear.has(other.serialNumber) &&
+              (
+                (colDguPairId && (other as any).dguPairId === colDguPairId) ||
+                isDguStickerPairMatch(col, other) ||
+                (
+                  (isDguGlass(other) || other.glassCategory === "DGU") &&
+                  other.posNo === col.posNo &&
+                  Math.abs((other.width || 0) - (col.width || 0)) < 2 &&
+                  Math.abs((other.height || 0) - (col.height || 0)) < 2 &&
+                  ((col.piId && other.piId === col.piId) || (col.orderNo && other.orderNo === col.orderNo) || (col.piNumber && other.piNumber === col.piNumber)) &&
+                  getItemFinish(other) !== getItemFinish(col)
+                )
+              )
+          );
+        }
 
         if (match) {
           usedDguClear.add(match.serialNumber);
@@ -1423,7 +1596,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
             id: `finished-dgu-col-${col.serialNumber}`,
             item: col,
             partnerItem: null,
-            isDguPair: false,
+            isDguPair: true,
             dguPairReady: true,
             glassCategory: "DGU",
             allSerials: [col.serialNumber],
@@ -1434,25 +1607,26 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         }
       });
 
-      dguClearPanes.forEach((clr) => {
-        if (!usedDguClear.has(clr.serialNumber)) {
-          rows.push({
-            id: `finished-dgu-clr-${clr.serialNumber}`,
-            item: clr,
-            partnerItem: null,
-            isDguPair: false,
-            dguPairReady: true,
-            glassCategory: "DGU",
-            allSerials: [clr.serialNumber],
-            effectiveSqm: clr.sqm || parseFloat(((clr.width * clr.height) / 1000000).toFixed(2)),
-            displaySerial: clr.serialNumber,
-            displayBarcode: resolveValidBarcode(clr),
-          });
-        }
+      // Clear DGU panes that were not matched with any Colour pane (e.g. Clear + Clear DGU, or remaining clear panes)
+      const remainingClearDgu = dguClearPanes.filter((clr) => !usedDguClear.has(clr.serialNumber));
+      remainingClearDgu.forEach((pane) => {
+        const calcEffectiveSqm = pane.sqm || parseFloat(((pane.width * pane.height * (pane.qty || 1)) / 1000000).toFixed(2));
+        rows.push({
+          id: `finished-dgu-clr-${pane.id || pane.serialNumber}`,
+          item: pane,
+          partnerItem: null,
+          isDguPair: true,
+          dguPairReady: true,
+          glassCategory: "DGU",
+          allSerials: [pane.serialNumber],
+          effectiveSqm: calcEffectiveSqm,
+          displaySerial: pane.serialNumber,
+          displayBarcode: resolveValidBarcode(pane),
+        });
       });
 
-      // Process Laminated Items (Pair complementary laminated panes together so each unit is 1 row)
-      const usedFinishedLam = new Set<string>();
+      // Process Laminated Items: Pair complementary lites (e.g. 10mm + 12mm) into 1 finished Laminated Unit
+      const usedLamFinished = new Set<string>();
       const sortedLamItems = [...lamItems].sort((a, b) => {
         const numA = parseInt(a.serialNumber.replace(/\D/g, ""), 10) || 0;
         const numB = parseInt(b.serialNumber.replace(/\D/g, ""), 10) || 0;
@@ -1461,47 +1635,62 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
       for (let i = 0; i < sortedLamItems.length; i++) {
         const paneA = sortedLamItems[i];
-        if (usedFinishedLam.has(paneA.serialNumber)) continue;
+        if (usedLamFinished.has(paneA.serialNumber)) continue;
 
-        const match = sortedLamItems.find(
-          (paneB) =>
-            paneB.serialNumber !== paneA.serialNumber &&
-            !usedFinishedLam.has(paneB.serialNumber) &&
-            isDguStickerPairMatch(paneA, paneB)
-        );
+        const paneLamId = (paneA as any).lamPairId;
+        let match = paneLamId
+          ? sortedLamItems.find(
+              (o) =>
+                o.serialNumber !== paneA.serialNumber &&
+                !usedLamFinished.has(o.serialNumber) &&
+                (o as any).lamPairId === paneLamId
+            )
+          : null;
 
-        if (match) {
-          usedFinishedLam.add(paneA.serialNumber);
-          usedFinishedLam.add(match.serialNumber);
-          const calcEffectiveSqm = paneA.sqm || parseFloat(((paneA.width * paneA.height * (paneA.qty || 1)) / 1000000).toFixed(2));
-          rows.push({
-            id: `finished-lam-pair-${paneA.serialNumber}-${match.serialNumber}`,
-            item: paneA,
-            partnerItem: match,
-            isDguPair: true,
-            dguPairReady: true,
-            glassCategory: "Laminated",
-            allSerials: [paneA.serialNumber, match.serialNumber],
-            effectiveSqm: calcEffectiveSqm,
-            displaySerial: paneA.serialNumber,
-            displayBarcode: resolveValidBarcode(paneA),
-          });
-        } else {
-          usedFinishedLam.add(paneA.serialNumber);
-          const calcEffectiveSqm = paneA.sqm || parseFloat(((paneA.width * paneA.height * (paneA.qty || 1)) / 1000000).toFixed(2));
-          rows.push({
-            id: `finished-laminated-${paneA.id || paneA.serialNumber}`,
-            item: paneA,
-            partnerItem: null,
-            isDguPair: false,
-            dguPairReady: true,
-            glassCategory: "Laminated",
-            allSerials: [paneA.serialNumber],
-            effectiveSqm: calcEffectiveSqm,
-            displaySerial: paneA.serialNumber,
-            displayBarcode: resolveValidBarcode(paneA),
-          });
+        if (!match) {
+          match =
+            sortedLamItems.find(
+              (o) =>
+                o.serialNumber !== paneA.serialNumber &&
+                !usedLamFinished.has(o.serialNumber) &&
+                isLaminationStickerPairMatch(paneA, o)
+            ) || null;
         }
+
+        if (!match) {
+          match =
+            sortedLamItems.find(
+              (o) =>
+                o.serialNumber !== paneA.serialNumber &&
+                !usedLamFinished.has(o.serialNumber) &&
+                String(o.posNo || "").trim() === String(paneA.posNo || "").trim() &&
+                Number(o.width) === Number(paneA.width) &&
+                Number(o.height) === Number(paneA.height) &&
+                (o.glassType !== paneA.glassType || o.piNumber !== paneA.piNumber || o.batchNo !== paneA.batchNo)
+            ) || null;
+        }
+
+        usedLamFinished.add(paneA.serialNumber);
+        if (match) usedLamFinished.add(match.serialNumber);
+
+        const calcEffectiveSqm =
+          paneA.sqm ||
+          parseFloat(((paneA.width * paneA.height * (paneA.qty || 1)) / 1000000).toFixed(2));
+
+        rows.push({
+          id: match
+            ? `finished-lam-${paneA.serialNumber}-${match.serialNumber}`
+            : `finished-lam-${paneA.id || paneA.serialNumber}`,
+          item: paneA,
+          partnerItem: match,
+          isDguPair: Boolean(match),
+          dguPairReady: true,
+          glassCategory: "Laminated",
+          allSerials: match ? [paneA.serialNumber, match.serialNumber] : [paneA.serialNumber],
+          effectiveSqm: calcEffectiveSqm,
+          displaySerial: paneA.serialNumber,
+          displayBarcode: resolveValidBarcode(paneA),
+        });
       }
 
       // Process General / Monolithic Items
@@ -2240,24 +2429,12 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         }
 
         scannerAudio.playPairSuccess();
-        toast.success(
-          `DGU Unit Assembled & Verified (${targetItem.serialNumber} + ${partnerItem.serialNumber}). Advancing to ${nextStage}...`
-        );
         await completeStage(scanRow.allSerials, undefined, true);
         return;
       }
 
       scannerAudio.playSuccess();
-      // Single piece advance: each valid sticker scan advances 1 piece individually
-      const remainingPieces = (targetItem.qty || 1) - 1;
-      const destination = nextStage === "Pairing" ? "Glass Pairing Buffer" : nextStage === "Finished" ? "Finished Warehouse" : nextStage;
-      toast.success(
-        remainingPieces > 0
-          ? `Scanned 1 pc of ${targetItem.serialNumber} (POS #${targetItem.posNo || targetItem.itemCode}). Advanced to ${destination} (${remainingPieces} pcs remaining in ${stage}).`
-          : `Scanned & Completed piece (POS #${targetItem.posNo || targetItem.itemCode}). Advancing to ${destination}...`,
-        { id: "stage-advance" }
-      );
-      await completeStage(scanRow.allSerials, 1, false, true);
+      await completeStage([targetItem.serialNumber], 1, false);
     } else {
       scannerAudio.playError();
       toast.error(`Barcode mismatch: scanned "${val}". Expected barcode: ${scanRow.displayBarcode}`);
@@ -2289,7 +2466,9 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
     onOptimisticAdvance?.(serialNumbers, stage);
     setSelectedRowIds([]);
 
-    // 2. Perform backend stage advancement
+    // 2. Perform backend stage advancement (DGU / Lamination land in Pending Rack until Packing/Autoclave assigns a rack)
+    const allocatedRack: string | undefined = undefined;
+    const activeShift: "Day" | "Night" | undefined = undefined;
     try {
       const res = await fetch("/api/production/stage-complete", {
         method: "POST",
@@ -2305,15 +2484,17 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
           currentStage: stage,
           operator: effectiveOperator,
           remarks: `Completed ${stage} stage by ${effectiveOperator}`,
+          ...(allocatedRack ? { rackNo: allocatedRack, shift: activeShift } : {}),
         }),
       });
       if (!res.ok) throw new Error("Failed to advance stage");
       const data = await res.json();
       if (!skipSuccessToast) {
+        const units = data.unitCount ?? data.items.length;
         if (data.skippedCount > 0) {
-          toast.warning(`Advanced ${data.items.length} item(s). ${data.skippedCount} skipped.`);
+          toast.warning(`Advanced ${units} unit(s). ${data.skippedCount} skipped.`);
         } else {
-          toast.success(data.message || `Advanced ${data.items.length} item(s) from ${stage}!`, { id: "stage-advance" });
+          toast.success(data.message || `Advanced ${units} unit(s) from ${stage}.`, { id: "stage-advance" });
         }
       }
       onRefresh();
@@ -3490,13 +3671,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               )}
 
               {stage === "Finished" && selectedRowIds.length > 0 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => {
-                    const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
-                    openDispatchModal(selectedRows);
-                  }}
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const selectedRows = stageRows.filter((r) => selectedRowIds.includes(r.id));
+                      openDispatchModal(selectedRows);
+                    }}
                   disabled={loading || stageRows.filter((r) => selectedRowIds.includes(r.id)).length === 0}
                   className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs h-9 px-3.5 gap-1.5 rounded-xl border border-emerald-400/50 shadow-[0_4px_14px_rgba(5,150,105,0.4)] hover:shadow-lg active:scale-95 shrink-0 animate-in fade-in transition-all cursor-pointer"
                   title="Dispatch selected glass units to Dispatched History"
@@ -3506,6 +3688,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                     Send Selected to Dispatch ({stageRows.filter((r) => selectedRowIds.includes(r.id)).length} Units)
                   </span>
                 </Button>
+                </>
               )}
 
               {/* DIRECT EXPORT EXCEL BUTTON (Header Position) */}
@@ -3521,16 +3704,18 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               </Button>
 
               {stage === "Finished" && (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => onNavigateTab ? onNavigateTab("dispatched-history") : undefined}
-                  className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer shrink-0"
-                  title="View complete historical archive of all dispatched glass items and units"
-                >
-                  <PackageCheck className="w-3.5 h-3.5" />
-                  <span>Dispatched History</span>
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => onNavigateTab ? onNavigateTab("dispatched-history") : undefined}
+                    className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-xs h-9 px-3.5 gap-1.5 rounded-xl shadow-lg transition-all cursor-pointer shrink-0"
+                    title="View complete historical archive of all dispatched glass items and units"
+                  >
+                    <PackageCheck className="w-3.5 h-3.5" />
+                    <span>Dispatched History</span>
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -4433,8 +4618,46 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 (other) =>
                                   other.id !== item.id &&
                                   other.serialNumber !== item.serialNumber &&
-                                  isDguStickerPairMatch(item, other)
+                                  (
+                                    ((item as any).dguPairId && (other as any).dguPairId === (item as any).dguPairId) ||
+                                    ((item as any).lamPairId && (other as any).lamPairId === (item as any).lamPairId) ||
+                                    isDguStickerPairMatch(item, other) ||
+                                    (
+                                      (isLaminatedGlass(item) || item.glassCategory === "Lamination") &&
+                                      (isLaminatedGlass(other) || other.glassCategory === "Lamination") &&
+                                      item.posNo === other.posNo &&
+                                      Math.abs((item.width || 0) - (other.width || 0)) < 2 &&
+                                      Math.abs((item.height || 0) - (other.height || 0)) < 2 &&
+                                      ((item.piId && other.piId === item.piId) || (item.orderNo && other.orderNo === item.orderNo) || (item.piNumber && other.piNumber === item.piNumber))
+                                    ) ||
+                                    (
+                                      (isDguGlass(item) || item.glassCategory === "DGU") &&
+                                      (isDguGlass(other) || other.glassCategory === "DGU") &&
+                                      item.posNo === other.posNo &&
+                                      Math.abs((item.width || 0) - (other.width || 0)) < 2 &&
+                                      Math.abs((item.height || 0) - (other.height || 0)) < 2 &&
+                                      ((item.piId && other.piId === item.piId) || (item.orderNo && other.orderNo === item.orderNo) || (item.piNumber && other.piNumber === item.piNumber))
+                                    )
+                                  )
                               ) || null;
+
+                            // If item is multi-pane assembled unit (DGU, DLGU, Laminated), generate virtual partner from makeup if physical partner record not found
+                            if (!partner && (isDguGlass(item) || item.glassCategory === "DGU" || isDlguGlass(item) || item.glassCategory === "DLGU" || isLaminatedGlass(item) || item.glassCategory === "Lamination" || item.processRoute?.includes("DGU") || item.processRoute?.includes("Lamination") || item.processRoute?.includes("Pairing"))) {
+                              const makeupStr = item.makeup || "";
+                              const parts = makeupStr.split(/\r?\n|\/|\+/).map((s: string) => s.trim()).filter(Boolean);
+                              const innerSpec = parts.length > 1 ? parts[parts.length - 1] : "Clear Float Glass";
+                              partner = {
+                                ...item,
+                                id: `ip-${item.id}`,
+                                serialNumber: `${item.serialNumber}-IP`,
+                                barcode: item.barcode || resolveValidBarcode(item),
+                                glassType: innerSpec,
+                                colorOrClear: "Clear",
+                                glassCategory: item.glassCategory || "DGU",
+                                currentStage: "Finished",
+                                status: "Completed",
+                              } as GlassItem;
+                            }
                           }
 
                           const allPartners: GlassItem[] =
@@ -4596,13 +4819,13 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     <div className="text-[10px] text-[#1680f5] font-medium mt-0.5">
                                       Double Laminated Unit (DLGU)
                                     </div>
+                                  ) : row.glassCategory === "Laminated" || isLaminatedGlass(item) || item.glassCategory === "Lamination" ? (
+                                    <div className="text-[10px] text-amber-700 font-medium mt-0.5">
+                                      Laminated Glass Unit
+                                    </div>
                                   ) : row.glassCategory === "DGU" || row.isDguPair ? (
                                     <div className="text-[10px] text-teal-700 font-medium mt-0.5">
                                       Paired DGU / IGU Unit
-                                    </div>
-                                  ) : row.glassCategory === "Laminated" ? (
-                                    <div className="text-[10px] text-amber-700 font-medium mt-0.5">
-                                      Laminated Glass Unit
                                     </div>
                                   ) : (
                                     <div className="text-[10px] text-slate-500 font-medium mt-0.5">
@@ -4637,6 +4860,10 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                 ) : stage === "Finished" && row.glassCategory === "DLGU" ? (
                                   <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                                     DLGU Unit
+                                  </span>
+                                ) : stage === "Finished" && (row.glassCategory === "Laminated" || isLaminatedGlass(item) || item.glassCategory === "Lamination") ? (
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+                                    Laminated Unit
                                   </span>
                                 ) : stage === "Finished" && (row.glassCategory === "DGU" || row.isDguPair) ? (
                                   <span className="px-2 py-0.5 rounded text-[9.5px] font-black bg-teal-100 text-teal-800 border border-teal-200">
@@ -4702,9 +4929,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                       <ChevronDown className={`w-3.5 h-3.5 text-current shrink-0 transition-transform duration-200 ${isPartnerExpanded ? "rotate-180" : ""}`} />
                                     </button>
                                   ) : (
-                                    <span className="text-[10px] text-slate-400 font-medium px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
-                                      Single Lite
-                                    </span>
+                                    <span className="text-[11px] text-slate-300 font-bold">-</span>
                                   )}
                                 </td>
                               )}
@@ -4713,16 +4938,18 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                               <td className="py-2.5 px-3 text-right align-middle whitespace-nowrap">
                                 <div className="flex items-center justify-end gap-1.5">
                                   {isFinished ? (
-                                    <Button
-                                      size="sm"
-                                      disabled={loading}
-                                      onClick={() => openDispatchModal([row])}
-                                      className="h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white cursor-pointer shrink-0"
-                                      title="Dispatch this glass unit to Dispatched History"
-                                    >
-                                      <Truck className="w-3.5 h-3.5" />
-                                      <span>Dispatch</span>
-                                    </Button>
+                                    <div className="flex items-center gap-1.5">
+                                      <Button
+                                        size="sm"
+                                        disabled={loading}
+                                        onClick={() => openDispatchModal([row])}
+                                        className="h-7 px-2.5 text-xs font-bold rounded-lg shadow-2xs gap-1 bg-gradient-to-r from-emerald-500 to-emerald-700 hover:bg-emerald-700 text-white cursor-pointer shrink-0"
+                                        title="Dispatch this glass unit to Dispatched History"
+                                      >
+                                        <Truck className="w-3.5 h-3.5" />
+                                        <span>Dispatch</span>
+                                      </Button>
+                                    </div>
                                   ) : (
                                     <Button
                                       size="sm"
@@ -5565,7 +5792,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                 onClick={async () => {
                   const targetRow = scanRow;
                   setScanRow(null);
-                  await completeStage(targetRow.allSerials, 1, false);
+                  const serials = stage === "DGU" ? targetRow.allSerials : [targetRow.item.serialNumber];
+                  await completeStage(serials, 1, false);
                 }}
                 className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs gap-1.5 shadow-sm"
               >

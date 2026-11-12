@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn, formatBatchNumber, getDistinctPiDisplay, isLaminatedGlass, isDguGlass, isDguStickerPairMatch, getItemFinish, getGlassPaneRole } from "./utils";
+import { cn, formatBatchNumber, getDistinctPiDisplay, isLaminatedGlass, isDguGlass, isDguStickerPairMatch, isLaminationStickerPairMatch, getItemFinish, getGlassPaneRole, parseRackInfo } from "./utils";
 
 describe("cn function", () => {
   it("should merge classes correctly", () => {
@@ -292,5 +292,80 @@ describe("isDguStickerPairMatch Category Isolation", () => {
     expect(isDguStickerPairMatch(z1Pane, z2Pane)).toBe(true);
   });
 });
+
+describe("isLaminationStickerPairMatch", () => {
+  it("should match complementary laminated lites (10MM CLEAR Batch 5301 + 12MM CLEAR Batch 1620)", () => {
+    const pane10mm = {
+      id: "item-1",
+      serialNumber: "S001",
+      piNumber: "5301",
+      orderNo: "1870",
+      obNo: "3419",
+      posNo: "16",
+      width: 892,
+      height: 1220,
+      glassType: "10MM CLEAR",
+      glassCategory: "Lamination" as const,
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+    };
+    const pane12mm = {
+      id: "item-2",
+      serialNumber: "S002",
+      piNumber: "1620",
+      orderNo: "1870",
+      obNo: "3419",
+      posNo: "16",
+      width: 892,
+      height: 1220,
+      glassType: "12MM CLEAR",
+      glassCategory: "Lamination" as const,
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+    };
+
+    expect(isLaminationStickerPairMatch(pane10mm, pane12mm)).toBe(true);
+    expect(isLaminationStickerPairMatch(pane12mm, pane10mm)).toBe(true);
+  });
+
+  it("should reject two identical single panes of the same thickness from the same batch", () => {
+    const paneA = {
+      id: "item-1",
+      serialNumber: "S001",
+      piNumber: "5301",
+      orderNo: "1870",
+      posNo: "16",
+      width: 892,
+      height: 1220,
+      glassType: "10MM CLEAR",
+      glassCategory: "Lamination" as const,
+    };
+    const paneB = {
+      id: "item-2",
+      serialNumber: "S002",
+      piNumber: "5301",
+      orderNo: "1870",
+      posNo: "16",
+      width: 892,
+      height: 1220,
+      glassType: "10MM CLEAR",
+      glassCategory: "Lamination" as const,
+    };
+
+    expect(isLaminationStickerPairMatch(paneA, paneB)).toBe(false);
+  });
+});
+
+describe("parseRackInfo", () => {
+  it("should parse Rack B and Rack C formats cleanly without defaulting to Rack A", () => {
+    expect(parseRackInfo("Rack B - 50")).toEqual({ rackNo: "Rack B", rackSlot: "50" });
+    expect(parseRackInfo("B - 50")).toEqual({ rackNo: "Rack B", rackSlot: "50" });
+    expect(parseRackInfo("B-52")).toEqual({ rackNo: "Rack B", rackSlot: "52" });
+    expect(parseRackInfo("Rack C - 1")).toEqual({ rackNo: "Rack C", rackSlot: "1" });
+    expect(parseRackInfo("C - 3")).toEqual({ rackNo: "Rack C", rackSlot: "3" });
+    expect(parseRackInfo("Rack D - 12")).toEqual({ rackNo: "Rack D", rackSlot: "12" });
+    expect(parseRackInfo("Rack E")).toEqual({ rackNo: "Rack E", rackSlot: "" });
+    expect(parseRackInfo("Direct Finish")).toEqual({ rackNo: "Direct Finish", rackSlot: "—" });
+  });
+});
+
 
 

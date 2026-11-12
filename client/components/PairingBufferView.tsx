@@ -43,6 +43,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatBatchNumber, formatPlatformDate, formatPlatformTime, getItemFinish, isDguStickerPairMatch, isDguGlass, isLaminatedGlass, isDlguGlass, isDispatchedItem } from "@/lib/utils";
+import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { cleanScannedBarcode } from "@/lib/barcode";
 import { exportStageWipToExcel } from "@/lib/excelExport";
 import { TableHorizontalScrollWrapper } from "./TableHorizontalScrollWrapper";
 
@@ -995,11 +997,15 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     setTimeout(() => scanInputRef.current?.focus(), 100);
   };
 
-  const handleScanVerify = async () => {
-    if (!scanRow) return;
-    const val = scanInput.trim().toLowerCase();
+  const isScanVerifyingRef = useRef<boolean>(false);
 
-    // Check barcode or serial match against buffer items
+  const handleScanVerify = async (manualCode?: string) => {
+    if (!scanRow) return;
+    const rawVal = typeof manualCode === "string" ? manualCode : scanInput;
+    const val = cleanScannedBarcode(rawVal).trim().toLowerCase();
+    if (!val) return;
+
+    // Check barcode or serial match against buffer items (strictly 1 sticker scan)
     const matchedItem = scanRow.bufferItems.find(
       (i) =>
         i.barcode.toLowerCase() === val ||
@@ -1008,16 +1014,35 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
     );
 
     if (matchedItem || val === scanRow.posNo.toLowerCase() || val === scanRow.piNumber.toLowerCase()) {
-      const serials = matchedItem ? [matchedItem.serialNumber] : scanRow.bufferItems.map((i) => i.serialNumber);
+      const serials = matchedItem ? [matchedItem.serialNumber] : [scanRow.bufferItems[0]?.serialNumber].filter(Boolean);
       setScanRow(null);
       setScanInput("");
-      toast.success(`Verified barcode for POS #${scanRow.posNo}. Advancing to DGU...`);
+      toast.success(`Verified barcode for POS #${scanRow.posNo} (1 pc). Advancing to DGU...`);
       await completeStage(serials, 1, false);
     } else {
       toast.error("Barcode mismatch — please scan the correct glass sticker barcode.");
       setScanInput("");
     }
   };
+
+  useBarcodeScanner({
+    enabled: Boolean(scanRow),
+    priority: 10,
+    duplicateCooldownMs: 1800,
+    onScan: (scanned) => {
+      if (isScanVerifyingRef.current) return;
+      isScanVerifyingRef.current = true;
+      const clean = cleanScannedBarcode(scanned);
+      setScanInput(clean);
+      setTimeout(async () => {
+        try {
+          await handleScanVerify(clean);
+        } finally {
+          isScanVerifyingRef.current = false;
+        }
+      }, 50);
+    },
+  });
 
   const selectedPIObject = pis.find((p) => p.id === selectedPIFilter || p.piNumber === selectedPIFilter || p.proformaInvNo === selectedPIFilter);
 
@@ -2022,7 +2047,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
                   autoFocus
                 />
                 <Button
-                  onClick={handleScanVerify}
+                  onClick={() => handleScanVerify()}
                   disabled={!scanInput.trim()}
                   className="bg-gradient-to-r from-indigo-500 to-indigo-700 hover:bg-indigo-700 text-white font-bold px-4 shrink-0"
                 >

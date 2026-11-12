@@ -39,21 +39,17 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [finishFilter, setFinishFilter] = useState<"ALL" | "Colour" | "Clear">("ALL");
-  const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
+  const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
 
   if (!pi) return null;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleCopyBarcode = (barcode: string) => {
+  const handleCopyBarcode = (rowId: string, barcode: string) => {
     if (!barcode || barcode === "—") return;
     navigator.clipboard.writeText(barcode);
-    setCopiedBarcode(barcode);
+    setCopiedItemId(rowId);
     toast.success(`Copied barcode: ${barcode}`);
     setTimeout(() => {
-      setCopiedBarcode((prev) => (prev === barcode ? null : prev));
+      setCopiedItemId((prev) => (prev === rowId ? null : prev));
     }, 2000);
   };
 
@@ -114,11 +110,314 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
     return items.filter((i) => getItemFinish(i) === "Clear").reduce((acc, curr) => acc + (curr.qty || 1), 0);
   }, [items]);
 
+  const handlePrint = () => {
+    try {
+      const printFrame = document.createElement("iframe");
+      printFrame.name = "batch-print-frame";
+      printFrame.style.position = "fixed";
+      printFrame.style.right = "0";
+      printFrame.style.bottom = "0";
+      printFrame.style.width = "0";
+      printFrame.style.height = "0";
+      printFrame.style.border = "none";
+      document.body.appendChild(printFrame);
+
+      const frameDoc = printFrame.contentWindow?.document;
+      if (!frameDoc) {
+        window.print();
+        return;
+      }
+
+      const rowsHtml = filteredItems.map((item, idx) => {
+        const finish = getItemFinish(item);
+        const isColour = finish === "Colour";
+        const itemQty = item.qty || 1;
+        const itemSqm = item.sqm || ((item.width * item.height * itemQty) / 1000000);
+        const piDisplay = item.orderNo || item.piNumber || pi.proformaInvNo || pi.piNumber || "—";
+        const posDisplay = item.posNo || "—";
+        const glassCodeDisplay = item.glassCode || item.itemCode || "—";
+        const glassTypeDisplay = item.glassType || item.category || "—";
+        const obDisplay = item.obNo || pi.obNo || "—";
+        const sfoDisplay = item.sfoNo || pi.sfoNo || pi.jobOrderNumber || item.orderNo || "—";
+        const batchDisplay = formatBatchNumber(item.batchNo || pi.piNumber || "");
+        const barcodeDisplay = item.barcode || item.serialNumber || "—";
+        const badgeBg = isColour ? "#f3e8ff" : "#cffafe";
+        const badgeColor = isColour ? "#6b21a8" : "#155e75";
+        const badgeBorder = isColour ? "#d8b4fe" : "#a5f3fc";
+
+        return `
+          <tr style="background: ${idx % 2 === 1 ? '#f8fafc' : '#ffffff'};">
+            <td style="text-align: center; font-weight: 700; font-family: monospace;">${item.srNo != null ? item.srNo : idx + 1}</td>
+            <td style="font-weight: 700; font-family: monospace; color: #6b21a8;">${piDisplay}</td>
+            <td style="text-align: center; font-weight: 700; font-family: monospace;">${posDisplay}</td>
+            <td style="text-align: center;">
+              <span style="display: inline-block; padding: 1px 6px; border-radius: 9999px; font-size: 8px; font-weight: 800; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder};">
+                ${finish}
+              </span>
+            </td>
+            <td style="text-align: right; font-weight: 700; font-family: monospace;">${item.width}</td>
+            <td style="text-align: right; font-weight: 700; font-family: monospace;">${item.height}</td>
+            <td style="text-align: center; font-weight: 800; font-family: monospace;">${itemQty}</td>
+            <td style="text-align: right; font-weight: 700; font-family: monospace; color: #065f46;">${itemSqm.toFixed(2)}</td>
+            <td style="font-weight: 700; font-family: monospace; color: #1e3a8a;">${glassCodeDisplay}</td>
+            <td style="font-weight: 600;">${glassTypeDisplay}</td>
+            <td style="text-align: center; font-family: monospace;">${obDisplay}</td>
+            <td style="text-align: center; font-family: monospace;">${sfoDisplay}</td>
+            <td style="text-align: center; font-weight: 700; font-family: monospace; color: #6b21a8;">${batchDisplay}</td>
+            <td style="font-family: monospace; font-size: 8.5px; font-weight: 700;">${barcodeDisplay}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const sfoDisplay = pi.sfoNo || items[0]?.sfoNo || pi.jobOrderNumber || "—";
+      const obDisplay = pi.obNo || items[0]?.obNo || "—";
+      const issueDate = pi.sfoDate || pi.issueDate || formatPlatformDate(pi.createdAt);
+      const totalBatchQty = items.reduce((acc, i) => acc + (i.qty || 1), 0);
+      const totalBatchArea = items.reduce((acc, i) => acc + (i.sqm || ((i.width * i.height * (i.qty || 1)) / 1000000)), 0).toFixed(2);
+      const printDateStr = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Dubai" });
+      const printTimeStr = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Dubai" });
+
+      const printHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Batch_${batchNumberFormatted}_Glass_Details</title>
+            <style>
+              @page {
+                size: A4 landscape;
+                margin: 7mm 6mm;
+              }
+              * { box-sizing: border-box; }
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                color: #0f172a;
+                background: #ffffff;
+                margin: 0;
+                padding: 0;
+                font-size: 9px;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .header-card {
+                border: 2px solid #0f172a;
+                border-radius: 6px;
+                margin-bottom: 8px;
+                overflow: hidden;
+              }
+              .top-row {
+                background: #0f172a;
+                color: #ffffff;
+                padding: 6px 10px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+              }
+              .customer-name {
+                font-size: 13px;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+              }
+              .project-name {
+                font-size: 10px;
+                color: #e2e8f0;
+                margin-top: 1px;
+                font-weight: 600;
+              }
+              .meta-grid {
+                display: grid;
+                grid-template-columns: repeat(6, 1fr);
+                background: #f8fafc;
+                border-top: 1px solid #cbd5e1;
+              }
+              .meta-cell {
+                padding: 4px 8px;
+                border-right: 1px solid #cbd5e1;
+              }
+              .meta-cell:last-child {
+                border-right: none;
+              }
+              .meta-label {
+                font-size: 8px;
+                font-weight: 800;
+                color: #64748b;
+                text-transform: uppercase;
+                display: block;
+              }
+              .meta-val {
+                font-size: 11px;
+                font-weight: 900;
+                color: #0f172a;
+                font-family: monospace;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 4px;
+                font-size: 8.5px;
+              }
+              thead {
+                display: table-header-group;
+              }
+              tfoot {
+                display: table-footer-group;
+              }
+              tr {
+                page-break-inside: avoid;
+              }
+              th {
+                background: #0f172a !important;
+                color: #ffffff !important;
+                font-weight: 800;
+                text-transform: uppercase;
+                padding: 4px 3px;
+                border: 1px solid #334155;
+                font-size: 8px;
+                letter-spacing: 0.3px;
+              }
+              td {
+                padding: 3px 4px;
+                border: 1px solid #cbd5e1;
+                vertical-align: middle;
+              }
+              .doc-footer {
+                margin-top: 6px;
+                font-size: 8px;
+                color: #64748b;
+                display: flex;
+                justify-content: space-between;
+                border-top: 1px dashed #cbd5e1;
+                padding-top: 4px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header-card">
+              <div class="top-row">
+                <div>
+                  <div style="font-size: 8px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                    SEJAL GLASS MANUFACTURING PRODUCTS LLC &bull; BATCH PRODUCTION DETAILS
+                  </div>
+                  <div class="customer-name">${pi.customerName || "Customer Order"}</div>
+                  <div class="project-name">Project: <b>${pi.projectName || "Standard Project"}</b> &bull; Status: <b>${pi.status || "In Production"}</b></div>
+                </div>
+                <div style="text-align: right; display: flex; gap: 8px;">
+                  <div style="background: rgba(255,255,255,0.12); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);">
+                    <div style="font-size: 7.5px; text-transform: uppercase; color: #cbd5e1; font-weight: 700;">Total Batch Qty</div>
+                    <div style="font-size: 13px; font-weight: 900; color: #67e8f9; font-family: monospace;">${totalBatchQty} Nos</div>
+                  </div>
+                  <div style="background: rgba(255,255,255,0.12); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);">
+                    <div style="font-size: 7.5px; text-transform: uppercase; color: #cbd5e1; font-weight: 700;">Total Batch Area</div>
+                    <div style="font-size: 13px; font-weight: 900; color: #6ee7b7; font-family: monospace;">${totalBatchArea} m²</div>
+                  </div>
+                </div>
+              </div>
+              <div class="meta-grid">
+                <div class="meta-cell">
+                  <span class="meta-label">Batch No</span>
+                  <span class="meta-val" style="color: #7e22ce;">${batchNumberFormatted}</span>
+                </div>
+                <div class="meta-cell">
+                  <span class="meta-label">SFO No</span>
+                  <span class="meta-val">${sfoDisplay}</span>
+                </div>
+                <div class="meta-cell">
+                  <span class="meta-label">OB No</span>
+                  <span class="meta-val">${obDisplay}</span>
+                </div>
+                <div class="meta-cell">
+                  <span class="meta-label">Issue Date</span>
+                  <span class="meta-val">${issueDate}</span>
+                </div>
+                <div class="meta-cell">
+                  <span class="meta-label">Colour Glass</span>
+                  <span class="meta-val" style="color: #7e22ce;">${colourCount} Pcs</span>
+                </div>
+                <div class="meta-cell">
+                  <span class="meta-label">Clear Glass</span>
+                  <span class="meta-val" style="color: #0e7490;">${clearCount} Pcs</span>
+                </div>
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 32px; text-align: center;">SL NO.</th>
+                  <th style="width: 55px; text-align: left;">PI</th>
+                  <th style="width: 40px; text-align: center;">POS NO.</th>
+                  <th style="width: 50px; text-align: center;">FINISH</th>
+                  <th style="width: 48px; text-align: right;">WIDTH (MM)</th>
+                  <th style="width: 48px; text-align: right;">HEIGHT (MM)</th>
+                  <th style="width: 35px; text-align: center;">QTY</th>
+                  <th style="width: 42px; text-align: right;">SQM</th>
+                  <th style="text-align: left;">GLASS CODE</th>
+                  <th style="text-align: left;">GLASS TYPE / SPEC</th>
+                  <th style="width: 45px; text-align: center;">OB</th>
+                  <th style="width: 45px; text-align: center;">SFO</th>
+                  <th style="width: 50px; text-align: center;">BATCH</th>
+                  <th style="width: 100px; text-align: left;">BARCODE</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+              <tfoot>
+                <tr style="background: #e2e8f0; font-weight: 900; font-size: 9px; border-top: 2px solid #0f172a;">
+                  <td colspan="4" style="text-align: right; text-transform: uppercase; padding: 5px;">
+                    TOTAL (${filteredItems.length} ITEMS):
+                  </td>
+                  <td colspan="2" style="text-align: center; color: #64748b; font-family: monospace;">—</td>
+                  <td style="text-align: center; font-weight: 900; font-family: monospace; color: #1e3a8a; font-size: 10px;">
+                    ${totalQty}
+                  </td>
+                  <td style="text-align: right; font-weight: 900; font-family: monospace; color: #065f46; font-size: 10px;">
+                    ${totalSqm.toFixed(2)}
+                  </td>
+                  <td colspan="6" style="color: #475569; font-size: 8px; font-weight: 600;">
+                    Effective total quantity and area for all listed items
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+
+            <div class="doc-footer">
+              <span>Printed on: ${printDateStr} at ${printTimeStr} (Dubai Plant Time)</span>
+              <span>Sejal Glass Operations System &bull; Batch Production Glass Details</span>
+            </div>
+          </body>
+        </html>
+      `;
+
+      frameDoc.open();
+      frameDoc.write(printHtml);
+      frameDoc.close();
+
+      setTimeout(() => {
+        try {
+          printFrame.contentWindow?.focus();
+          printFrame.contentWindow?.print();
+        } catch {
+          window.print();
+        } finally {
+          setTimeout(() => {
+            if (document.body.contains(printFrame)) {
+              document.body.removeChild(printFrame);
+            }
+          }, 2000);
+        }
+      }, 350);
+    } catch {
+      window.print();
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[96vw] xl:max-w-7xl max-h-[94vh] flex flex-col p-0 overflow-hidden bg-slate-50 text-slate-900 border-slate-300 shadow-2xl">
+      <DialogContent className="max-w-[96vw] xl:max-w-7xl max-h-[94vh] flex flex-col p-0 overflow-hidden bg-slate-50 text-slate-900 border-slate-300 shadow-2xl print:max-h-none print:h-auto print:overflow-visible print:border-none print:shadow-none print:p-0 print:bg-white">
         {/* Header Bar */}
-        <DialogHeader className="flex flex-row items-center justify-between px-6 py-3.5 bg-white border-b border-slate-200 shrink-0">
+        <DialogHeader className="flex flex-row items-center justify-between px-6 py-3.5 bg-white border-b border-slate-200 shrink-0 print:hidden">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
               <FileSpreadsheet className="w-5 h-5 text-white" />
@@ -188,7 +487,7 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
         </DialogHeader>
 
         {/* Scrollable Container with Batch Metadata + 14-Column Table */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        <div id="printable-batch-details" className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 print:p-0 print:overflow-visible">
           {/* Metadata Banner Card */}
           <div className="bg-white border-2 border-slate-900 rounded-xl overflow-hidden shadow-xs print:border print:shadow-none">
             {/* Top Identity Row */}
@@ -474,11 +773,11 @@ export const PIDocumentModal: React.FC<PIDocumentModalProps> = ({
                               {barcodeDisplay !== "—" && (
                                 <button
                                   type="button"
-                                  onClick={() => handleCopyBarcode(barcodeDisplay)}
-                                  className="text-slate-400 hover:text-purple-600 p-0.5 rounded transition-colors print:hidden"
+                                  onClick={() => handleCopyBarcode(item.id || `item-${idx}`, barcodeDisplay)}
+                                  className="text-slate-400 hover:text-purple-600 p-0.5 rounded transition-colors print:hidden cursor-pointer"
                                   title="Copy barcode to clipboard"
                                 >
-                                  {copiedBarcode === barcodeDisplay ? (
+                                  {copiedItemId === (item.id || `item-${idx}`) ? (
                                     <Check className="w-3.5 h-3.5 text-emerald-600" />
                                   ) : (
                                     <Copy className="w-3.5 h-3.5" />

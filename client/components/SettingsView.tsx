@@ -10,16 +10,18 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage } from "@shared/api";
+import { UserRole, UserRecord, UserSession, RolePermissions, ProductionStage, WorkstationAssignment } from "@shared/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
-export const WORKSTATION_STAGES: { stage: ProductionStage; label: string; description: string; badgeClass: string }[] = [
+export const WORKSTATION_STAGES: { stage: WorkstationAssignment; label: string; description: string; badgeClass: string }[] = [
   { stage: "Cutting", label: "Cutting", description: "Glass Cutting & Breaking Tables", badgeClass: "bg-blue-50 text-blue-700 border-blue-200" },
   { stage: "Polishing", label: "Polishing", description: "Edge Grinding & Polishing Line", badgeClass: "bg-cyan-50 text-cyan-700 border-cyan-200" },
   { stage: "Pairing", label: "Pairing", description: "Assembly & Buffer Pairing", badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   { stage: "DGU", label: "IGU / DGU", description: "Insulated Double Glazing Line", badgeClass: "bg-teal-50 text-teal-700 border-teal-200" },
+  { stage: "Packing IGU", label: "IGU Packing List", description: "DGU / DLGU Warehouse Racks & Transfer", badgeClass: "bg-teal-50 text-teal-800 border-teal-300" },
   { stage: "Lamination", label: "Lamination", description: "PVB / EVA Autoclave Line", badgeClass: "bg-amber-50 text-amber-700 border-amber-200" },
+  { stage: "Auto Clave", label: "Auto Clave Packing List", description: "Lamination Racks & Autoclave Transfer", badgeClass: "bg-amber-50 text-amber-800 border-amber-300" },
   { stage: "Dispatched", label: "Dispatch", description: "Finished Warehouse & Dispatch Gate", badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200" },
 ];
 
@@ -80,7 +82,7 @@ export function SettingsView() {
     role: UserRole;
     password: string;
     isActive: boolean;
-    assignedStages: ProductionStage[];
+    assignedStages: WorkstationAssignment[];
   }>({
     username: "",
     name: "",
@@ -202,12 +204,28 @@ export function SettingsView() {
       icon: Boxes,
     },
     {
+      id: "mod-packing-igu",
+      name: "IGU Packing List",
+      category: "Shop Floor Workstations",
+      description: "DGU / DLGU physical rack assignment, slip printing & finished warehouse transfer",
+      key: "module:packing-igu",
+      icon: Boxes,
+    },
+    {
       id: "mod-lamination",
       name: "Lamination & Autoclave Processing Line",
       category: "Shop Floor Workstations",
       description: "Cleanroom PVB/EVA film layering, vacuum ring de-airing & high-pressure autoclave curing",
       key: "module:lamination",
       icon: Box,
+    },
+    {
+      id: "mod-packing-lami",
+      name: "Auto Clave Packing List",
+      category: "Shop Floor Workstations",
+      description: "Lamination rack assignment, autoclave packing list printing & finished warehouse transfer",
+      key: "module:packing-lami",
+      icon: Layers,
     },
     {
       id: "mod-finished",
@@ -504,12 +522,16 @@ export function SettingsView() {
           polishing: "Polishing",
           pairing: "Pairing",
           dgu: "DGU",
+          "packing-igu": "Packing IGU",
           lamination: "Lamination",
+          "packing-lami": "Auto Clave",
           finished: "Finished",
         };
         const targetStage = stageMap[mod];
-        if (targetStage) {
-          effective = user.assignedStages.includes(targetStage as ProductionStage);
+        if (mod === "finished") {
+          effective = user.assignedStages.some((s) => ["finished", "dispatched", "dispatch"].includes(s.toLowerCase()));
+        } else if (targetStage) {
+          effective = user.assignedStages.includes(targetStage as WorkstationAssignment);
         }
       } else if (permKey === "canDispatch") {
         effective = user.assignedStages.some((s) => ["finished", "dispatched", "dispatch"].includes(s.toLowerCase()));
@@ -785,7 +807,7 @@ export function SettingsView() {
       role: u.role,
       password: "",
       isActive: u.isActive,
-      assignedStages: u.assignedStages && u.assignedStages.length > 0 ? u.assignedStages : ["Cutting"],
+      assignedStages: u.assignedStages && u.assignedStages.length > 0 ? u.assignedStages : [],
     });
     setFormError(null);
     setShowEditPassword(false);

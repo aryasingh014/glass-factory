@@ -41,6 +41,7 @@ export function loadDatabaseFromDisk(force = false): void {
         const parsed: Partial<PersistedData> = JSON.parse(content);
         piDatabase.splice(0, piDatabase.length, ...(Array.isArray(parsed.piDatabase) ? parsed.piDatabase : []));
         glassItemsDatabase.splice(0, glassItemsDatabase.length, ...(Array.isArray(parsed.glassItemsDatabase) ? parsed.glassItemsDatabase : []));
+        let dataChanged = false;
         // Ensure laminated glass items include Pairing in their processRoute before Lamination
         glassItemsDatabase.forEach((item) => {
           if (!Array.isArray(item.processRoute)) return;
@@ -95,7 +96,6 @@ export function loadDatabaseFromDisk(force = false): void {
 
         // Normalize batches: 1 PDF is strictly 100% Colour or 100% Clear (never Mixed)
         const colourRegex = COLOURED_COATED_GLASS_REGEX;
-        let dataChanged = false;
 
         // Auto-heal invalid barcodes (e.g. "WIDTHHEIGHT" or non-digit header artifacts)
         const repairedBarcodeMap = new Map<string, string>();
@@ -114,6 +114,7 @@ export function loadDatabaseFromDisk(force = false): void {
             dataChanged = true;
           }
         });
+
         piDatabase.forEach((pi) => {
           const batchItems = glassItemsDatabase.filter(
             (item) => item.piId === pi.id || (item.piNumber && item.piNumber === pi.piNumber)
@@ -227,11 +228,11 @@ export function loadDatabaseFromDisk(force = false): void {
               const isLamPane = item.colorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(itemText);
               expectedRoute = isLamPane
                 ? (hasPolish
-                    ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
-                    : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
+                  ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
+                  : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
                 : (hasPolish
-                    ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
-                    : ["Cutting", "Pairing", "DGU", "Finished"]);
+                  ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                  : ["Cutting", "Pairing", "DGU", "Finished"]);
               if (!item.dlguPhase) {
                 item.dlguPhase = isLamPane ? "LamPairing" : "DguPairing";
                 dataChanged = true;
@@ -317,11 +318,11 @@ export function loadDatabaseFromDisk(force = false): void {
               const isLamPane = item.colorOrClear === "Clear" || /lam|laminated|6mm clear/i.test(itemText);
               expectedRoute = isLamPane
                 ? (hasPolish
-                    ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
-                    : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
+                  ? ["Cutting", "Polishing", "Pairing", "Lamination", "Pairing", "DGU", "Finished"]
+                  : ["Cutting", "Pairing", "Lamination", "Pairing", "DGU", "Finished"])
                 : (hasPolish
-                    ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
-                    : ["Cutting", "Pairing", "DGU", "Finished"]);
+                  ? ["Cutting", "Polishing", "Pairing", "DGU", "Finished"]
+                  : ["Cutting", "Pairing", "DGU", "Finished"]);
               if (!item.dlguPhase) {
                 item.dlguPhase = isLamPane ? "LamPairing" : "DguPairing";
                 dataChanged = true;

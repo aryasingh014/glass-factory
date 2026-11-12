@@ -34,6 +34,9 @@ import {
   handleCleanupDatabase,
   handleDeleteItems,
   handleDispatchItems,
+  handlePackToRack,
+  handleUnpackFromRack,
+  handleSendToFinished,
 } from "./routes/production";
 
 import { handleGetPerformanceAnalytics } from "./routes/analytics";
@@ -155,7 +158,8 @@ function rateLimiter(options: { windowMs?: number; max?: number } = {}) {
 }
 
 export async function initAppDatabases(): Promise<void> {
-  loadDatabaseFromDisk(true);
+  // Server reload trigger for db.json sync
+loadDatabaseFromDisk(true);
   try {
     await Promise.allSettled([
       syncDatabaseWithMongo(),
@@ -167,7 +171,8 @@ export async function initAppDatabases(): Promise<void> {
 }
 
 export function createServer() {
-  loadDatabaseFromDisk(true);
+  // Server reload trigger for db.json sync
+loadDatabaseFromDisk(true);
 
   // Background non-blocking sync with MongoDB Atlas
   syncDatabaseWithMongo().catch((err) => {
@@ -301,6 +306,9 @@ export function createServer() {
   apiV1.post("/production/reject", handleRejectItem);
   apiV1.post("/production/rework", handleReworkItem);
   apiV1.post("/production/dispatch", handleDispatchItems);
+  apiV1.post("/production/pack-to-rack", handlePackToRack);
+  apiV1.post("/production/unpack-from-rack", handleUnpackFromRack);
+  apiV1.post("/production/send-to-finished", handleSendToFinished);
   apiV1.post("/excel/upload", requireRole(["Admin", "Supervisor"]), handleExcelUpload);
   apiV1.post("/sticker/upload", requireRole(["Admin", "Supervisor"]), handleStickerUpload);
   apiV1.post("/sticker/check-duplicates", handleCheckStickerDuplicates);

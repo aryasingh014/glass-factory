@@ -63,6 +63,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>({
     cutting: true,
+    dgu: true,
+    lamination: true,
   });
 
   const toggleDropdown = (id: string, e?: React.MouseEvent) => {
@@ -76,6 +78,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   React.useEffect(() => {
     if (activeTab === "cutting" || activeTab === "pairing") {
       setOpenDropdowns((prev) => ({ ...prev, cutting: true }));
+    }
+    if (activeTab === "dgu" || activeTab === "packing-igu") {
+      setOpenDropdowns((prev) => ({ ...prev, dgu: true }));
+    }
+    if (activeTab === "lamination" || activeTab === "packing-lami") {
+      setOpenDropdowns((prev) => ({ ...prev, lamination: true }));
     }
   }, [activeTab]);
 
@@ -91,7 +99,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         { id: "overview", label: role === "Admin" ? "Admin Dashboard" : "Dashboard", icon: Home },
         { id: "production-overview", label: "Production Overview", icon: BarChart3 },
         { id: "dispatched-history", label: "Dispatched History", icon: History },
-        { id: "pis", label: "Sticker & Batch", icon: Boxes },
+        { id: "pis", label: "Sticker & Batches Upload", icon: Boxes },
       ],
     },
     {
@@ -107,8 +115,24 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           ],
         },
         { id: "polishing", label: "Polishing Workstation", icon: Sparkles, badge: stats?.pendingPolishing ?? 0 },
-        { id: "dgu", label: "DGU/IGU Assembly", icon: PackageCheck, badge: stats?.pendingDGU ?? 0 },
-        { id: "lamination", label: "Lamination Line", icon: Layers, badge: stats?.pendingLamination ?? 0 },
+        {
+          id: "dgu",
+          label: "DGU/IGU Assembly",
+          icon: PackageCheck,
+          badge: stats?.pendingDGU ?? 0,
+          children: [
+            { id: "packing-igu", label: "IGU Packing List", icon: Boxes, badge: stats?.pendingPackingIGU ?? 0 },
+          ],
+        },
+        {
+          id: "lamination",
+          label: "Lamination Line",
+          icon: Layers,
+          badge: stats?.pendingLamination ?? 0,
+          children: [
+            { id: "packing-lami", label: "Auto Clave Packing List", icon: Boxes, badge: stats?.pendingPackingLami ?? 0 },
+          ],
+        },
         { id: "finished", label: "Finished Glass", icon: CheckCircle, badge: stats?.finishedItems ?? 0 },
       ],
     },
@@ -273,7 +297,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                             </button>
                           </TooltipTrigger>
                           <TooltipContent side="right">
-                            {hasChildren ? `${item.label} (Sub-stage: Glass Pairing)` : item.label}
+                            {hasChildren ? `${item.label} (Sub-modules)` : item.label}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

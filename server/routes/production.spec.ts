@@ -2579,4 +2579,638 @@ describe("Batch Upload History & Worker Daily Progress Calculation", () => {
     expect(responseData.message).toContain("Batch 9999");
     expect(responseData.message).toContain("across 5 POS items");
   });
+
+  it("should strictly pack only ONE sticker at a time without pulling in un-scanned partners", async () => {
+    const { handlePackToRack } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const colId = `col-unit-${Date.now()}`;
+    const clrId = `clr-unit-${Date.now()}`;
+    const pairId = `pair-test-${Date.now()}`;
+
+    const colPane: any = {
+      id: colId,
+      serialNumber: `SN-COL-${Date.now()}`,
+      barcode: `BC-COL-${Date.now()}`,
+      glassCategory: "DGU",
+      colorOrClear: "Colour",
+      dguPairId: pairId,
+      qty: 1,
+      width: 1000,
+      height: 1000,
+      currentStage: "Finished",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      status: "In Production",
+    };
+
+    const clrPane: any = {
+      id: clrId,
+      serialNumber: `SN-CLR-${Date.now()}`,
+      barcode: `BC-CLR-${Date.now()}`,
+      glassCategory: "DGU",
+      colorOrClear: "Clear",
+      dguPairId: pairId,
+      qty: 1,
+      width: 1000,
+      height: 1000,
+      currentStage: "Finished",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      status: "In Production",
+    };
+
+    glassItemsDatabase.push(colPane, clrPane);
+
+    // Operator scans ONLY the Colour sticker
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [colPane.serialNumber],
+        itemIds: [colPane.id],
+        rackNo: "Rack A - 25",
+        shift: "Day",
+        operator: "TestOperator",
+        advanceQty: 1,
+        advanceAll: false,
+        packPartners: false,
+      },
+    };
+    const res: any = {
+      json: (d: any) => { responseData = d; return res; },
+      status: () => res,
+    };
+
+    handlePackToRack(req, res, () => {});
+
+    // Colour pane must be packed
+    expect(colPane.packingRackNo).toBe("Rack A - 25");
+    expect(colPane.packingStatus).toBe("Packed");
+
+    // Partner Clear pane must NOT be packed (waiting for its own individual sticker scan)
+    expect(clrPane.packingRackNo).toBeUndefined();
+    expect(clrPane.packingStatus).toBeUndefined();
+
+    // Clean up
+    [colId, clrId].forEach((id) => {
+      const idx = glassItemsDatabase.findIndex((g) => g.id === id);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("should decrement quantity correctly when scanning 1 sticker of a multi-piece batch", async () => {
+    const { handlePackToRack } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const multiId = `multi-unit-${Date.now()}`;
+    const multiItem: any = {
+      id: multiId,
+      serialNumber: `SN-MULTI-${Date.now()}`,
+      barcode: `BC-MULTI-${Date.now()}`,
+      glassCategory: "DGU",
+      colorOrClear: "Colour",
+      qty: 48,
+      lineQty: 48,
+      width: 1200,
+      height: 800,
+      currentStage: "Finished",
+      completedStages: ["Cutting", "Pairing", "DGU", "Finished"],
+      status: "In Production",
+    };
+
+    glassItemsDatabase.push(multiItem);
+
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [multiItem.serialNumber],
+        itemIds: [multiItem.id],
+        rackNo: "Rack B - 12",
+        shift: "Day",
+        operator: "TestOperator",
+        advanceQty: 1,
+        advanceAll: false,
+        packPartners: false,
+      },
+    };
+    const res: any = {
+      json: (d: any) => { responseData = d; return res; },
+      status: () => res,
+    };
+
+    handlePackToRack(req, res, () => {});
+
+    // Pending item quantity must be decremented from 48 to 47
+    expect(multiItem.qty).toBe(47);
+    expect(multiItem.packingRackNo).toBeUndefined();
+
+    // A new item with qty: 1 must be created and packed onto the rack
+    const packedPiece = glassItemsDatabase.find((g) => g.packingRackNo === "Rack B - 12" && g.serialNumber === multiItem.serialNumber);
+    expect(packedPiece).toBeDefined();
+    expect(packedPiece?.qty).toBe(1);
+    expect(packedPiece?.packingStatus).toBe("Packed");
+
+    // Clean up
+    const toRemove = glassItemsDatabase.filter((g) => g.serialNumber === multiItem.serialNumber);
+    toRemove.forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("should strictly send only the targeted unit to Finished when multiple units share the same sticker number / serialNumber", async () => {
+    const { handleSendToFinished } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const sharedSerial = "SN-SAME-STICKER-99";
+    const sharedBarcode = "1012627025950099";
+
+    const unit1: any = {
+      id: "test-stk-unit-1",
+      serialNumber: sharedSerial,
+      barcode: sharedBarcode,
+      posNo: "5",
+      qty: 1,
+      lineQty: 1,
+      width: 620,
+      height: 1020,
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "DGU"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+
+    const unit2: any = {
+      id: "test-stk-unit-2",
+      serialNumber: sharedSerial,
+      barcode: sharedBarcode,
+      posNo: "5",
+      qty: 1,
+      lineQty: 1,
+      width: 620,
+      height: 1020,
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "DGU"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+
+    const unit3: any = {
+      id: "test-stk-unit-3",
+      serialNumber: sharedSerial,
+      barcode: sharedBarcode,
+      posNo: "5",
+      qty: 1,
+      lineQty: 1,
+      width: 620,
+      height: 1020,
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "DGU"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(unit1, unit2, unit3);
+
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [sharedSerial],
+        itemIds: [unit1.id], // Operator only selected or scanned Unit 1!
+        operator: "Operator",
+      },
+    };
+    const res: any = {
+      json: (d: any) => { responseData = d; return res; },
+      status: () => res,
+    };
+
+    handleSendToFinished(req, res, () => {});
+
+    // Unit 1 must be marked sentToFinished: true
+    expect(unit1.sentToFinished).toBe(true);
+    expect(unit1.currentStage).toBe("Finished");
+
+    // Unit 2 and Unit 3 sharing the same sticker number / serialNumber must NOT be sent to Finished!
+    expect(unit2.sentToFinished).toBe(false);
+    expect(unit2.packingRackNo).toBe("Rack A - 25");
+
+    expect(unit3.sentToFinished).toBe(false);
+    expect(unit3.packingRackNo).toBe("Rack A - 25");
+
+    // Clean up
+    const toRemove = glassItemsDatabase.filter((g) => g.serialNumber === sharedSerial);
+    toRemove.forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("should send all partner panes of a DLGU/DGU unit together so no clear partner is left behind as an orphaned random sticker on the rack", async () => {
+    const { handleSendToFinished } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const pairId = "DLGU-PAIR-TEST-999";
+    const colPane: any = {
+      id: "dlgu-col-999",
+      serialNumber: "SN-DLGU-COL",
+      barcode: "1012627007010057",
+      posNo: "19",
+      dguPairId: pairId,
+      colorOrClear: "Colour",
+      glassCategory: "DLGU",
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "Lamination", "DGU"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "DGU", "Finished"],
+    };
+
+    const clrPane1: any = {
+      id: "dlgu-clr1-999",
+      serialNumber: "SN-DLGU-CLR-1",
+      barcode: "1012627007010056",
+      posNo: "19",
+      dguPairId: pairId,
+      colorOrClear: "Clear",
+      glassCategory: "DLGU",
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "Lamination", "DGU"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "DGU", "Finished"],
+    };
+
+    const clrPane2: any = {
+      id: "dlgu-clr2-999",
+      serialNumber: "SN-DLGU-CLR-2",
+      barcode: "1012627007010056",
+      posNo: "19",
+      dguPairId: pairId,
+      colorOrClear: "Clear",
+      glassCategory: "DLGU",
+      currentStage: "Finished",
+      packingRackNo: "Rack A - 25",
+      packingStatus: "Packed",
+      sentToFinished: false,
+      status: "In Production",
+      completedStages: ["Cutting", "Pairing", "Lamination", "DGU"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "DGU", "Finished"],
+    };
+
+    glassItemsDatabase.push(colPane, clrPane1, clrPane2);
+
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [colPane.serialNumber],
+        itemIds: [colPane.id], // Operator scanned the primary sticker of the DLGU unit
+        operator: "Operator",
+        sendPartners: true,
+      },
+    };
+    const res: any = {
+      json: (d: any) => { responseData = d; return res; },
+      status: () => res,
+    };
+
+    handleSendToFinished(req, res, () => {});
+
+    // Primary Colour pane must be sentToFinished: true
+    expect(colPane.sentToFinished).toBe(true);
+    expect(colPane.currentStage).toBe("Finished");
+
+    // Both Clear laminated partner panes MUST also be marked sentToFinished: true
+    expect(clrPane1.sentToFinished).toBe(true);
+    expect(clrPane1.currentStage).toBe("Finished");
+
+    expect(clrPane2.sentToFinished).toBe(true);
+    expect(clrPane2.currentStage).toBe("Finished");
+
+    // Clean up
+    const toRemove = [colPane, clrPane1, clrPane2];
+    toRemove.forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("should not hardcode Rack A when advancing from Lamination or DGU via hardware scan without explicit rackNo", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const lamiId = `lami-scan-test-${Date.now()}`;
+    const lamiItem: any = {
+      id: lamiId,
+      serialNumber: `SN-LAMI-SCAN-${Date.now()}`,
+      barcode: `BC-LAMI-SCAN-${Date.now()}`,
+      glassCategory: "Lamination",
+      glassType: "10MM+12MM LAMINATED",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1500,
+      currentStage: "Lamination",
+      completedStages: ["Cutting", "Polishing", "Pairing"],
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+      status: "In Production",
+    };
+
+    glassItemsDatabase.push(lamiItem);
+
+    let responseData: any = null;
+    const req: any = {
+      body: {
+        serialNumbers: [lamiItem.serialNumber],
+        itemIds: [lamiItem.id],
+        stage: "Lamination",
+        currentStage: "Lamination",
+        advanceQty: 1,
+        operator: "TestOperator",
+        isHardwareScan: true,
+      },
+    };
+    const res: any = {
+      json: (d: any) => { responseData = d; return res; },
+      status: () => res,
+    };
+
+    handleAdvanceStage(req, res, () => {});
+
+    expect(responseData?.items?.length).toBe(1);
+    expect(lamiItem.currentStage).toBe("Finished");
+    expect(lamiItem.packingRackNo).toBeUndefined();
+
+    const idx = glassItemsDatabase.indexOf(lamiItem);
+    if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+  });
+
+  it("should normalize shorthand Rack B / Rack C strings and move items cleanly without defaulting to Rack A", async () => {
+    const { handlePackToRack } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const itemIdB = `rack-b-test-${Date.now()}`;
+    const itemIdC = `rack-c-test-${Date.now()}`;
+    const itemB: any = {
+      id: itemIdB,
+      serialNumber: `SN-RB-${Date.now()}`,
+      barcode: `BC-RB-${Date.now()}`,
+      glassCategory: "Lamination",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1000,
+      currentStage: "Finished",
+      completedStages: ["Cutting", "Pairing", "Lamination"],
+      status: "Completed",
+    };
+    const itemC: any = {
+      id: itemIdC,
+      serialNumber: `SN-RC-${Date.now()}`,
+      barcode: `BC-RC-${Date.now()}`,
+      glassCategory: "DGU",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1000,
+      packingRackNo: "Rack A - 25",
+      currentStage: "Finished",
+      completedStages: ["Cutting", "Pairing", "DGU"],
+      status: "Completed",
+    };
+
+    glassItemsDatabase.push(itemB, itemC);
+
+    let resBData: any = null;
+    handlePackToRack(
+      {
+        body: {
+          serialNumbers: [itemB.serialNumber],
+          itemIds: [itemB.id],
+          rackNo: "B - 52",
+          operator: "TestOperator",
+          packPartners: false,
+        },
+      } as any,
+      { json: (d: any) => { resBData = d; }, status: () => ({ json: () => {} }) } as any,
+      () => {}
+    );
+
+    expect(resBData?.rackNo).toBe("Rack B - 52");
+    expect(itemB.packingRackNo).toBe("Rack B - 52");
+
+    let resCData: any = null;
+    handlePackToRack(
+      {
+        body: {
+          serialNumbers: [itemC.serialNumber],
+          itemIds: [itemC.id],
+          rackNo: "C - 3",
+          operator: "TestOperator",
+          packPartners: false,
+          advanceAll: true,
+        },
+      } as any,
+      { json: (d: any) => { resCData = d; }, status: () => ({ json: () => {} }) } as any,
+      () => {}
+    );
+
+    expect(resCData?.rackNo).toBe("Rack C - 3");
+    expect(itemC.packingRackNo).toBe("Rack C - 3");
+
+    [itemB, itemC].forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("should directly assign the allocated rack and shift when advancing from DGU or Lamination with rackNo", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const ts = Date.now();
+    const pairId = `dgu-direct-rack-${ts}`;
+    const dguColour: any = {
+      id: `dgu-col-${ts}`,
+      serialNumber: `SN-DGU-COL-${ts}`,
+      barcode: `BC-DGU-COL-${ts}`,
+      glassCategory: "DGU",
+      glassType: "6MM TINTED",
+      colorOrClear: "Colour",
+      dguPairId: pairId,
+      posNo: "10",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1200,
+      currentStage: "DGU",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      status: "In Production",
+    };
+    const dguClear: any = {
+      id: `dgu-clr-${ts}`,
+      serialNumber: `SN-DGU-CLR-${ts}`,
+      barcode: `BC-DGU-CLR-${ts}`,
+      glassCategory: "DGU",
+      glassType: "6MM CLEAR",
+      colorOrClear: "Clear",
+      dguPairId: pairId,
+      posNo: "10",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1200,
+      currentStage: "DGU",
+      completedStages: ["Cutting", "Pairing"],
+      processRoute: ["Cutting", "Pairing", "DGU", "Finished"],
+      status: "In Production",
+    };
+    const lamiDirect: any = {
+      id: `lami-dir-${ts}`,
+      serialNumber: `SN-LAMI-DIR-${ts}`,
+      barcode: `BC-LAMI-DIR-${ts}`,
+      glassCategory: "Lamination",
+      glassType: "10MM+12MM LAMINATED",
+      qty: 1,
+      lineQty: 1,
+      width: 900,
+      height: 1500,
+      currentStage: "Lamination",
+      completedStages: ["Cutting", "Polishing", "Pairing"],
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+      status: "In Production",
+    };
+
+    glassItemsDatabase.push(dguColour, dguClear, lamiDirect);
+
+    let dguResData: any = null;
+    handleAdvanceStage(
+      {
+        body: {
+          serialNumbers: [dguColour.serialNumber],
+          itemIds: [dguColour.id],
+          stage: "DGU",
+          currentStage: "DGU",
+          advanceQty: 1,
+          rackNo: "Rack C - 1",
+          shift: "Night",
+          operator: "TestOperator",
+          isHardwareScan: true,
+        },
+      } as any,
+      { json: (d: any) => { dguResData = d; }, status: () => ({ json: () => {} }) } as any,
+      () => {}
+    );
+
+    expect(dguResData?.items?.length).toBe(2);
+    expect(dguColour.currentStage).toBe("Finished");
+    expect(dguColour.packingRackNo).toBe("Rack C - 1");
+    expect(dguColour.packingStatus).toBe("Packed");
+    expect(dguColour.shift).toBe("Night");
+    expect(dguColour.sentToFinished).toBe(false);
+    expect(dguClear.currentStage).toBe("Finished");
+    expect(dguClear.packingRackNo).toBe("Rack C - 1");
+    expect(dguClear.packingStatus).toBe("Packed");
+    expect(dguClear.shift).toBe("Night");
+    expect(dguClear.sentToFinished).toBe(false);
+
+    let lamiResData: any = null;
+    handleAdvanceStage(
+      {
+        body: {
+          serialNumbers: [lamiDirect.serialNumber],
+          itemIds: [lamiDirect.id],
+          stage: "Lamination",
+          currentStage: "Lamination",
+          advanceQty: 1,
+          rackNo: "C - 4",
+          shift: "Day",
+          operator: "TestOperator",
+        },
+      } as any,
+      { json: (d: any) => { lamiResData = d; }, status: () => ({ json: () => {} }) } as any,
+      () => {}
+    );
+
+    expect(lamiResData?.items?.length).toBe(1);
+    expect(lamiDirect.currentStage).toBe("Finished");
+    expect(lamiDirect.packingRackNo).toBe("Rack C - 4");
+    expect(lamiDirect.packingStatus).toBe("Packed");
+    expect(lamiDirect.shift).toBe("Day");
+    expect(lamiDirect.sentToFinished).toBe(false);
+
+    [dguColour, dguClear, lamiDirect].forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
+
+  it("reports 1 unit and 0 skipped when advancing all 3 panes of a combined DLGU unit to Rack C - 1 without emojis", async () => {
+    const { handleAdvanceStage } = await import("./production");
+    const { glassItemsDatabase } = await import("./pi");
+
+    const ts = Date.now();
+    const pairId = `dlgu-pair-unit-${ts}`;
+    const panes = ["Colour", "Clear", "Clear"].map((finish, i) => ({
+      id: `dlgu-${i}-${ts}`,
+      serialNumber: `SN-DLGU-${i}-${ts}`,
+      barcode: `BC-DLGU-${i}-${ts}`,
+      glassCategory: "DLGU",
+      glassType: i === 0 ? "6MM COOL BLUE" : "6MM CLEAR",
+      colorOrClear: finish,
+      dguPairId: pairId,
+      posNo: "14",
+      qty: 1,
+      lineQty: 1,
+      width: 1000,
+      height: 1200,
+      currentStage: "DGU",
+      completedStages: ["Cutting", "Pairing", "Lamination"],
+      processRoute: ["Cutting", "Pairing", "Lamination", "DGU", "Finished"],
+      status: "In Production",
+    }));
+
+    glassItemsDatabase.push(...(panes as any[]));
+
+    let resData: any = null;
+    handleAdvanceStage(
+      {
+        body: {
+          serialNumbers: panes.map((p) => p.serialNumber),
+          stage: "DGU",
+          currentStage: "DGU",
+          advanceAll: true,
+          rackNo: "Rack C - 1",
+          shift: "Day",
+          operator: "TestOperator",
+        },
+      } as any,
+      { json: (d: any) => { resData = d; }, status: () => ({ json: () => {} }) } as any,
+      () => {}
+    );
+
+    expect(resData?.items?.length).toBe(3);
+    expect(resData?.unitCount).toBe(1);
+    expect(resData?.skippedCount).toBe(0);
+    expect(resData?.message).toContain("1 unit");
+    expect(resData?.message).toContain("Rack C - 1");
+    expect(resData?.message).not.toMatch(/[⚠️🚀📦❌✅🔫✨ℹ️📍➔]/u);
+
+    panes.forEach((r) => {
+      const idx = glassItemsDatabase.indexOf(r as any);
+      if (idx !== -1) glassItemsDatabase.splice(idx, 1);
+    });
+  });
 });
