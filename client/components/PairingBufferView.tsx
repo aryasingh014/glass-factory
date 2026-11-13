@@ -539,20 +539,46 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         if (!q) return true;
 
         const parentPI = pis.find((p) => p.id === row.piId || p.piNumber === row.piNumber);
+        const rawItemsMatch = row.rawItems && row.rawItems.some((itm) =>
+          (itm.serialNumber && itm.serialNumber.toLowerCase().includes(q)) ||
+          (itm.barcode && itm.barcode.toLowerCase().includes(q)) ||
+          (itm.rackNo && itm.rackNo.toLowerCase().includes(q)) ||
+          (itm.delLocation && itm.delLocation.toLowerCase().includes(q)) ||
+          (itm.remarks && itm.remarks.toLowerCase().includes(q))
+        );
+
+        const partnerMatch = row.matchingPartnerRow && (
+          row.matchingPartnerRow.barcode.toLowerCase().includes(q) ||
+          row.matchingPartnerRow.glassType.toLowerCase().includes(q) ||
+          row.matchingPartnerRow.glassCode.toLowerCase().includes(q)
+        );
+
         return (
           row.piNumber.toLowerCase().includes(q) ||
+          (row.orderNo && row.orderNo.toLowerCase().includes(q)) ||
           row.posNo.toLowerCase().includes(q) ||
+          `pos ${row.posNo}`.toLowerCase().includes(q) ||
+          `pos#${row.posNo}`.toLowerCase().includes(q) ||
           row.glassCode.toLowerCase().includes(q) ||
           row.glassType.toLowerCase().includes(q) ||
           row.barcode.toLowerCase().includes(q) ||
           row.customerName.toLowerCase().includes(q) ||
           row.projectName.toLowerCase().includes(q) ||
+          row.finish.toLowerCase().includes(q) ||
+          row.glassCategory.toLowerCase().includes(q) ||
+          ((row as any).makeup && (row as any).makeup.toLowerCase().includes(q)) ||
+          ((row as any).rackNo && (row as any).rackNo.toLowerCase().includes(q)) ||
           Boolean(parentPI?.fileName && parentPI.fileName.toLowerCase().includes(q)) ||
           row.obNo.toLowerCase().includes(q) ||
           row.sfoNo.toLowerCase().includes(q) ||
           row.batchNo.toLowerCase().includes(q) ||
           `${row.width}x${row.height}`.includes(q) ||
-          `${row.width}*${row.height}`.includes(q)
+          `${row.width}*${row.height}`.includes(q) ||
+          `${row.width} × ${row.height}`.includes(q) ||
+          String(row.width).includes(q) ||
+          String(row.height).includes(q) ||
+          Boolean(rawItemsMatch) ||
+          Boolean(partnerMatch)
         );
       })
       .sort((a, b) => {
@@ -1060,7 +1086,7 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-slate-900 tracking-tight">DLGU &amp; Pairing Buffer</h1>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">Pairing Buffer</h1>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200">
                 1+1 Pane Synchronization
               </span>
@@ -1617,7 +1643,8 @@ export const PairingBufferView: React.FC<PairingBufferViewProps> = ({
         <div className="space-y-3">
             {groupedCustomerRows.length > 0 ? (
               groupedCustomerRows.map((customer) => {
-                const isExpanded = isBufferCustomerExpanded(customer.groupKey);
+                const isSearching = Boolean((searchTerm || externalSearchTerm || "").trim());
+                const isExpanded = isSearching ? true : isBufferCustomerExpanded(customer.groupKey);
                 const isCompleted = customer.isFullyCut || (customer.totalPieces > 0 && customer.cutPieces >= customer.totalPieces);
 
                 return (

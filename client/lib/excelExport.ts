@@ -271,13 +271,17 @@ export function buildItemExportRows(
       "Height": item.height,
       "Order Qty": item.lineQty || item.qty || 1,
       "Stage Qty": eff.qty,
-      "Unit": eff.unitLabel || "PCS",
+      "Unit": (eff.unitLabel && eff.unitLabel !== "Nos") ? eff.unitLabel : "PCS",
       "Total SQM": eff.sqm,
       "Process Route": routeText,
       "Delivery Date": item.delDate || matchingPI?.deliveryDate || "—",
       "OPT Date": item.optDate || matchingPI?.sfoDate || matchingPI?.issueDate || "—",
       "Origin": "MADE IN UAE",
-      "Delivery Location": item.delLocation || "FACTORY",
+      "Delivery Location": (
+        item.delLocation && item.delLocation !== "FACTORY"
+          ? item.delLocation
+          : (/\bSITE\b/i.test(`${item.glassCode || ""} ${item.itemCode || ""} ${item.remarks || ""}`) ? "SITE" : (item.delLocation || matchingPI?.dispatchType || "FACTORY"))
+      ),
       "Current Stage": getDisplayStage(item, item.currentStage),
       "Status": item.status || "Pending",
       "Last Updated": formatPlatformDateTime(item.updatedAt || (item as any).createdAt),
@@ -400,13 +404,17 @@ export function exportStageHistoryToExcel(
       "Height": matchingItem?.height || 0,
       "Order Qty": matchingItem?.lineQty || matchingItem?.qty || 1,
       "Stage Qty": eff.qty,
-      "Unit": eff.unitLabel || "PCS",
+      "Unit": (eff.unitLabel && eff.unitLabel !== "Nos") ? eff.unitLabel : "PCS",
       "Total SQM": eff.sqm,
       "Process Route": routeText,
       "Delivery Date": matchingItem?.delDate || matchingPI?.deliveryDate || "—",
       "OPT Date": matchingItem?.optDate || matchingPI?.sfoDate || matchingPI?.issueDate || "—",
       "Origin": "MADE IN UAE",
-      "Delivery Location": matchingItem?.delLocation || "FACTORY",
+      "Delivery Location": (
+        matchingItem?.delLocation && matchingItem.delLocation !== "FACTORY"
+          ? matchingItem.delLocation
+          : (matchingItem && /\bSITE\b/i.test(`${matchingItem.glassCode || ""} ${matchingItem.itemCode || ""} ${matchingItem.remarks || ""}`) ? "SITE" : (matchingItem?.delLocation || matchingPI?.dispatchType || "FACTORY"))
+      ),
       "Current Stage": rec.stage || matchingItem?.currentStage || "—",
       "Status": rec.status || matchingItem?.status || "Completed",
       "Last Updated": formatPlatformDateTime(rec.timestamp || matchingItem?.updatedAt),

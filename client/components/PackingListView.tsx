@@ -846,19 +846,35 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
       // Search filter
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
+        const pItm = row.primaryItem;
         const matchCust = row.customerName.toLowerCase().includes(q);
         const matchProj = (row.projectName || "").toLowerCase().includes(q);
         const matchPI = (row.piNumber || "").toLowerCase().includes(q);
         const matchBatch = (row.batchNo || "").toLowerCase().includes(q);
         const matchOb = (row.obNo || "").toLowerCase().includes(q);
         const matchSfo = (row.sfoNo || "").toLowerCase().includes(q);
-        const matchPos = row.posNo.toLowerCase().includes(q);
+        const matchPos = row.posNo.toLowerCase().includes(q) || `pos ${row.posNo}`.toLowerCase().includes(q) || `pos#${row.posNo}`.toLowerCase().includes(q);
         const matchSer = row.allSerials.some((s) => s.toLowerCase().includes(q));
-        const matchBar = (row.displayBarcode || row.primaryItem.barcode || "").toLowerCase().includes(q);
+        const matchBar = (row.displayBarcode || pItm.barcode || "").toLowerCase().includes(q);
         const matchMakeup = (row.makeup || "").toLowerCase().includes(q);
         const matchSlot = (row.rackSlot || "").toLowerCase().includes(q);
+        const matchRack = (row.rackNo || "").toLowerCase().includes(q);
+        const matchSpec = (pItm.glassType || "").toLowerCase().includes(q);
+        const matchCode = (pItm.glassCode || pItm.itemCode || "").toLowerCase().includes(q);
+        const matchLoc = (pItm.delLocation || "").toLowerCase().includes(q);
+        const matchDim =
+          `${pItm.width}x${pItm.height}`.includes(q) ||
+          `${pItm.width}*${pItm.height}`.includes(q) ||
+          `${pItm.width} × ${pItm.height}`.includes(q) ||
+          String(pItm.width).includes(q) ||
+          String(pItm.height).includes(q);
+        const matchPartner = row.partnerItems && row.partnerItems.some((pt) =>
+          (pt.barcode && pt.barcode.toLowerCase().includes(q)) ||
+          (pt.serialNumber && pt.serialNumber.toLowerCase().includes(q)) ||
+          (pt.glassType && pt.glassType.toLowerCase().includes(q))
+        );
 
-        if (!matchCust && !matchProj && !matchPI && !matchBatch && !matchOb && !matchSfo && !matchPos && !matchSer && !matchBar && !matchMakeup && !matchSlot) {
+        if (!matchCust && !matchProj && !matchPI && !matchBatch && !matchOb && !matchSfo && !matchPos && !matchSer && !matchBar && !matchMakeup && !matchSlot && !matchRack && !matchSpec && !matchCode && !matchLoc && !matchDim && !matchPartner) {
           return false;
         }
       }

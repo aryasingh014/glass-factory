@@ -78,6 +78,7 @@ export interface ParsedStickerItem {
   remarks?: string;
   optDate: string;
   delDate: string;
+  delLocation?: string;
 }
 
 export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open, onOpenChange, onSuccess }) => {
@@ -580,6 +581,15 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
         const unitQty = 1;
         const sqm = parseFloat(((widthVal * heightVal * unitQty) / 1000000).toFixed(2));
 
+        // Delivery Location Extraction (Detect SITE vs FACTORY from sticker text / glass code)
+        let pageDelLocation = "FACTORY";
+        const locSearchText = `${glassCode} ${fullPageText}`;
+        if (/\bSITE\b/i.test(locSearchText)) {
+          pageDelLocation = "SITE";
+        } else if (/\bFACTORY\b/i.test(locSearchText)) {
+          pageDelLocation = "FACTORY";
+        }
+
         extractedItems.push({
           stickerNo: pageNum,
           orderNo: orderNo || (detectedOB || "1"),
@@ -603,6 +613,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
           makeup: extractedMakeup,
           optDate: optDateVal,
           delDate: delDateVal,
+          delLocation: pageDelLocation,
           stickerRoute: extractedRouteText,
           hasPolish: itemHasPolish,
           remarks: extractedRouteText ? `Route: ${extractedRouteText}` : undefined,
@@ -880,6 +891,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
       glassColor: glassCategory === "Colour" ? "Coloured Glass" : "Clear Float",
       optDate: optDate || new Date().toLocaleDateString("en-GB"),
       delDate: deliveryDate || new Date().toLocaleDateString("en-GB"),
+      delLocation: "FACTORY",
     };
 
     setParsedRows([...parsedRows, newItem]);
@@ -923,6 +935,7 @@ export const StickerUploaderModal: React.FC<StickerUploaderModalProps> = ({ open
             projectName: i.projectName || (projectName.startsWith("Multiple") ? undefined : projectName),
             glassCategory: productCategory,
             finish: glassCategory,
+            delLocation: i.delLocation || (/\bSITE\b/i.test(`${i.glassCode || ""}`) ? "SITE" : "FACTORY"),
             stickerRoute: i.stickerRoute,
             hasPolish: i.hasPolish,
             remarks: i.remarks || (i.stickerRoute ? `Route: ${i.stickerRoute}` : undefined),

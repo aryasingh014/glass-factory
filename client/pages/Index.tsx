@@ -81,7 +81,6 @@ import { exportStageWipToExcel, exportBatchProgressMatrixToExcel } from "@/lib/e
 
 import { StickerUploaderModal } from "@/components/StickerUploaderModal";
 import { UploadedPdfsModal } from "@/components/UploadedPdfsModal";
-import { ScannerStatusWidget } from "@/components/ScannerStatusWidget";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { scannerAudio } from "@/lib/audioBeep";
 import { findBestMatchingItem, cleanScannedBarcode, evaluateScanStatus } from "@/lib/barcode";
@@ -1390,11 +1389,39 @@ export default function Index() {
         if (!piSearchTerm.trim()) return true;
         const rawQuery = piSearchTerm.toLowerCase().trim();
         const terms = rawQuery.split(/\s+/).filter(Boolean);
+
+        const cleanId = (pi.id || "").replace(/^STK-/i, "").toLowerCase().trim();
+        const cleanPiNo = (pi.piNumber || "").replace(/^STK-/i, "").toLowerCase().trim();
+        const piItems =
+          (pi.id && batchItemsLookup.get(pi.id.toLowerCase().trim())) ||
+          (cleanId && batchItemsLookup.get(cleanId)) ||
+          (pi.piNumber && batchItemsLookup.get(pi.piNumber.toLowerCase().trim())) ||
+          (cleanPiNo && batchItemsLookup.get(cleanPiNo)) ||
+          [];
+
         return terms.every((term) => {
           const cleanTerm = term
             .replace(/^[#]/, "")
             .replace(/^pi[-_ ]?/i, "")
             .replace(/^batch[-_ ]?/i, "");
+
+          const itemMatch = piItems.some((itm) =>
+            (itm.barcode && itm.barcode.toLowerCase().includes(term)) ||
+            (itm.serialNumber && itm.serialNumber.toLowerCase().includes(term)) ||
+            (itm.posNo && itm.posNo.toLowerCase().includes(term)) ||
+            (itm.glassCode && itm.glassCode.toLowerCase().includes(term)) ||
+            (itm.itemCode && itm.itemCode.toLowerCase().includes(term)) ||
+            (itm.glassType && itm.glassType.toLowerCase().includes(term)) ||
+            (itm.orderNo && itm.orderNo.toLowerCase().includes(term)) ||
+            (itm.obNo && itm.obNo.toLowerCase().includes(term)) ||
+            (itm.sfoNo && itm.sfoNo.toLowerCase().includes(term)) ||
+            (itm.delLocation && itm.delLocation.toLowerCase().includes(term)) ||
+            (itm.rackNo && itm.rackNo.toLowerCase().includes(term)) ||
+            `${itm.width}x${itm.height}`.includes(term) ||
+            `${itm.width}*${itm.height}`.includes(term) ||
+            String(itm.width).includes(term) ||
+            String(itm.height).includes(term)
+          );
 
           return (
             (pi.piNumber && pi.piNumber.toLowerCase().includes(term)) ||
@@ -1406,7 +1433,11 @@ export default function Index() {
             (Boolean(cleanTerm) && pi.batchNo && pi.batchNo.toLowerCase().includes(cleanTerm)) ||
             (pi.glassDescription && pi.glassDescription.toLowerCase().includes(term)) ||
             (pi.jobOrderNumber && pi.jobOrderNumber.toLowerCase().includes(term)) ||
-            (pi.colorOrClear && pi.colorOrClear.toLowerCase() === term)
+            (pi.fileName && pi.fileName.toLowerCase().includes(term)) ||
+            (pi.obNo && pi.obNo.toLowerCase().includes(term)) ||
+            (pi.sfoNo && pi.sfoNo.toLowerCase().includes(term)) ||
+            (pi.colorOrClear && pi.colorOrClear.toLowerCase() === term) ||
+            itemMatch
           );
         });
       })
@@ -2153,24 +2184,8 @@ export default function Index() {
             </div>
           </div>
 
-          {/* Right Side: Scanner Gun Status, Weather, Notifications & User Profile */}
+          {/* Right Side: Weather, Notifications & User Profile */}
           <div className="flex items-center gap-3">
-            {/* Hardware Barcode Scanner Gun Status Controller */}
-            <ScannerStatusWidget
-              autoAdvance={autoAdvanceMode}
-              onToggleAutoAdvance={handleToggleAutoAdvance}
-              lastScannedCode={lastScannedCode}
-              lastScannedTime={lastScannedTime}
-              currentStage={currentWorkstationStage}
-              onOpenScanModal={() => {
-                setScanInitialCode("");
-                setScanModalOpen(true);
-              }}
-              onSimulateScan={(testCode) => {
-                handleGlobalScan(testCode);
-              }}
-            />
-
             {/* Weather & Clock Chip: two-line stacked matching reference */}
             <div className="hidden lg:flex items-center gap-3">
               {/* Weather */}
@@ -3801,7 +3816,8 @@ export default function Index() {
                 <div className="space-y-3">
                   {groupedCustomerData.length > 0 ? (
                     groupedCustomerData.map((customer) => {
-                      const isExpanded = isCustomerExpanded(customer.groupKey);
+                      const isSearching = Boolean(piSearchTerm.trim());
+                      const isExpanded = isSearching ? true : isCustomerExpanded(customer.groupKey);
                       const isCompleted = customer.status === "Completed" || (customer.totalPieces > 0 && customer.completedPieces >= customer.totalPieces);
 
                       return (

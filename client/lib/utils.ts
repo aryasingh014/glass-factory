@@ -254,13 +254,13 @@ export function getDguEffectiveQtyAndSqm(
   } | null | undefined,
   targetStage?: string
 ): { qty: number; sqm: number; unitLabel: string; isDgu: boolean } {
-  if (!item) return { qty: 0, sqm: 0, unitLabel: "Nos", isDgu: false };
+  if (!item) return { qty: 0, sqm: 0, unitLabel: "PCS", isDgu: false };
 
   const isDlgu = isDlguGlass(item);
   const isDgu = isDguGlass(item) || isDlgu;
   if (!isDgu) {
     const rawSqm = parseFloat(((item.width * item.height * item.qty) / 1000000).toFixed(2));
-    return { qty: item.qty, sqm: rawSqm, unitLabel: "Nos", isDgu: false };
+    return { qty: item.qty, sqm: rawSqm, unitLabel: "PCS", isDgu: false };
   }
 
   const isAlreadyReduced = item.isDguReduced === true;

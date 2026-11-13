@@ -539,6 +539,7 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
         status: stageItemsPieces > 0 ? "In Production" : (parentPI?.status || (stageItemsPieces === 0 && totalCount > 0 ? "Completed" : "In Production")),
         createdAt,
         issueDate,
+        items: b.items,
       };
     });
 
@@ -636,13 +637,38 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
 
         const q = (batchSearchTerm || externalSearchTerm || "").toLowerCase().trim();
         if (!q) return true;
+
+        const itemsMatch = (b.items || []).some((i) =>
+          (i.barcode && i.barcode.toLowerCase().includes(q)) ||
+          (i.serialNumber && i.serialNumber.toLowerCase().includes(q)) ||
+          (i.posNo && i.posNo.toLowerCase().includes(q)) ||
+          (i.glassCode && i.glassCode.toLowerCase().includes(q)) ||
+          (i.itemCode && i.itemCode.toLowerCase().includes(q)) ||
+          (i.glassType && i.glassType.toLowerCase().includes(q)) ||
+          (i.orderNo && i.orderNo.toLowerCase().includes(q)) ||
+          (i.obNo && i.obNo.toLowerCase().includes(q)) ||
+          (i.sfoNo && i.sfoNo.toLowerCase().includes(q)) ||
+          (i.delLocation && i.delLocation.toLowerCase().includes(q)) ||
+          (i.rackNo && i.rackNo.toLowerCase().includes(q)) ||
+          (i.remarks && i.remarks.toLowerCase().includes(q)) ||
+          `${i.width}x${i.height}`.includes(q) ||
+          `${i.width}*${i.height}`.includes(q) ||
+          `${i.width} × ${i.height}`.includes(q) ||
+          String(i.width).includes(q) ||
+          String(i.height).includes(q)
+        );
+
         return (
           b.piNumber.toLowerCase().includes(q) ||
+          (b.batchNo && b.batchNo.toLowerCase().includes(q)) ||
           b.customerName.toLowerCase().includes(q) ||
           b.projectName.toLowerCase().includes(q) ||
           ((b as any).fileName && (b as any).fileName.toLowerCase().includes(q)) ||
           (b.jobOrderNumber && b.jobOrderNumber.toLowerCase().includes(q)) ||
-          (b.sfoNo && b.sfoNo.toLowerCase().includes(q))
+          (b.sfoNo && b.sfoNo.toLowerCase().includes(q)) ||
+          (b.finish && b.finish.toLowerCase().includes(q)) ||
+          (b.glassCategory && b.glassCategory.toLowerCase().includes(q)) ||
+          itemsMatch
         );
       })
       .sort((a, b) => {
@@ -1899,9 +1925,11 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       if (!query) return true;
 
       const partnerMatch = row.partnerItem
-        ? row.partnerItem.serialNumber.toLowerCase().includes(query) ||
-          row.partnerItem.barcode.toLowerCase().includes(query) ||
-          row.partnerItem.glassType.toLowerCase().includes(query)
+        ? (row.partnerItem.serialNumber && row.partnerItem.serialNumber.toLowerCase().includes(query)) ||
+          (row.partnerItem.barcode && row.partnerItem.barcode.toLowerCase().includes(query)) ||
+          (row.partnerItem.glassType && row.partnerItem.glassType.toLowerCase().includes(query)) ||
+          (row.partnerItem.glassCode && row.partnerItem.glassCode.toLowerCase().includes(query)) ||
+          (row.partnerItem.posNo && row.partnerItem.posNo.toLowerCase().includes(query))
         : false;
 
       const parentPI = pis.find((p) => p.id === item.piId || p.piNumber === item.piNumber);
@@ -1909,15 +1937,33 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
       return (
         row.displaySerial.toLowerCase().includes(query) ||
         row.displayBarcode.toLowerCase().includes(query) ||
-        item.itemCode.toLowerCase().includes(query) ||
+        (item.barcode && item.barcode.toLowerCase().includes(query)) ||
+        (item.serialNumber && item.serialNumber.toLowerCase().includes(query)) ||
+        (item.itemCode && item.itemCode.toLowerCase().includes(query)) ||
+        (item.glassCode && item.glassCode.toLowerCase().includes(query)) ||
+        (item.posNo && (item.posNo.toLowerCase().includes(query) || `pos ${item.posNo}`.toLowerCase().includes(query) || `pos#${item.posNo}`.toLowerCase().includes(query))) ||
         item.piNumber.toLowerCase().includes(query) ||
         item.glassType.toLowerCase().includes(query) ||
+        (item.makeup && item.makeup.toLowerCase().includes(query)) ||
+        (item.delLocation && item.delLocation.toLowerCase().includes(query)) ||
+        (item.customerName && item.customerName.toLowerCase().includes(query)) ||
+        (item.projectName && item.projectName.toLowerCase().includes(query)) ||
         (item.orderNo && item.orderNo.toLowerCase().includes(query)) ||
+        (item.obNo && item.obNo.toLowerCase().includes(query)) ||
+        (item.sfoNo && item.sfoNo.toLowerCase().includes(query)) ||
         (item.batchNo && item.batchNo.toLowerCase().includes(query)) ||
         (item.rackNo && item.rackNo.toLowerCase().includes(query)) ||
-        (parentPI?.fileName && parentPI.fileName.toLowerCase().includes(query)) ||
-        (parentPI?.customerName && parentPI.customerName.toLowerCase().includes(query)) ||
-        (parentPI?.projectName && parentPI.projectName.toLowerCase().includes(query)) ||
+        (item.remarks && item.remarks.toLowerCase().includes(query)) ||
+        (item.stickerRoute && item.stickerRoute.toLowerCase().includes(query)) ||
+        (item.finish && item.finish.toLowerCase().includes(query)) ||
+        `${item.width}x${item.height}`.includes(query) ||
+        `${item.width}*${item.height}`.includes(query) ||
+        `${item.width} × ${item.height}`.includes(query) ||
+        String(item.width).includes(query) ||
+        String(item.height).includes(query) ||
+        Boolean(parentPI?.fileName && parentPI.fileName.toLowerCase().includes(query)) ||
+        Boolean(parentPI?.customerName && parentPI.customerName.toLowerCase().includes(query)) ||
+        Boolean(parentPI?.projectName && parentPI.projectName.toLowerCase().includes(query)) ||
         partnerMatch
       );
     });
@@ -5228,7 +5274,8 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
               <div className="space-y-3">
                 {groupedStageCustomerRows.length > 0 ? (
                   groupedStageCustomerRows.map((customer) => {
-                    const isExpanded = isStageCustomerExpanded(customer.groupKey);
+                    const isSearching = Boolean((searchTerm || externalSearchTerm || "").trim());
+                    const isExpanded = isSearching ? true : isStageCustomerExpanded(customer.groupKey);
 
                     return (
                       <div

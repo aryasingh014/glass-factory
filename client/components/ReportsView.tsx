@@ -686,6 +686,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const job = String(item.jobOrderNumber || "").trim().toLowerCase();
     const po = String(item.purchaseOrderNo || "").trim().toLowerCase();
 
+    const customer = String(item.customerName || item.clientName || "").trim().toLowerCase();
+    const project = String(item.projectName || "").trim().toLowerCase();
+    const fileName = String(item.fileName || "").trim().toLowerCase();
+
     const checkMatch = (val: string) => {
       if (!val || val === "-" || val === "—") return false;
       return val.includes(rawQ) || (cleanQ.length > 0 && val.includes(cleanQ));
@@ -700,7 +704,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       checkMatch(ob) ||
       checkMatch(proforma) ||
       checkMatch(job) ||
-      checkMatch(po)
+      checkMatch(po) ||
+      checkMatch(customer) ||
+      checkMatch(project) ||
+      checkMatch(fileName)
     );
   };
 
@@ -736,6 +743,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const serial = String(item.serialNumber || "").trim().toLowerCase();
     const barcode = String(item.barcode || "").trim().toLowerCase();
     const qrId = String(item.qrId || "").trim().toLowerCase();
+
+    // 3. Glass Code, Description and Size Search
+    const code = String(item.glassCode || item.itemCode || "").trim().toLowerCase();
+    const glassType = String(item.glassType || "").trim().toLowerCase();
+    const dim = item.width && item.height ? `${item.width}x${item.height}` : "";
+    if (code && code.includes(rawQ)) return true;
+    if (glassType && glassType.includes(rawQ)) return true;
+    if (dim && (dim.includes(cleanQ) || `${item.width}*${item.height}`.includes(cleanQ))) return true;
 
     // Never use substring .includes() because '1' would match almost every barcode!
     if (serial && (serial === rawQ || serial === cleanQ)) return true;

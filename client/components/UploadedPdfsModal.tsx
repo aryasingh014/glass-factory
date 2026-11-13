@@ -350,6 +350,8 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
             return Boolean(posMatch || stickerMatch || serialMatch || sizeGlassMatch || dimMatch);
           });
 
+          const matchesFileName = Boolean(row.fileName && row.fileName.toLowerCase().includes(term));
+
           return (
             matchesPi ||
             matchesCustomer ||
@@ -357,7 +359,8 @@ export const UploadedPdfsModal: React.FC<UploadedPdfsModalProps> = ({
             matchesBatch ||
             matchesFinish ||
             matchesGlassType ||
-            matchesSizes
+            matchesSizes ||
+            matchesFileName
           );
         });
 

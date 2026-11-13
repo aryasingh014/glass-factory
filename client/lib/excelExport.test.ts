@@ -271,4 +271,60 @@ describe("Stage Export Functionality & Exact 31 Required Columns Verification", 
     expect(rows[0]["Inner Glass (IG)"]).toBe("8MM CLEAR");
     expect(rows[0]["Glass Makeup / Buildup"]).toBe("8MM EMICOOL DSR III ON CLEAR + 16MM BLACK SPACER + 8MM CLEAR");
   });
+
+  it("should output PCS instead of Nos in Unit column and accurately extract Delivery Location (SITE vs FACTORY)", () => {
+    const siteItem = {
+      id: "test-site-01",
+      piId: "batch-g1",
+      serialNumber: "S501",
+      barcode: "1012627015230032",
+      glassCode: "3RD GL 01 GL 01 SITE",
+      itemCode: "3RD GL 01 GL 01 SITE",
+      glassType: "10MM CLEAR",
+      glassCategory: "Lamination",
+      colorOrClear: "Clear",
+      width: 892,
+      height: 1220,
+      qty: 1,
+      lineQty: 48,
+      delLocation: "FACTORY", // Even if raw item had FACTORY default, glass code specifies SITE
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+    };
+
+    const factoryItem = {
+      id: "test-factory-01",
+      piId: "batch-b2",
+      serialNumber: "S502",
+      barcode: "1012627015230099",
+      glassCode: "GL06A FACTORY",
+      itemCode: "GL06A FACTORY",
+      glassType: "8MM CLEAR",
+      glassCategory: "Lamination",
+      colorOrClear: "Clear",
+      width: 892,
+      height: 1220,
+      qty: 1,
+      lineQty: 4,
+      delLocation: "FACTORY",
+      currentStage: "Cutting",
+      processRoute: ["Cutting", "Polishing", "Pairing", "Lamination", "Finished"],
+    };
+
+    exportStageWipToExcel("Cutting", [siteItem as any, factoryItem as any], "G1_G2_Export_Verification", pis);
+
+    const foundFilename = Object.keys(capturedFiles).find((f) => f.includes("G1_G2_Export_Verification"));
+    expect(foundFilename).toBeDefined();
+
+    const wb = capturedFiles[foundFilename!];
+    const sheet = wb.Sheets["All Items (Combined)"];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
+
+    expect(rows[0]["Unit"]).toBe("PCS");
+    expect(rows[0]["Unit"]).not.toBe("Nos");
+    expect(rows[0]["Delivery Location"]).toBe("SITE");
+
+    expect(rows[1]["Unit"]).toBe("PCS");
+    expect(rows[1]["Delivery Location"]).toBe("FACTORY");
+  });
 });
