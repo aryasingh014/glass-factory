@@ -145,6 +145,9 @@ export interface RejectRecord {
   date: string;
   operator: string;
   cost?: number;
+  resolved?: boolean;
+  resolvedAt?: string;
+  status?: "Pending" | "Resolved" | string;
 }
 
 export interface ReworkRecord {
@@ -165,6 +168,9 @@ export interface ReworkRecord {
   partnerSerialNumber?: string;
   date: string;
   operator: string;
+  resolved?: boolean;
+  resolvedAt?: string;
+  status?: "Pending" | "Completed" | string;
 }
 
 export interface DashboardStats {

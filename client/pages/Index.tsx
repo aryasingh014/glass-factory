@@ -1652,10 +1652,10 @@ export default function Index() {
     const laminationItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "lamination" && i.status !== "Rejected");
     const finishedItems = items.filter((i) => !isDispatchedItem(i) && i.currentStage?.toLowerCase() === "finished" && i.status !== "Rejected");
     const dispatchedList = items.filter((i) => isDispatchedItem(i) && i.status !== "Rejected");
-    const rejectSerials = new Set(rejects.map((r) => r.serialNumber));
-    const reworkSerials = new Set(reworks.map((rw) => rw.serialNumber));
-    const rejectedItems = items.filter((i) => i.status === "Rejected" || (i as any).isRejected || rejectSerials.has(i.serialNumber));
-    const reworkItems = items.filter((i) => i.status === "Reworking" || (i as any).isReworking || reworkSerials.has(i.serialNumber));
+    const unresolvedRejectSerials = new Set(rejects.filter((r) => !(r as any).resolved).map((r) => r.serialNumber));
+    const unresolvedReworkSerials = new Set(reworks.filter((rw) => !(rw as any).resolved).map((rw) => rw.serialNumber));
+    const rejectedItems = items.filter((i) => (i.status === "Rejected" || ((i as any).isRejected && i.status !== "Completed") || unresolvedRejectSerials.has(i.serialNumber)) && i.status !== "Completed");
+    const reworkItems = items.filter((i) => (i.status === "Reworking" || ((i as any).isReworking && i.status !== "Completed") || unresolvedReworkSerials.has(i.serialNumber)) && i.status !== "Completed" && i.status !== "Rejected");
 
     const totalItems = items.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const cuttingCount = cuttingItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
@@ -1671,8 +1671,8 @@ export default function Index() {
     const dguCount = dguItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const laminationCount = laminationItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
     const finishedCount = finishedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-    const rejectedCount = Math.max(stats?.rejectItems ?? 0, rejects.length, rejectedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0));
-    const reworkCount = Math.max(stats?.reworkItems ?? 0, reworks.length, reworkItems.reduce((acc, curr) => acc + (curr.qty || 1), 0));
+    const rejectedCount = stats?.rejectItems !== undefined ? stats.rejectItems : rejectedItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
+    const reworkCount = stats?.reworkItems !== undefined ? stats.reworkItems : reworkItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
     const totalSqm = items.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
     const cuttingSqm = cuttingItems.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
@@ -1885,8 +1885,8 @@ export default function Index() {
       finishedItems: packedFinishedUnits,
       dispatchedItems: stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems,
       totalCompletedItems: packedFinishedUnits + (stats?.dispatchedItems !== undefined ? stats.dispatchedItems : pipelineMetrics.dispatchedItems),
-      rejectItems: Math.max(stats?.rejectItems ?? 0, rejects.length, pipelineMetrics.rejectedItems),
-      reworkItems: Math.max(stats?.reworkItems ?? 0, reworks.length, pipelineMetrics.reworkItems),
+      rejectItems: stats?.rejectItems !== undefined ? stats.rejectItems : pipelineMetrics.rejectedItems,
+      reworkItems: stats?.reworkItems !== undefined ? stats.reworkItems : pipelineMetrics.reworkItems,
     };
   }, [stats, pis, items, pipelineMetrics, rejects, reworks]);
 
@@ -2532,16 +2532,18 @@ export default function Index() {
                 return true;
               });
 
-              const rejectSerialSet = new Set(rejects.map((r) => r.serialNumber));
-              const rejectedSummaryItems = filteredSummaryItems.filter((i) => i.status === "Rejected" || (i as any).isRejected || rejectSerialSet.has(i.serialNumber));
+              const unresolvedRejectSerials = new Set(rejects.filter((r) => !(r as any).resolved).map((r) => r.serialNumber));
+              const rejectedSummaryItems = filteredSummaryItems.filter(
+                (i) => (i.status === "Rejected" || ((i as any).isRejected && i.status !== "Completed") || unresolvedRejectSerials.has(i.serialNumber)) && i.status !== "Completed"
+              );
               const completedSummaryItems = filteredSummaryItems.filter(
-                (i) => i.status !== "Rejected" && !(i as any).isRejected && !rejectSerialSet.has(i.serialNumber) && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
+                (i) => i.status !== "Rejected" && !(i as any).isRejected && !unresolvedRejectSerials.has(i.serialNumber) && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
               );
               const inProgressSummaryItems = filteredSummaryItems.filter(
                 (i) =>
                   i.status !== "Rejected" &&
                   !(i as any).isRejected &&
-                  !rejectSerialSet.has(i.serialNumber) &&
+                  !unresolvedRejectSerials.has(i.serialNumber) &&
                   !completedSummaryItems.some((c) => c.id === i.id) &&
                   (i.status === "In Production" ||
                     i.status === "Reworking" ||
@@ -2552,7 +2554,7 @@ export default function Index() {
                 (i) =>
                   i.status !== "Rejected" &&
                   !(i as any).isRejected &&
-                  !rejectSerialSet.has(i.serialNumber) &&
+                  !unresolvedRejectSerials.has(i.serialNumber) &&
                   !completedSummaryItems.some((c) => c.id === i.id) &&
                   !inProgressSummaryItems.some((p) => p.id === i.id)
               );
@@ -2561,11 +2563,7 @@ export default function Index() {
               const completedItems = completedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
               const inProgressItems = inProgressSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
               const pendingItems = pendingSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
-              const rejectedItems = Math.max(
-                stats?.rejectItems ?? 0,
-                rejects.length,
-                rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0)
-              );
+              const rejectedItems = stats?.rejectItems !== undefined ? stats.rejectItems : rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
               // Assembled Unit Counts
               const totalUnits = calculateAssembledUnits(filteredSummaryItems).totalUnits || Math.ceil(totalItems / 2);
@@ -2650,7 +2648,7 @@ export default function Index() {
                         </div>
                         <div className="ppb-sparkline">{[15, 23, 32, 45, 59, 72, 86, 100].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#ef4444' }} />)}</div>
                       </div>
-                      <div className="ppb-metric-note ppb-note-red"><span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block', flexShrink: 0 }} />{effectiveStats.rejectItems === 0 ? 'No rejection today' : 'Rejection logged'}</div>
+                      <div className="ppb-metric-note ppb-note-red"><span style={{ width: 8, height: 8, borderRadius: '50%', background: effectiveStats.rejectItems === 0 ? '#10b981' : '#ef4444', display: 'inline-block', flexShrink: 0 }} />{effectiveStats.rejectItems === 0 ? 'No active rejection' : `${effectiveStats.rejectItems} Active Rejection${effectiveStats.rejectItems > 1 ? 's' : ''}`}</div>
                     </div>
 
                     <div className="ppb-metric-card" onClick={() => { setReportsInitialTab("reworks"); try { localStorage.setItem("sejal_reports_active_tab", "reworks"); } catch { } setActiveTab("reports"); }} style={{ cursor: 'pointer' }}>
@@ -2662,7 +2660,7 @@ export default function Index() {
                         </div>
                         <div className="ppb-sparkline">{[16, 28, 46, 18, 37, 25, 51, 68].map((h, i) => <i key={i} style={{ height: `${h}%`, background: '#f59e0b' }} />)}</div>
                       </div>
-                      <div className="ppb-metric-note ppb-note-yellow"><RotateCw className="w-3.5 h-3.5" />Sent to Line</div>
+                      <div className="ppb-metric-note ppb-note-yellow"><RotateCw className="w-3.5 h-3.5" />{effectiveStats.reworkItems === 0 ? 'All reworks cleared' : `${effectiveStats.reworkItems} In Progress on Line`}</div>
                     </div>
                   </div>
 

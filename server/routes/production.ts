@@ -1121,6 +1121,32 @@ export const handleAdvanceStage: RequestHandler = (req, res) => {
     }
   }
 
+  // Resolve rework and reject records for items that have been advanced through the workstation
+  updatedItems.forEach((uItem) => {
+    delete (uItem as any).isReworking;
+    delete (uItem as any).isRejected;
+    (uItem as any).reworkResolved = true;
+
+    const uSerial = uItem.serialNumber;
+    const uBarcode = uItem.barcode;
+
+    reworkDatabase.forEach((rw) => {
+      if ((rw.serialNumber === uSerial || (uBarcode && rw.barcode === uBarcode)) && !rw.resolved) {
+        rw.resolved = true;
+        rw.status = "Completed";
+        rw.resolvedAt = new Date().toISOString();
+      }
+    });
+
+    rejectDatabase.forEach((rej) => {
+      if ((rej.serialNumber === uSerial || (uBarcode && rej.barcode === uBarcode)) && !rej.resolved) {
+        rej.resolved = true;
+        rej.status = "Resolved";
+        rej.resolvedAt = new Date().toISOString();
+      }
+    });
+  });
+
   // Update PI completion status across all batches
   for (const pi of piDatabase) {
     const cleanId = (pi.id || "").replace(/^STK-/i, "");
@@ -2498,6 +2524,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
       partnerSerialNumber: allItemsToReject.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
       date: new Date().toISOString(),
       operator: cleanOperator,
+      resolved: false,
+      status: "Pending",
     };
 
     rejectDatabase.unshift(rejectEntry);
@@ -2538,6 +2566,8 @@ export const handleRejectItem: RequestHandler = (req, res) => {
         partnerSerialNumber: allItemsToReject.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
         date: new Date().toISOString(),
         operator: cleanOperator,
+        resolved: false,
+        status: "Pending",
       };
 
       reworkDatabase.unshift(reworkEntry);
@@ -3192,6 +3222,8 @@ export const handleReworkItem: RequestHandler = (req, res) => {
       partnerSerialNumber: allItemsToRework.find((other) => other.serialNumber !== targetItem.serialNumber)?.serialNumber,
       date: new Date().toISOString(),
       operator: cleanOperator,
+      resolved: false,
+      status: "Pending",
     };
 
     reworkDatabase.unshift(reworkEntry);
@@ -4141,8 +4173,58 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
 
   const finishedItems = computeUnits(finishedPendingList);
   const dispatchedItems = computeUnits(dispatchedList);
-  const rejectItems = rejectDatabase.length;
-  const reworkItems = reworkDatabase.length;
+
+  // Auto-reconcile resolved states for any items that have already completed or advanced past rework
+  glassItemsDatabase.forEach((g) => {
+    if (g.status === "Completed" || g.currentStage === "Finished" || g.status === "In Production") {
+      if ((g as any).isReworking) delete (g as any).isReworking;
+      if ((g as any).isRejected && (g.status === "Completed" || g.currentStage === "Finished")) delete (g as any).isRejected;
+    }
+  });
+
+  const activeReworkSerials = new Set<string>();
+  glassItemsDatabase.forEach((i) => {
+    const isCompleted = i.status === "Completed" || i.currentStage === "Finished";
+    const isReworkingItem = i.status === "Reworking" || Boolean((i as any).isReworking);
+    if (isReworkingItem && !isCompleted && i.status !== "Rejected") {
+      activeReworkSerials.add(i.serialNumber);
+    }
+  });
+  reworkDatabase.forEach((rw) => {
+    if (!rw.resolved) {
+      const match = glassItemsDatabase.find((g) => g.serialNumber === rw.serialNumber);
+      if (match && (match.status === "Completed" || match.currentStage === "Finished" || (match.status === "In Production" && match.currentStage !== rw.targetStage && match.currentStage !== rw.fromStage))) {
+        rw.resolved = true;
+        rw.status = "Completed";
+        rw.resolvedAt = rw.resolvedAt || new Date().toISOString();
+      } else {
+        activeReworkSerials.add(rw.serialNumber);
+      }
+    }
+  });
+  const reworkItems = activeReworkSerials.size;
+
+  const activeRejectSerials = new Set<string>();
+  glassItemsDatabase.forEach((i) => {
+    const isCompleted = i.status === "Completed" || i.currentStage === "Finished";
+    const isRejectedItem = i.status === "Rejected" || Boolean((i as any).isRejected);
+    if (isRejectedItem && !isCompleted) {
+      activeRejectSerials.add(i.serialNumber);
+    }
+  });
+  rejectDatabase.forEach((rej) => {
+    if (!rej.resolved) {
+      const match = glassItemsDatabase.find((g) => g.serialNumber === rej.serialNumber);
+      if (match && (match.status === "Completed" || match.currentStage === "Finished")) {
+        rej.resolved = true;
+        rej.status = "Resolved";
+        rej.resolvedAt = rej.resolvedAt || new Date().toISOString();
+      } else if (!match || match.status === "Rejected" || (match as any).isRejected) {
+        activeRejectSerials.add(rej.serialNumber);
+      }
+    }
+  });
+  const rejectItems = activeRejectSerials.size;
 
   // Compute user / machine throughput breakdown by stage (stickers count + SQM volume)
   const itemSqmLookup = new Map<string, number>();
@@ -4325,7 +4407,7 @@ export const handleGetReports: RequestHandler = (req, res) => {
       syncChanged = true;
 
       const item = glassItemsDatabase.find((g) => g.serialNumber === rej.serialNumber);
-      if (item && item.status !== "Completed") {
+      if (item && item.status !== "Completed" && item.status !== "In Production" && !rej.resolved) {
         item.status = "Reworking";
         item.currentStage = "Cutting";
       }
