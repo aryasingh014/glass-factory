@@ -456,13 +456,19 @@ export function calculateAssembledUnits(itemList: any[]): { totalUnits: number; 
   const lamU = Math.ceil(lamList.reduce((acc, curr) => acc + (curr.qty || 1), 0) / 2);
   const monoU = monoList.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
-  const dguSqmTotal = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0) +
-    pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0);
-  const nonDguSqmTotal = nonDguList.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+  const dlguColSqm = dlguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+  const dlguSqmTotal = dlguColSqm > 0 ? dlguColSqm : dlguList.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 3;
+
+  const dguColSqm = pureDguList.filter(isColour).reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+  const pureDguSqmTotal = dguColSqm > 0 ? dguColSqm : pureDguList.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2;
+
+  const lamSqm = lamList.length > 0 ? lamList.reduce((acc, curr) => acc + (curr.sqm || 0), 0) / 2 : 0;
+  const monoSqm = monoList.reduce((acc, curr) => acc + (curr.sqm || 0), 0);
+  const nonDguSqmTotal = lamSqm + monoSqm;
 
   return {
     totalUnits: dlguU + pureDguU + lamU + monoU,
-    totalSqm: parseFloat((dguSqmTotal + nonDguSqmTotal).toFixed(2)),
+    totalSqm: parseFloat((dlguSqmTotal + pureDguSqmTotal + nonDguSqmTotal).toFixed(2)),
   };
 }
 

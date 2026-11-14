@@ -2039,56 +2039,53 @@ export default function Index() {
     });
   }, [pipelineBatches, pipelineStageFilter, pipelineBatchSearch]);
 
-  // Live Warehouse Rack statistics for Dashboard Overview
+  // Live Warehouse Rack statistics for Dashboard Overview (Assembled Units)
   const dashboardRackOverview = React.useMemo(() => {
-    let rackACount = 0;
-    let rackASqm = 0;
-    let rackBCount = 0;
-    let rackBSqm = 0;
-    let rackCCount = 0;
-    let rackCSqm = 0;
-    let rackDCount = 0;
-    let rackDSqm = 0;
-    let rackECount = 0;
-    let rackESqm = 0;
+    const rackAItems: GlassItem[] = [];
+    const rackBItems: GlassItem[] = [];
+    const rackCItems: GlassItem[] = [];
+    const rackDItems: GlassItem[] = [];
+    const rackEItems: GlassItem[] = [];
 
     items.forEach((item) => {
       if (!item.packingRackNo) return;
       if (isDispatchedItem(item)) return;
       const { rackNo } = parseRackInfo(item.packingRackNo);
-      const pieceQty = item.qty || 1;
-      const pieceSqm = item.sqm || 0;
       if (rackNo === "Rack B") {
-        rackBCount += pieceQty;
-        rackBSqm += pieceSqm;
+        rackBItems.push(item);
       } else if (rackNo === "Rack C") {
-        rackCCount += pieceQty;
-        rackCSqm += pieceSqm;
+        rackCItems.push(item);
       } else if (rackNo === "Rack D") {
-        rackDCount += pieceQty;
-        rackDSqm += pieceSqm;
+        rackDItems.push(item);
       } else if (rackNo === "Rack E") {
-        rackECount += pieceQty;
-        rackESqm += pieceSqm;
+        rackEItems.push(item);
       } else if (rackNo === "Rack A") {
-        rackACount += pieceQty;
-        rackASqm += pieceSqm;
+        rackAItems.push(item);
       }
     });
 
+    const metricsA = calculateAssembledUnits(rackAItems);
+    const metricsB = calculateAssembledUnits(rackBItems);
+    const metricsC = calculateAssembledUnits(rackCItems);
+    const metricsD = calculateAssembledUnits(rackDItems);
+    const metricsE = calculateAssembledUnits(rackEItems);
+
+    const totalRacked = metricsA.totalUnits + metricsB.totalUnits + metricsC.totalUnits + metricsD.totalUnits + metricsE.totalUnits;
+    const totalSqm = parseFloat((metricsA.totalSqm + metricsB.totalSqm + metricsC.totalSqm + metricsD.totalSqm + metricsE.totalSqm).toFixed(2));
+
     return {
-      rackACount,
-      rackASqm: parseFloat(rackASqm.toFixed(2)),
-      rackBCount,
-      rackBSqm: parseFloat(rackBSqm.toFixed(2)),
-      rackCCount,
-      rackCSqm: parseFloat(rackCSqm.toFixed(2)),
-      rackDCount,
-      rackDSqm: parseFloat(rackDSqm.toFixed(2)),
-      rackECount,
-      rackESqm: parseFloat(rackESqm.toFixed(2)),
-      totalRacked: rackACount + rackBCount + rackCCount + rackDCount + rackECount,
-      totalSqm: parseFloat((rackASqm + rackBSqm + rackCSqm + rackDSqm + rackESqm).toFixed(2)),
+      rackACount: metricsA.totalUnits,
+      rackASqm: metricsA.totalSqm,
+      rackBCount: metricsB.totalUnits,
+      rackBSqm: metricsB.totalSqm,
+      rackCCount: metricsC.totalUnits,
+      rackCSqm: metricsC.totalSqm,
+      rackDCount: metricsD.totalUnits,
+      rackDSqm: metricsD.totalSqm,
+      rackECount: metricsE.totalUnits,
+      rackESqm: metricsE.totalSqm,
+      totalRacked,
+      totalSqm,
     };
   }, [items]);
 
@@ -3103,7 +3100,7 @@ export default function Index() {
                                 <div className="flex items-baseline justify-between gap-1 min-w-0">
                                   <div className="whitespace-nowrap shrink-0">
                                     <span className="text-base font-black text-slate-800 leading-none">{rk.count}</span>
-                                    <span className="text-[10px] text-slate-500 ml-1 font-semibold">pcs</span>
+                                    <span className="text-[10px] text-slate-500 ml-1 font-semibold">{rk.count === 1 ? "unit" : "units"}</span>
                                   </div>
                                   <span className={`text-[11px] font-bold font-mono ${cls.text} whitespace-nowrap truncate`}>
                                     {rk.sqm.toFixed(1)} m²
