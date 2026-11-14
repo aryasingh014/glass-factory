@@ -545,11 +545,11 @@ export default function Index() {
             status: nextStage === "Finished" ? "Completed" : "In Production",
             ...(allocatedRack
               ? {
-                  packingRackNo: allocatedRack,
-                  packingStatus: "Packed" as const,
-                  shift: activeShift,
-                  sentToFinished: false,
-                }
+                packingRackNo: allocatedRack,
+                packingStatus: "Packed" as const,
+                shift: activeShift,
+                sentToFinished: false,
+              }
               : {}),
           };
         }
@@ -627,7 +627,7 @@ export default function Index() {
               logout();
             }, 300);
           }
-        } catch {}
+        } catch { }
       });
 
       eventSource.addEventListener("user_deleted", (e: any) => {
@@ -643,7 +643,7 @@ export default function Index() {
               logout();
             }, 300);
           }
-        } catch {}
+        } catch { }
       });
 
       eventSource.onmessage = handleStreamUpdate;
@@ -880,231 +880,231 @@ export default function Index() {
         // 1. Evaluate scan status against active production state & current workstation stage
         const scanEval = evaluateScanStatus(items, cleanCode, currentWorkstationStage);
 
-      // Handle duplicate scan in the same stage (all stickers have completed this stage)
-      if (scanEval.status === "already_scanned") {
-        scannerAudio.playWarning();
-        toast.warning(scanEval.message);
-        return;
-      }
+        // Handle duplicate scan in the same stage (all stickers have completed this stage)
+        if (scanEval.status === "already_scanned") {
+          scannerAudio.playWarning();
+          toast.warning(scanEval.message);
+          return;
+        }
 
-      // Handle wrong stage (upstream piece that hasn't reached this station yet)
-      if (scanEval.status === "wrong_stage") {
-        scannerAudio.playWarning();
-        toast.warning(scanEval.message);
-        return;
-      }
+        // Handle wrong stage (upstream piece that hasn't reached this station yet)
+        if (scanEval.status === "wrong_stage") {
+          scannerAudio.playWarning();
+          toast.warning(scanEval.message);
+          return;
+        }
 
-      // Handle rejected piece
-      if (scanEval.status === "rejected") {
-        scannerAudio.playError();
-        toast.error(scanEval.message);
-        return;
-      }
+        // Handle rejected piece
+        if (scanEval.status === "rejected") {
+          scannerAudio.playError();
+          toast.error(scanEval.message);
+          return;
+        }
 
-      // Handle all finished pieces
-      if (scanEval.status === "all_finished") {
-        scannerAudio.playSuccess();
-        toast.info(scanEval.message);
-        if (scanEval.item) {
+        // Handle all finished pieces
+        if (scanEval.status === "all_finished") {
+          scannerAudio.playSuccess();
+          toast.info(scanEval.message);
+          if (scanEval.item) {
+            setScanInitialCode(cleanCode);
+            setScanModalOpen(true);
+          }
+          return;
+        }
+
+        let matchedItem: GlassItem | null = scanEval.status === "can_advance" ? scanEval.item : null;
+
+        // 2. If not found locally, query backend scan endpoint with stage hint
+        if (!matchedItem) {
+          try {
+            const res = await fetch("/api/production/scan", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...getAuthHeaders(),
+              },
+              body: JSON.stringify({ code: cleanCode, stage: currentWorkstationStage }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === "already_scanned") {
+                scannerAudio.playWarning();
+                toast.warning(data.message || `Sticker already scanned at ${currentWorkstationStage}!`);
+                return;
+              }
+              matchedItem = data.item;
+            }
+          } catch { }
+        }
+
+        if (!matchedItem) {
+          scannerAudio.playError();
+          toast.error(`Barcode not recognized: ${cleanCode}`);
+          return;
+        }
+
+        // If not currently inside an active workstation tab (e.g. Dashboard Overview, Batches, Reports, Analytics),
+        // OR in Preview / Lookup mode, OR item is already Finished / Rejected:
+        // Open the Lookup & Preview modal rather than blindly advancing the item across arbitrary stages!
+        if (!currentWorkstationStage || !autoAdvanceMode || matchedItem.currentStage === "Finished" || matchedItem.status === "Rejected") {
+          scannerAudio.playSuccess();
           setScanInitialCode(cleanCode);
           setScanModalOpen(true);
-        }
-        return;
-      }
-
-      let matchedItem: GlassItem | null = scanEval.status === "can_advance" ? scanEval.item : null;
-
-      // 2. If not found locally, query backend scan endpoint with stage hint
-      if (!matchedItem) {
-        try {
-          const res = await fetch("/api/production/scan", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...getAuthHeaders(),
-            },
-            body: JSON.stringify({ code: cleanCode, stage: currentWorkstationStage }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === "already_scanned") {
-              scannerAudio.playWarning();
-              toast.warning(data.message || `Sticker already scanned at ${currentWorkstationStage}!`);
-              return;
-            }
-            matchedItem = data.item;
+          if (!currentWorkstationStage) {
+            toast.info(
+              `POS ${matchedItem.posNo || matchedItem.itemCode} is at ${matchedItem.currentStage}. Open ${matchedItem.currentStage} to scan.`
+            );
           }
-        } catch { }
-      }
-
-      if (!matchedItem) {
-        scannerAudio.playError();
-        toast.error(`Barcode not recognized: ${cleanCode}`);
-        return;
-      }
-
-      // If not currently inside an active workstation tab (e.g. Dashboard Overview, Batches, Reports, Analytics),
-      // OR in Preview / Lookup mode, OR item is already Finished / Rejected:
-      // Open the Lookup & Preview modal rather than blindly advancing the item across arbitrary stages!
-      if (!currentWorkstationStage || !autoAdvanceMode || matchedItem.currentStage === "Finished" || matchedItem.status === "Rejected") {
-        scannerAudio.playSuccess();
-        setScanInitialCode(cleanCode);
-        setScanModalOpen(true);
-        if (!currentWorkstationStage) {
-          toast.info(
-            `POS ${matchedItem.posNo || matchedItem.itemCode} is at ${matchedItem.currentStage}. Open ${matchedItem.currentStage} to scan.`
-          );
+          return;
         }
-        return;
-      }
 
-      // In Auto-Advance mode: advance item to next stage
-      const currentStage = matchedItem.currentStage;
-      const route = matchedItem.processRoute || [];
-      let currentIndex = -1;
-      if (currentStage === "Pairing") {
-        if (matchedItem.completedStages?.includes("Lamination")) {
-          currentIndex = route.lastIndexOf("Pairing");
+        // In Auto-Advance mode: advance item to next stage
+        const currentStage = matchedItem.currentStage;
+        const route = matchedItem.processRoute || [];
+        let currentIndex = -1;
+        if (currentStage === "Pairing") {
+          if (matchedItem.completedStages?.includes("Lamination")) {
+            currentIndex = route.lastIndexOf("Pairing");
+          } else {
+            currentIndex = route.indexOf("Pairing");
+          }
         } else {
-          currentIndex = route.indexOf("Pairing");
+          currentIndex = route.indexOf(currentStage);
         }
-      } else {
-        currentIndex = route.indexOf(currentStage);
-      }
-      const nextStage: ProductionStage = currentIndex >= 0 && currentIndex < route.length - 1 ? route[currentIndex + 1] : "Finished";
+        const nextStage: ProductionStage = currentIndex >= 0 && currentIndex < route.length - 1 ? route[currentIndex + 1] : "Finished";
 
-      // Calculate sticker piece progression notes for multi-sticker positions (matching exact sticker barcode)
-      const barcode = matchedItem.barcode?.trim();
-      const barcodeSiblings = barcode
-        ? items.filter(
+        // Calculate sticker piece progression notes for multi-sticker positions (matching exact sticker barcode)
+        const barcode = matchedItem.barcode?.trim();
+        const barcodeSiblings = barcode
+          ? items.filter(
             (g) =>
               ((matchedItem.piId && g.piId === matchedItem.piId) || (matchedItem.piNumber && g.piNumber === matchedItem.piNumber)) &&
               g.barcode && g.barcode.trim() === barcode &&
               g.status !== "Rejected"
           )
-        : [];
+          : [];
 
-      const stickerQty = parseInt(String(matchedItem.lineQty || matchedItem.qty || 1), 10) || 1;
-      const totalMatching = Math.max(
-        stickerQty,
-        barcodeSiblings.length,
-        barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
-        scanEval.totalMatching || 1
-      );
+        const stickerQty = parseInt(String(matchedItem.lineQty || matchedItem.qty || 1), 10) || 1;
+        const totalMatching = Math.max(
+          stickerQty,
+          barcodeSiblings.length,
+          barcodeSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+          scanEval.totalMatching || 1
+        );
 
-      const inStageSiblings = barcodeSiblings.filter(
-        (g) => g.currentStage?.toLowerCase() === currentStage.toLowerCase()
-      );
-      const remainingBeforeAdvance = Math.max(
-        inStageSiblings.length,
-        inStageSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
-        scanEval.remainingInStage || 1
-      );
-      const remainingAfter = Math.max(0, remainingBeforeAdvance - 1);
-      const stickerIndex = totalMatching > 1 ? Math.min(totalMatching, totalMatching - remainingAfter) : 1;
+        const inStageSiblings = barcodeSiblings.filter(
+          (g) => g.currentStage?.toLowerCase() === currentStage.toLowerCase()
+        );
+        const remainingBeforeAdvance = Math.max(
+          inStageSiblings.length,
+          inStageSiblings.reduce((sum, g) => sum + (parseInt(String(g.qty || 1), 10) || 1), 0),
+          scanEval.remainingInStage || 1
+        );
+        const remainingAfter = Math.max(0, remainingBeforeAdvance - 1);
+        const stickerIndex = totalMatching > 1 ? Math.min(totalMatching, totalMatching - remainingAfter) : 1;
 
-      const stickerLabel = totalMatching > 1
-        ? ` (${stickerIndex} of ${totalMatching} scanned)`
-        : " (1 of 1 scanned)";
+        const stickerLabel = totalMatching > 1
+          ? ` (${stickerIndex} of ${totalMatching} scanned)`
+          : " (1 of 1 scanned)";
 
-      const remainingNote = remainingAfter > 0
-        ? ` (${remainingAfter} piece${remainingAfter > 1 ? "s" : ""} remaining in ${currentStage})`
-        : totalMatching > 1
-          ? ` (All ${totalMatching} pieces completed in ${currentStage})`
-          : "";
+        const remainingNote = remainingAfter > 0
+          ? ` (${remainingAfter} piece${remainingAfter > 1 ? "s" : ""} remaining in ${currentStage})`
+          : totalMatching > 1
+            ? ` (All ${totalMatching} pieces completed in ${currentStage})`
+            : "";
 
-      // ── Pairing Guard: Cannot advance from Pairing without partner pane ──
-      let partnerToPair: GlassItem | undefined = undefined;
-      if (currentStage === "Pairing") {
-        const isComposite = matchedItem.glassCategory === "DLGU" || isDlguGlass(matchedItem) || matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || matchedItem.glassCategory === "Lamination" || isLaminatedGlass(matchedItem) || route.includes("DGU") || route.includes("Lamination");
-        if (isComposite) {
-          // Check if item already has a partner in buffer
-          const existingPairId = (matchedItem as any).dguPairId || (matchedItem as any).lamPairId;
-          if (existingPairId) {
-            partnerToPair = items.find(
-              (other) =>
-                other.id !== matchedItem.id &&
-                ((other as any).dguPairId === existingPairId || (other as any).lamPairId === existingPairId) &&
-                other.status !== "Completed" &&
-                other.status !== "Rejected"
-            );
+        // ── Pairing Guard: Cannot advance from Pairing without partner pane ──
+        let partnerToPair: GlassItem | undefined = undefined;
+        if (currentStage === "Pairing") {
+          const isComposite = matchedItem.glassCategory === "DLGU" || isDlguGlass(matchedItem) || matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || matchedItem.glassCategory === "Lamination" || isLaminatedGlass(matchedItem) || route.includes("DGU") || route.includes("Lamination");
+          if (isComposite) {
+            // Check if item already has a partner in buffer
+            const existingPairId = (matchedItem as any).dguPairId || (matchedItem as any).lamPairId;
+            if (existingPairId) {
+              partnerToPair = items.find(
+                (other) =>
+                  other.id !== matchedItem.id &&
+                  ((other as any).dguPairId === existingPairId || (other as any).lamPairId === existingPairId) &&
+                  other.status !== "Completed" &&
+                  other.status !== "Rejected"
+              );
+            }
+
+            if (!partnerToPair) {
+              partnerToPair = items.find((other) => {
+                if (other.id === matchedItem.id) return false;
+                if (other.currentStage !== "Pairing" || other.status === "Rejected" || other.status === "Completed") return false;
+                const isOtherCol = getItemFinish(other) === "Colour";
+                const isMatchCol = getItemFinish(matchedItem) === "Colour";
+                // For DGU: must be opposite finish
+                if ((matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || route.includes("DGU")) && !route.includes("Lamination")) {
+                  if (isOtherCol === isMatchCol) return false;
+                }
+                if (other.posNo && matchedItem.posNo && String(other.posNo).trim() !== String(matchedItem.posNo).trim()) return false;
+                if (Math.abs((other.width || 0) - (matchedItem.width || 0)) >= 2) return false;
+                if (Math.abs((other.height || 0) - (matchedItem.height || 0)) >= 2) return false;
+                const samePi = (matchedItem.piId && other.piId === matchedItem.piId) || (matchedItem.piNumber && other.piNumber === matchedItem.piNumber);
+                const sameOrder = matchedItem.orderNo && other.orderNo && String(matchedItem.orderNo).toLowerCase() === String(other.orderNo).toLowerCase();
+                const sameOb = matchedItem.obNo && other.obNo && String(matchedItem.obNo).toLowerCase() === String(other.obNo).toLowerCase();
+                const sameProj = matchedItem.projectName && other.projectName && String(matchedItem.projectName).toLowerCase() === String(other.projectName).toLowerCase();
+                return samePi || sameOrder || sameOb || sameProj;
+              });
+            }
+
+            if (!partnerToPair) {
+              scannerAudio.playWarning();
+              const isColour = getItemFinish(matchedItem) === "Colour";
+              const neededFinish = isColour ? "Clear" : "Colour";
+              toast.warning(
+                `POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane in Pairing.`
+              );
+              return;
+            }
           }
+        }
 
-          if (!partnerToPair) {
-            partnerToPair = items.find((other) => {
+        // ── DGU Guard: Cannot advance to Finished without partner pane ──
+        if (currentStage === "DGU" && nextStage === "Finished") {
+          const isDgu = matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || matchedItem.glassCategory === "DLGU" || isDlguGlass(matchedItem) || route.includes("DGU");
+          if (isDgu) {
+            const partnerInDgu = items.find((other) => {
               if (other.id === matchedItem.id) return false;
-              if (other.currentStage !== "Pairing" || other.status === "Rejected" || other.status === "Completed") return false;
+              if (other.currentStage !== "DGU" || other.status === "Rejected") return false;
+              if ((matchedItem as any).dguPairId && (other as any).dguPairId === (matchedItem as any).dguPairId) return true;
               const isOtherCol = getItemFinish(other) === "Colour";
               const isMatchCol = getItemFinish(matchedItem) === "Colour";
-              // For DGU: must be opposite finish
-              if ((matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || route.includes("DGU")) && !route.includes("Lamination")) {
-                if (isOtherCol === isMatchCol) return false;
-              }
+              if (isOtherCol === isMatchCol) return false;
               if (other.posNo && matchedItem.posNo && String(other.posNo).trim() !== String(matchedItem.posNo).trim()) return false;
-              if (Math.abs((other.width || 0) - (matchedItem.width || 0)) >= 2) return false;
-              if (Math.abs((other.height || 0) - (matchedItem.height || 0)) >= 2) return false;
-              const samePi = (matchedItem.piId && other.piId === matchedItem.piId) || (matchedItem.piNumber && other.piNumber === matchedItem.piNumber);
-              const sameOrder = matchedItem.orderNo && other.orderNo && String(matchedItem.orderNo).toLowerCase() === String(other.orderNo).toLowerCase();
-              const sameOb = matchedItem.obNo && other.obNo && String(matchedItem.obNo).toLowerCase() === String(other.obNo).toLowerCase();
-              const sameProj = matchedItem.projectName && other.projectName && String(matchedItem.projectName).toLowerCase() === String(other.projectName).toLowerCase();
-              return samePi || sameOrder || sameOb || sameProj;
+              return Math.abs((other.width || 0) - (matchedItem.width || 0)) < 2 && Math.abs((other.height || 0) - (matchedItem.height || 0)) < 2;
             });
-          }
-
-          if (!partnerToPair) {
-            scannerAudio.playWarning();
-            const isColour = getItemFinish(matchedItem) === "Colour";
-            const neededFinish = isColour ? "Clear" : "Colour";
-            toast.warning(
-              `POS ${matchedItem.posNo || matchedItem.itemCode} is waiting for its ${neededFinish} partner pane in Pairing.`
-            );
-            return;
+            if (!partnerInDgu) {
+              scannerAudio.playWarning();
+              toast.warning(
+                `POS ${matchedItem.posNo || matchedItem.itemCode} is missing its partner pane in DGU Assembly.`
+              );
+              return;
+            }
           }
         }
-      }
 
-      // ── DGU Guard: Cannot advance to Finished without partner pane ──
-      if (currentStage === "DGU" && nextStage === "Finished") {
-        const isDgu = matchedItem.glassCategory === "DGU" || isDguGlass(matchedItem) || matchedItem.glassCategory === "DLGU" || isDlguGlass(matchedItem) || route.includes("DGU");
-        if (isDgu) {
-          const partnerInDgu = items.find((other) => {
-            if (other.id === matchedItem.id) return false;
-            if (other.currentStage !== "DGU" || other.status === "Rejected") return false;
-            if ((matchedItem as any).dguPairId && (other as any).dguPairId === (matchedItem as any).dguPairId) return true;
-            const isOtherCol = getItemFinish(other) === "Colour";
-            const isMatchCol = getItemFinish(matchedItem) === "Colour";
-            if (isOtherCol === isMatchCol) return false;
-            if (other.posNo && matchedItem.posNo && String(other.posNo).trim() !== String(matchedItem.posNo).trim()) return false;
-            return Math.abs((other.width || 0) - (matchedItem.width || 0)) < 2 && Math.abs((other.height || 0) - (matchedItem.height || 0)) < 2;
-          });
-          if (!partnerInDgu) {
-            scannerAudio.playWarning();
-            toast.warning(
-              `POS ${matchedItem.posNo || matchedItem.itemCode} is missing its partner pane in DGU Assembly.`
-            );
-            return;
-          }
-        }
-      }
+        // Collect IDs to advance (advancing both panes if paired in Pairing)
+        const serialsToAdvance = partnerToPair ? [matchedItem.serialNumber, partnerToPair.serialNumber] : [matchedItem.serialNumber];
+        const idsToAdvance = partnerToPair ? [matchedItem.id, partnerToPair.id] : [matchedItem.id];
 
-      // Collect IDs to advance (advancing both panes if paired in Pairing)
-      const serialsToAdvance = partnerToPair ? [matchedItem.serialNumber, partnerToPair.serialNumber] : [matchedItem.serialNumber];
-      const idsToAdvance = partnerToPair ? [matchedItem.id, partnerToPair.id] : [matchedItem.id];
+        // Optimistic UI update
+        const goesToPackingQueue =
+          currentStage === "DGU" ||
+          currentStage === "Lamination" ||
+          isDguGlass(matchedItem) ||
+          isDlguGlass(matchedItem) ||
+          isLaminatedGlass(matchedItem);
+        const allocatedRack = nextStage === "Finished" && !goesToPackingQueue ? getAllocatedPackingRack() : undefined;
+        const activeShift = nextStage === "Finished" && !goesToPackingQueue ? getActivePackingShift() : undefined;
+        handleOptimisticAdvance(idsToAdvance, currentStage);
+        idsToAdvance.forEach((id) => recentLocalScansRef.current.set(id, Date.now()));
+        serialsToAdvance.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
 
-      // Optimistic UI update
-      const goesToPackingQueue =
-        currentStage === "DGU" ||
-        currentStage === "Lamination" ||
-        isDguGlass(matchedItem) ||
-        isDlguGlass(matchedItem) ||
-        isLaminatedGlass(matchedItem);
-      const allocatedRack = nextStage === "Finished" && !goesToPackingQueue ? getAllocatedPackingRack() : undefined;
-      const activeShift = nextStage === "Finished" && !goesToPackingQueue ? getActivePackingShift() : undefined;
-      handleOptimisticAdvance(idsToAdvance, currentStage);
-      idsToAdvance.forEach((id) => recentLocalScansRef.current.set(id, Date.now()));
-      serialsToAdvance.forEach((s) => recentLocalScansRef.current.set(s, Date.now()));
-
-      const res = await fetch("/api/production/stage-complete", {
+        const res = await fetch("/api/production/stage-complete", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1748,6 +1748,9 @@ export default function Index() {
     const finishedUnits = finishedMetrics.totalUnits;
     const effectiveFinishedSqm = finishedMetrics.totalSqm;
     const dispatchedUnits = dispatchedMetrics.totalUnits;
+    const cuttingUnits = calculateAssembledUnits(cuttingItems).totalUnits;
+    const polishingUnits = calculateAssembledUnits(polishingItems).totalUnits;
+    const pairingUnits = pairingPairs || calculateAssembledUnits(pairingItems).totalUnits;
 
     const laminationUnits = Math.ceil(laminationCount / 2);
     const totalActive = cuttingCount + polishingCount + pairingCount + dguCount + laminationUnits + finishedUnits;
@@ -1760,15 +1763,18 @@ export default function Index() {
       effectiveTotalSqm,
       totalSqm,
       cuttingItems: cuttingCount,
+      cuttingUnits,
       cuttingSqm,
       cuttingColour,
       cuttingClear,
       distinctCuttingSheets,
       polishingItems: polishingCount,
+      polishingUnits,
       polishingSqm,
       polishingColour,
       polishingClear,
       pairingItems: pairingCount,
+      pairingUnits,
       pairingSqm,
       pairingColour,
       pairingClear,
@@ -1867,8 +1873,11 @@ export default function Index() {
       pendingPI: pis.filter((p) => p.status === "Pending" || p.status === "In Production").length || (stats?.pendingPI ?? 0),
       completedPI: pis.filter((p) => p.status === "Completed").length || (stats?.completedPI ?? 0),
       pendingCutting: pipelineMetrics.cuttingItems,
+      pendingCuttingUnits: pipelineMetrics.cuttingUnits,
       pendingPolishing: pipelineMetrics.polishingItems !== undefined ? pipelineMetrics.polishingItems : (stats?.pendingPolishing ?? 0),
+      pendingPolishingUnits: pipelineMetrics.polishingUnits,
       pendingPairing: pipelineMetrics.pairingItems,
+      pendingPairingUnits: pipelineMetrics.pairingUnits,
       pendingDGU: dguUnitsCount,
       pendingLamination: pipelineMetrics.laminationItems,
       pendingPackingIGU: packingIguCount,
@@ -2257,8 +2266,8 @@ export default function Index() {
                       <button
                         onClick={() => setNotificationFilter("all")}
                         className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${notificationFilter === "all"
-                            ? "bg-[#1a3a6b] text-white shadow-xs"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                           }`}
                       >
                         All ({notifications.length})
@@ -2266,8 +2275,8 @@ export default function Index() {
                       <button
                         onClick={() => setNotificationFilter("unread")}
                         className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${notificationFilter === "unread"
-                            ? "bg-[#1a3a6b] text-white shadow-xs"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                           }`}
                       >
                         Unread ({unreadNotifications})
@@ -2275,8 +2284,8 @@ export default function Index() {
                       <button
                         onClick={() => setNotificationFilter("alerts")}
                         className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${notificationFilter === "alerts"
-                            ? "bg-[#1a3a6b] text-white shadow-xs"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          ? "bg-[#1a3a6b] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                           }`}
                       >
                         Alerts ({notifications.filter((n) => n.type === "warning" || n.type === "destructive").length})
@@ -2313,12 +2322,12 @@ export default function Index() {
                               key={n.id}
                               onClick={() => handleMarkNotificationRead(n.id)}
                               className={`relative p-2.5 pl-3 pr-7 rounded-xl border transition-all cursor-pointer ${isDestructive
-                                  ? "bg-rose-50/70 border-rose-200 hover:bg-rose-50"
-                                  : isWarning
-                                    ? "bg-amber-50/70 border-amber-200 hover:bg-amber-50"
-                                    : isSuccess
-                                      ? "bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50"
-                                      : "bg-blue-50/70 border-blue-200 hover:bg-blue-50"
+                                ? "bg-rose-50/70 border-rose-200 hover:bg-rose-50"
+                                : isWarning
+                                  ? "bg-amber-50/70 border-amber-200 hover:bg-amber-50"
+                                  : isSuccess
+                                    ? "bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50"
+                                    : "bg-blue-50/70 border-blue-200 hover:bg-blue-50"
                                 } ${!n.read ? "ring-2 ring-blue-500/20 shadow-xs" : "opacity-85"}`}
                             >
                               {/* Dismiss button */}
@@ -2345,12 +2354,12 @@ export default function Index() {
                                   <div className="flex items-center gap-1.5">
                                     <div
                                       className={`font-bold text-[11px] truncate ${isDestructive
-                                          ? "text-rose-950"
-                                          : isWarning
-                                            ? "text-amber-950"
-                                            : isSuccess
-                                              ? "text-emerald-950"
-                                              : "text-blue-950"
+                                        ? "text-rose-950"
+                                        : isWarning
+                                          ? "text-amber-950"
+                                          : isSuccess
+                                            ? "text-emerald-950"
+                                            : "text-blue-950"
                                         }`}
                                     >
                                       {n.title}
@@ -2397,10 +2406,10 @@ export default function Index() {
                       {userRole === "Admin"
                         ? "Administrator"
                         : user?.assignedStages && user.assignedStages.length > 0
-                        ? user.assignedStages.join(", ")
-                        : userRole === "Supervisor"
-                        ? "Plant Floor Access"
-                        : "Workstation Access"}
+                          ? user.assignedStages.join(", ")
+                          : userRole === "Supervisor"
+                            ? "Plant Floor Access"
+                            : "Workstation Access"}
                     </div>
                   </div>
                 </button>
@@ -2426,8 +2435,8 @@ export default function Index() {
                               {user?.assignedStages && user.assignedStages.length > 0
                                 ? user.assignedStages.join(" • ")
                                 : userRole === "Supervisor"
-                                ? "Full Plant Access"
-                                : "All Workstations"}
+                                  ? "Full Plant Access"
+                                  : "All Workstations"}
                             </span>
                           </>
                         )}
@@ -2558,14 +2567,22 @@ export default function Index() {
                 rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0)
               );
 
+              // Assembled Unit Counts
+              const totalUnits = calculateAssembledUnits(filteredSummaryItems).totalUnits || Math.ceil(totalItems / 2);
+              const completedUnits = calculateAssembledUnits(completedSummaryItems).totalUnits || (effectiveStats.finishedItems ?? Math.ceil(completedItems / 2));
+              const inProgressUnits = calculateAssembledUnits(inProgressSummaryItems).totalUnits || Math.ceil(inProgressItems / 2);
+              const pendingUnits = calculateAssembledUnits(pendingSummaryItems).totalUnits || Math.ceil(pendingItems / 2);
+              const rejectedUnits = calculateAssembledUnits(rejectedSummaryItems).totalUnits || Math.ceil(rejectedItems / 2);
+
               const grandTotal = Math.max(1, totalItems);
-              const completedPct = totalItems > 0 ? Math.round((completedItems / grandTotal) * 100) : 0;
-              const inProgressPct = totalItems > 0 ? Math.round((inProgressItems / grandTotal) * 100) : 0;
-              const pendingPct = totalItems > 0 ? Math.round((pendingItems / grandTotal) * 100) : 0;
-              const rejectedPct = totalItems > 0 ? Math.round((rejectedItems / grandTotal) * 100) : 0;
+              const grandTotalUnits = Math.max(1, totalUnits);
+              const completedPct = totalUnits > 0 ? Math.round((completedUnits / grandTotalUnits) * 100) : (totalItems > 0 ? Math.round((completedItems / grandTotal) * 100) : 0);
+              const inProgressPct = totalUnits > 0 ? Math.round((inProgressUnits / grandTotalUnits) * 100) : (totalItems > 0 ? Math.round((inProgressItems / grandTotal) * 100) : 0);
+              const pendingPct = totalUnits > 0 ? Math.round((pendingUnits / grandTotalUnits) * 100) : (totalItems > 0 ? Math.round((pendingItems / grandTotal) * 100) : 0);
+              const rejectedPct = totalUnits > 0 ? Math.round((rejectedUnits / grandTotalUnits) * 100) : (totalItems > 0 ? Math.round((rejectedItems / grandTotal) * 100) : 0);
               // Real dynamic Production Efficiency:
               let donutGrad = "#e2e8f0";
-              if (totalItems > 0) {
+              if (totalUnits > 0 || totalItems > 0) {
                 if (completedPct === 100) {
                   donutGrad = "#10b981";
                 } else if (inProgressPct === 100) {
@@ -2731,8 +2748,8 @@ export default function Index() {
                                           m.status === "Completed"
                                             ? { background: "rgba(16,185,129,0.12)", color: "#047857", borderColor: "rgba(16,185,129,0.22)" }
                                             : m.status === "In Production"
-                                            ? { background: "rgba(59,130,246,0.12)", color: "#1d4ed8", borderColor: "rgba(59,130,246,0.22)" }
-                                            : { background: "rgba(245,158,11,0.12)", color: "#b45309", borderColor: "rgba(245,158,11,0.22)" }
+                                              ? { background: "rgba(59,130,246,0.12)", color: "#1d4ed8", borderColor: "rgba(59,130,246,0.22)" }
+                                              : { background: "rgba(245,158,11,0.12)", color: "#b45309", borderColor: "rgba(245,158,11,0.22)" }
                                         }
                                       >
                                         {m.status.toUpperCase()}
@@ -2782,11 +2799,10 @@ export default function Index() {
                                 key={stg.id}
                                 type="button"
                                 onClick={() => setOverviewThroughputStage(stg.id)}
-                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
-                                  isSel
+                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${isSel
                                     ? "bg-blue-600 text-white shadow-xs"
                                     : "bg-white text-slate-600 hover:bg-slate-200 border border-slate-200"
-                                }`}
+                                  }`}
                               >
                                 {stg.label}
                               </button>
@@ -2928,41 +2944,51 @@ export default function Index() {
                             <div className="ppb-donut-inner">
                               <strong>{completedPct}%</strong>
                               <span>COMPLETED</span>
-                              <small>{completedItems} / {grandTotal}</small>
+                              <small>{totalUnits > 0 ? `${completedUnits} / ${totalUnits} Units` : `${completedItems} / ${grandTotal} Pcs`}</small>
                             </div>
                           </div>
                           <div className="ppb-summary-legend">
                             <div
                               onClick={() => setActiveTab("finished")}
                               className="cursor-pointer hover:bg-emerald-50 px-1 py-0.5 rounded transition-colors"
-                              title={`View Finished & Dispatched Items (${completedItems} Pcs • ${effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units)`}
+                              title={`View Finished & Dispatched Items (${completedUnits} Units • ${completedItems} Pcs)`}
                             >
                               <i className="ppb-dot ppb-dot-green" />Completed{" "}
                               <b>
-                                {completedItems} Pcs{" "}
-                                <small>({effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units • {completedPct}%)</small>
+                                {completedUnits} Units{" "}
+                                <small>({completedItems !== completedUnits ? `${completedItems} Pcs • ` : ""}{completedPct}%)</small>
                               </b>
                             </div>
                             <div
                               onClick={() => setActiveTab("production-overview")}
                               className="cursor-pointer hover:bg-blue-50 px-1 py-0.5 rounded transition-colors"
-                              title="View In-Progress Workstations"
+                              title={`View In-Progress Workstations (${inProgressUnits} Units • ${inProgressItems} Pcs)`}
                             >
-                              <i className="ppb-dot ppb-dot-blue" />In Progress <b>{inProgressItems} <small>({inProgressPct}%)</small></b>
+                              <i className="ppb-dot ppb-dot-blue" />In Progress{" "}
+                              <b>
+                                {inProgressUnits} Units{" "}
+                                <small>({inProgressItems !== inProgressUnits ? `${inProgressItems} Pcs • ` : ""}{inProgressPct}%)</small>
+                              </b>
                             </div>
                             <div
                               onClick={() => setActiveTab("pis")}
                               className="cursor-pointer hover:bg-amber-50 px-1 py-0.5 rounded transition-colors"
-                              title="View Batches"
+                              title={`View Batches (${pendingUnits} Units • ${pendingItems} Pcs)`}
                             >
-                              <i className="ppb-dot ppb-dot-yellow" />Pending <b>{pendingItems} <small>({pendingPct}%)</small></b>
+                              <i className="ppb-dot ppb-dot-yellow" />Pending{" "}
+                              <b>
+                                {pendingUnits} Units <small>({pendingPct}%)</small>
+                              </b>
                             </div>
                             <div
                               onClick={() => { setReportsInitialTab("rejects"); try { localStorage.setItem("sejal_reports_active_tab", "rejects"); } catch { } setActiveTab("reports"); }}
                               className="cursor-pointer hover:bg-red-50 px-1 py-0.5 rounded transition-colors"
                               title="View Rejections Report"
                             >
-                              <i className="ppb-dot ppb-dot-red" />Rejected <b>{rejectedItems} <small>({rejectedPct}%)</small></b>
+                              <i className="ppb-dot ppb-dot-red" />Rejected{" "}
+                              <b>
+                                {rejectedUnits} Units <small>({rejectedPct}%)</small>
+                              </b>
                             </div>
                           </div>
                         </div>
@@ -2971,31 +2997,31 @@ export default function Index() {
                             onClick={() => setActiveTab("cutting")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#7c3aed' }}
-                            title="View Cutting Workstation"
+                            title={`View Cutting Workstation (${effectiveStats.pendingCuttingUnits ?? Math.ceil((effectiveStats.pendingCutting ?? 0) / 2)} Units • ${effectiveStats.pendingCutting ?? 0} Pcs)`}
                           >
-                            ◉&nbsp; Cut <b>{effectiveStats.pendingCutting ?? 0}</b>
+                            ◉&nbsp; Cut <b>{effectiveStats.pendingCuttingUnits ?? Math.ceil((effectiveStats.pendingCutting ?? 0) / 2)}</b>
                           </span>
                           <span
                             onClick={() => setActiveTab("polishing")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#0891b2' }}
-                            title="View Polishing Workstation"
+                            title={`View Polishing Workstation (${effectiveStats.pendingPolishingUnits ?? Math.ceil((effectiveStats.pendingPolishing ?? 0) / 2)} Units • ${effectiveStats.pendingPolishing ?? 0} Pcs)`}
                           >
-                            ◉&nbsp; Polish <b>{effectiveStats.pendingPolishing ?? 0}</b>
+                            ◉&nbsp; Polish <b>{effectiveStats.pendingPolishingUnits ?? Math.ceil((effectiveStats.pendingPolishing ?? 0) / 2)}</b>
                           </span>
                           <span
                             onClick={() => setActiveTab("pairing")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#9333ea' }}
-                            title="View Glass Pairing & Assembly Buffer"
+                            title={`View Glass Pairing & Assembly Buffer (${effectiveStats.pendingPairingUnits ?? effectiveStats.pendingPairing ?? 0} Units)`}
                           >
-                            ◉&nbsp; Pair <b>{effectiveStats.pendingPairing ?? 0}</b>
+                            ◉&nbsp; Pair <b>{effectiveStats.pendingPairingUnits ?? effectiveStats.pendingPairing ?? 0}</b>
                           </span>
                           <span
                             onClick={() => setActiveTab("dgu")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#059669' }}
-                            title="View DGU Workstation"
+                            title={`View DGU Workstation (${effectiveStats.pendingDGU ?? 0} Units)`}
                           >
                             ◉&nbsp; DGU <b>{effectiveStats.pendingDGU ?? 0}</b>
                           </span>
@@ -3003,7 +3029,7 @@ export default function Index() {
                             onClick={() => setActiveTab("lamination")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#b45309' }}
-                            title="View Lamination Workstation"
+                            title={`View Lamination Workstation (${effectiveStats.pendingLamination ?? 0} Units)`}
                           >
                             ◉&nbsp; Lam <b>{effectiveStats.pendingLamination ?? 0}</b>
                           </span>
@@ -3011,7 +3037,7 @@ export default function Index() {
                             onClick={() => setActiveTab("packing-igu")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#0d9488' }}
-                            title="View IGU Packing List"
+                            title={`View IGU Packing List (${effectiveStats.pendingPackingIGU ?? 0} Units)`}
                           >
                             ◉&nbsp; IGU Packing List <b>{effectiveStats.pendingPackingIGU ?? 0}</b>
                           </span>
@@ -3019,7 +3045,7 @@ export default function Index() {
                             onClick={() => setActiveTab("packing-lami")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#d97706' }}
-                            title="View Auto Clave Packing List"
+                            title={`View Auto Clave Packing List (${effectiveStats.pendingPackingLami ?? 0} Units)`}
                           >
                             ◉&nbsp; Auto Clave Packing List <b>{effectiveStats.pendingPackingLami ?? 0}</b>
                           </span>
@@ -3027,9 +3053,9 @@ export default function Index() {
                             onClick={() => setActiveTab("finished")}
                             className="cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ color: '#10b981' }}
-                            title={`View Finished & Dispatched Warehouse (${completedItems} Pcs • ${effectiveStats.finishedItems ?? Math.round(completedItems / 2)} Units)`}
+                            title={`View Finished & Dispatched Warehouse (${effectiveStats.finishedItems ?? completedUnits} Units • ${completedItems} Pcs)`}
                           >
-                            ◉&nbsp; Fin <b>{effectiveStats.finishedItems ?? Math.round(completedItems / 2)}</b>
+                            ◉&nbsp; Fin <b>{effectiveStats.finishedItems ?? completedUnits}</b>
                           </span>
                         </div>
                       </section>
@@ -3081,7 +3107,7 @@ export default function Index() {
                                       localStorage.setItem("sejal_finished_packing_rack_letter", rk.name);
                                       const slotVal = rk.slot ? `${rk.name} - ${rk.slot}` : rk.name;
                                       localStorage.setItem("sejal_finished_packing_rack", slotVal);
-                                    } catch {}
+                                    } catch { }
                                   }
                                   setActiveTab(rk.tab as any);
                                 }}
@@ -3182,27 +3208,27 @@ export default function Index() {
                               const displayStage = isPackingIguItem(item)
                                 ? "IGU Packing List"
                                 : isPackingLamiItem(item)
-                                ? "Auto Clave Packing List"
-                                : item.currentStage;
+                                  ? "Auto Clave Packing List"
+                                  : item.currentStage;
 
                               const stageColor =
                                 displayStage === "Cutting"
                                   ? "bg-purple-50 text-purple-700 border-purple-200"
                                   : displayStage === "Polishing"
-                                  ? "bg-cyan-50 text-cyan-700 border-cyan-200"
-                                  : displayStage === "Pairing"
-                                  ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                  : displayStage === "DGU"
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : displayStage === "Lamination"
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                                  : displayStage === "IGU Packing List"
-                                  ? "bg-teal-50 text-teal-700 border-teal-200"
-                                  : displayStage === "Auto Clave Packing List"
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                                  : displayStage === "Finished"
-                                  ? "bg-green-50 text-green-700 border-green-200"
-                                  : "bg-blue-50 text-blue-700 border-blue-200";
+                                    ? "bg-cyan-50 text-cyan-700 border-cyan-200"
+                                    : displayStage === "Pairing"
+                                      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                      : displayStage === "DGU"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : displayStage === "Lamination"
+                                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                                          : displayStage === "IGU Packing List"
+                                            ? "bg-teal-50 text-teal-700 border-teal-200"
+                                            : displayStage === "Auto Clave Packing List"
+                                              ? "bg-amber-50 text-amber-700 border-amber-200"
+                                              : displayStage === "Finished"
+                                                ? "bg-green-50 text-green-700 border-green-200"
+                                                : "bg-blue-50 text-blue-700 border-blue-200";
 
                               return (
                                 <div
@@ -3690,8 +3716,8 @@ export default function Index() {
                           type="button"
                           onClick={() => setPiFinishFilter("ALL")}
                           className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${piFinishFilter === "ALL"
-                              ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
-                              : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                            ? "bg-white text-slate-900 shadow-xs ring-1 ring-slate-200"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
                             }`}
                         >
                           <span>All Glass</span>
@@ -3705,8 +3731,8 @@ export default function Index() {
                           type="button"
                           onClick={() => setPiFinishFilter("CLEAR")}
                           className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${piFinishFilter === "CLEAR"
-                              ? "bg-cyan-600 text-white shadow-xs"
-                              : "text-cyan-800 hover:bg-cyan-100/60"
+                            ? "bg-cyan-600 text-white shadow-xs"
+                            : "text-cyan-800 hover:bg-cyan-100/60"
                             }`}
                         >
                           <span>Clear Glass</span>
@@ -3720,8 +3746,8 @@ export default function Index() {
                           type="button"
                           onClick={() => setPiFinishFilter("COLOUR")}
                           className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${piFinishFilter === "COLOUR"
-                              ? "bg-purple-600 text-white shadow-xs"
-                              : "text-purple-800 hover:bg-purple-100/60"
+                            ? "bg-purple-600 text-white shadow-xs"
+                            : "text-purple-800 hover:bg-purple-100/60"
                             }`}
                         >
                           <span>Coloured Glass</span>
@@ -3927,8 +3953,8 @@ export default function Index() {
                                       >
                                         <div
                                           className={`h-full rounded-full transition-all ${isCompleted
-                                              ? "bg-gradient-to-r from-emerald-500 to-teal-600"
-                                              : "bg-gradient-to-r from-purple-500 to-indigo-600"
+                                            ? "bg-gradient-to-r from-emerald-500 to-teal-600"
+                                            : "bg-gradient-to-r from-purple-500 to-indigo-600"
                                             }`}
                                           style={{ width: `${customer.progressPct}%` }}
                                         />
@@ -3944,8 +3970,8 @@ export default function Index() {
 
                                   <div
                                     className={`p-2 rounded-xl transition-all shadow-2xs shrink-0 ${isCompleted
-                                        ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 group-hover:scale-105"
-                                        : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 group-hover:scale-105"
+                                      ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 group-hover:scale-105"
+                                      : "bg-slate-100 text-slate-600 hover:bg-purple-100 hover:text-purple-700 group-hover:scale-105"
                                       }`}
                                   >
                                     {isExpanded ? (
@@ -3975,8 +4001,8 @@ export default function Index() {
                                       setActiveTab("cutting");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inCutting > 0
-                                        ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View Cutting items for this customer and project"
                                   >
@@ -3991,8 +4017,8 @@ export default function Index() {
                                       setActiveTab("polishing");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inPolishing > 0
-                                        ? "bg-cyan-50 text-cyan-800 border-cyan-200 hover:bg-cyan-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-cyan-50 text-cyan-800 border-cyan-200 hover:bg-cyan-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View Polishing items for this customer and project"
                                   >
@@ -4007,8 +4033,8 @@ export default function Index() {
                                       setActiveTab("pairing");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inPairing > 0
-                                        ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View Pairing Buffer items for this customer and project"
                                   >
@@ -4023,8 +4049,8 @@ export default function Index() {
                                       setActiveTab("lamination");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inLamination > 0
-                                        ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View Lamination items for this customer and project"
                                   >
@@ -4039,8 +4065,8 @@ export default function Index() {
                                       setActiveTab("dgu");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inDgu > 0
-                                        ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View DGU / IGU items for this customer and project"
                                   >
@@ -4055,8 +4081,8 @@ export default function Index() {
                                       setActiveTab("finished");
                                     }}
                                     className={`px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${customer.inFinished > 0
-                                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:scale-[1.02]"
-                                        : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
+                                      ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 hover:scale-[1.02]"
+                                      : "bg-slate-50 text-slate-400 border-slate-200/60 opacity-60 hover:opacity-100"
                                       }`}
                                     title="View Finished Warehouse items for this customer and project"
                                   >

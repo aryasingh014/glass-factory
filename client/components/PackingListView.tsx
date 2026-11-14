@@ -1400,37 +1400,58 @@ return (
               <Boxes className={`w-4 h-4 ${type === "IGU" ? "text-teal-600" : "text-amber-600"}`} />
               <span>TARGET RACK:</span>
             </span>
-            <div className="relative inline-flex items-center">
-              <select
-                value={rackLetter}
-                onChange={(e) => {
-                  handleSelectRackLetter(e.target.value as RackLetterType);
-                  e.currentTarget.blur();
-                }}
-                className={`h-8 pl-3 pr-8 rounded-lg text-xs font-black transition-all cursor-pointer border appearance-none focus:outline-none focus:ring-2 shadow-2xs ${type === "IGU"
-                    ? "bg-teal-600 text-white border-teal-700 hover:bg-teal-700 focus:ring-teal-300"
-                    : "bg-amber-600 text-white border-amber-700 hover:bg-amber-700 focus:ring-amber-300"
-                  }`}
-                title="Select Target Rack (Rack A to Rack E)"
-              >
-                {RACK_OPTIONS.map((rk) => {
-                  const count = unitRows.filter((r) => r.rackNo === rk).length;
-                  return (
-                    <option key={rk} value={rk} className="bg-white text-slate-900 font-bold">
-                      {rk} ({count} {count === 1 ? "unit" : "units"})
-                    </option>
-                  );
-                })}
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 text-white/90">
-                <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 20 20">
-                  <path
-                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                    fillRule="evenodd"
-                  />
-                </svg>
-              </div>
+            {/* Side-by-side Rack Pills with Integrated Slot Chip & Unit Count */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {RACK_OPTIONS.map((rk) => {
+                const isSel = rackLetter === rk;
+                const count = unitRows.filter((r) => r.rackNo === rk).length;
+                const slot = rackSlots[rk] || "";
+                return (
+                  <button
+                    key={rk}
+                    type="button"
+                    onClick={() => {
+                      handleSelectRackLetter(rk);
+                      if (viewTab === "pending") {
+                        // Keep current view or allow switching seamlessly
+                      }
+                    }}
+                    className={`h-8 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 border shadow-2xs ${
+                      isSel
+                        ? type === "IGU"
+                          ? "bg-teal-600 text-white border-teal-700 shadow-xs ring-2 ring-teal-300/50"
+                          : "bg-amber-600 text-white border-amber-700 shadow-xs ring-2 ring-amber-300/50"
+                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                    }`}
+                    title={`Select ${rk} (Slot: ${slot || "none"}, ${count} ${count === 1 ? "unit" : "units"})`}
+                  >
+                    <span>{rk}</span>
+                    {slot && (
+                      <span
+                        className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold tracking-tight ${
+                          isSel
+                            ? "bg-white/25 text-white"
+                            : "bg-slate-100 text-slate-600 border border-slate-200/80"
+                        }`}
+                        title={`Assigned Slot: #${slot}`}
+                      >
+                        #{slot}
+                      </span>
+                    )}
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                        isSel
+                          ? "bg-white/20 text-white"
+                          : count > 0
+                          ? "bg-emerald-100 text-emerald-800 font-bold border border-emerald-200"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             <span className="text-slate-300 mx-1">|</span>
             <span className="text-[11px] font-black text-slate-600 uppercase px-0.5 tracking-wider">NO:</span>
