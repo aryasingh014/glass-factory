@@ -4474,7 +4474,14 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                     {item.width} × {item.height} mm
                                   </td>
                                   <td className="py-2.5 px-2 text-slate-700 font-medium align-middle max-w-[240px]">
-                                    <div className="truncate font-bold text-slate-900">{item.glassType || item.itemCode}</div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="truncate font-bold text-slate-900">{item.glassType || item.itemCode}</span>
+                                      {item.status === "Reworking" && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 shadow-2xs">
+                                          Rework
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="py-2.5 px-2 align-middle whitespace-nowrap">
                                     <div className="flex items-center gap-1">
@@ -4544,6 +4551,40 @@ export const ProductionStageView: React.FC<ProductionStageViewProps> = ({
                                         title="Print Barcode / QR Sticker"
                                       >
                                         <Tag className="w-3.5 h-3.5 text-slate-700" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onReject({
+                                            ...item,
+                                            partnerItem: row.partnerItem,
+                                            allSerials: row.allSerials,
+                                            isDguPair: row.isDguPair,
+                                            glassCategory: row.glassCategory,
+                                          } as any);
+                                        }}
+                                        className="w-7 h-7 rounded-full border border-red-300 bg-white text-red-600 hover:bg-red-50 hover:border-red-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                        title="Reject Item / Report Defect"
+                                      >
+                                        <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onRework({
+                                            ...item,
+                                            partnerItem: row.partnerItem,
+                                            allSerials: row.allSerials,
+                                            isDguPair: row.isDguPair,
+                                            glassCategory: row.glassCategory,
+                                          } as any);
+                                        }}
+                                        className="w-7 h-7 rounded-full border border-amber-300 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-400 flex items-center justify-center transition-all shadow-2xs shrink-0 cursor-pointer"
+                                        title="Send Item to Rework"
+                                      >
+                                        <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
                                       </button>
                                       <button
                                         type="button"

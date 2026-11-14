@@ -2800,8 +2800,8 @@ export default function Index() {
                                 type="button"
                                 onClick={() => setOverviewThroughputStage(stg.id)}
                                 className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${isSel
-                                    ? "bg-blue-600 text-white shadow-xs"
-                                    : "bg-white text-slate-600 hover:bg-slate-200 border border-slate-200"
+                                  ? "bg-blue-600 text-white shadow-xs"
+                                  : "bg-white text-slate-600 hover:bg-slate-200 border border-slate-200"
                                   }`}
                               >
                                 {stg.label}

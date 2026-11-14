@@ -84,20 +84,24 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
   if (!item) return null;
 
+  const isCuttingStage = Boolean(item.currentStage === "Cutting");
   const partnerItem = (item as any).partnerItem as GlassItem | undefined;
   const glassCat = (item as any).glassCategory || item.glassType || "";
 
   const isDlgu = Boolean(
-    glassCat === "DLGU" ||
-    (item as any).glassCategory === "DLGU" ||
-    isDlguGlass(item) ||
-    partnerItem?.glassCategory === "DLGU" ||
-    /dlgu/i.test(item.category || "") ||
-    /dlgu/i.test(item.glassType || "") ||
-    (/laminated/i.test(item.glassType || "") && /dgu|dlgu/i.test(item.glassType || item.category || ""))
+    !isCuttingStage && (
+      glassCat === "DLGU" ||
+      (item as any).glassCategory === "DLGU" ||
+      isDlguGlass(item) ||
+      partnerItem?.glassCategory === "DLGU" ||
+      /dlgu/i.test(item.category || "") ||
+      /dlgu/i.test(item.glassType || "") ||
+      (/laminated/i.test(item.glassType || "") && /dgu|dlgu/i.test(item.glassType || item.category || ""))
+    )
   );
 
   const isDgu = Boolean(
+    !isCuttingStage &&
     !isDlgu &&
     (isDguGlass(item) ||
       item.glassCategory === "DGU" ||
@@ -107,6 +111,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   );
 
   const isLam = Boolean(
+    !isCuttingStage &&
     !isDlgu &&
     !isDgu &&
     (isLaminatedGlass(item) ||
@@ -117,14 +122,16 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   );
 
   const isCompositeUnit = Boolean(
-    isDlgu ||
-    isDgu ||
-    isLam ||
-    partnerItem ||
-    ((item as any).allSerials && (item as any).allSerials.length > 1) ||
-    (item as any).isDguPair ||
-    item.currentStage === "DGU" ||
-    item.currentStage === "Lamination"
+    !isCuttingStage && (
+      isDlgu ||
+      isDgu ||
+      isLam ||
+      partnerItem ||
+      ((item as any).allSerials && (item as any).allSerials.length > 1) ||
+      (item as any).isDguPair ||
+      item.currentStage === "DGU" ||
+      item.currentStage === "Lamination"
+    )
   );
 
   const isPairUnit = isCompositeUnit;
@@ -133,7 +140,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   // Priority: (1) shared dguPairId, (2) shared lamPairId, (3) positional fallback scoped to same stage.
   // Always excludes `item` itself and Rejected panes.
   const siblingPanes = React.useMemo(() => {
-    if (!allItems || allItems.length === 0 || !item) return [];
+    if (isCuttingStage || !allItems || allItems.length === 0 || !item) return [];
 
     const dguPairId = (item as any).dguPairId;
     const lamPairId = (item as any).lamPairId;
@@ -261,7 +268,11 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
       }
 
       // Smartly set default station based on item context
-      if (item?.currentStage === "Finished" || item?.status === "Completed") {
+      if (item?.currentStage === "Cutting") {
+        setDefectStation("Cutting Table");
+        setReason("Cutting: Breakage / Running Crack");
+        setTargetStage("Cutting");
+      } else if (item?.currentStage === "Finished" || item?.status === "Completed") {
         setDefectStation("Transit / Delivery to Customer");
         setReason("Transit / Delivery: Broken in Transit / Customer Delivery");
       } else if (item?.currentStage === "Polishing") {
@@ -279,11 +290,11 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
       }
       setCustomReason("");
     }
-  }, [open, item?.id, item?.serialNumber, item?.currentStage, isDlgu, isDgu, isLam, isPairUnit]);
+  }, [open, item?.id, item?.serialNumber, item?.currentStage, isDlgu, isDgu, isLam, isPairUnit, isCuttingStage]);
 
   // Dynamically resolve the active pane details based on current selection
   const activePaneInfo = React.useMemo(() => {
-    if (!isPairUnit && !isDlgu && !isDgu && !isLam) {
+    if ((!isPairUnit && !isDlgu && !isDgu && !isLam) || isCuttingStage) {
       return {
         badgeText: `${primaryRole.code} • ${primaryRole.name}`,
         badgeClass: primaryRole.colorClass,
@@ -632,20 +643,19 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
   }, [activeItem, item, parentPI, displayBatchNo]);
 
   const isCompletedOrFinished = Boolean(item.status === "Completed" || item.currentStage === "Finished");
-  const isCuttingStage = Boolean(item.currentStage === "Cutting");
 
   const handleSubmit = async () => {
-    if (isCuttingStage) {
-      toast.error("Quality rejection and rework start after the Cutting stage.");
-      return;
-    }
-
     let defectiveCode = "SINGLE";
     let defectiveSerial: string | undefined = item.serialNumber;
     let targetSerialsToProcess: string[] = [item.serialNumber];
     let isSinglePane = true;
 
-    if (isDlgu) {
+    if (isCuttingStage) {
+      defectiveCode = primaryRole.code || (getItemFinish(item) === "Colour" ? "OP" : "IP") || "SINGLE";
+      defectiveSerial = item.serialNumber;
+      targetSerialsToProcess = [item.serialNumber];
+      isSinglePane = true;
+    } else if (isDlgu) {
       if (selectedDefectivePane === "OP") {
         defectiveCode = "OP";
         defectiveSerial = dlguPanes.opItem?.serialNumber || item.serialNumber;
@@ -752,7 +762,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
 
         if (!res.ok) throw new Error("Failed to reject item");
         if (autoReworkEnabled) {
-          if (defectiveCode === "BOTH_CLEAR") {
+          if (isCuttingStage) {
+            toast.error(`Cutting Piece #${item.serialNumber} marked as REJECTED & Remake dispatched to Cutting Table`);
+          } else if (defectiveCode === "BOTH_CLEAR") {
             toast.error(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
           } else if (!isSinglePane && isCompositeUnit) {
             toast.error(`Full Unit (${allSerials.join(" + ")}) marked as REJECTED & Remake dispatched to Cutting`);
@@ -760,7 +772,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             toast.error(`Pane ${defectiveSerial || targetSerialsToProcess[0]} (${activePaneInfo.badgeText}) marked as REJECTED & Remake dispatched to Cutting`);
           }
         } else {
-          if (defectiveCode === "BOTH_CLEAR") {
+          if (isCuttingStage) {
+            toast.error(`Cutting Piece #${item.serialNumber} marked as REJECTED`);
+          } else if (defectiveCode === "BOTH_CLEAR") {
             toast.error(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) marked as REJECTED`);
           } else if (!isSinglePane && isCompositeUnit) {
             toast.error(`Full Unit (${allSerials.join(" + ")}) marked as REJECTED (${defectiveCode})`);
@@ -787,7 +801,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
         });
 
         if (!res.ok) throw new Error("Failed to send item to rework");
-        if (defectiveCode === "BOTH_CLEAR") {
+        if (isCuttingStage) {
+          toast.warning(`Cutting Piece #${item.serialNumber} sent to REWORK at ${targetStage} stage`);
+        } else if (defectiveCode === "BOTH_CLEAR") {
           toast.warning(`Both Clear Panes (${targetSerialsToProcess.map((s) => `#${s}`).join(" + ")}) sent to REWORK at ${targetStage} stage`);
         } else if (!isSinglePane && isCompositeUnit) {
           toast.warning(`Full Unit (${allSerials.join(" + ")}) sent to REWORK at ${targetStage} stage`);
@@ -815,24 +831,26 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             </div>
             <span>
               {mode === "reject"
-                ? (isDlgu ? "Mark DLGU Unit as REJECTED" : isDgu ? "Mark DGU Unit as REJECTED" : isLam ? "Mark Laminated Unit as REJECTED" : "Mark Glass Item as REJECTED")
-                : (isDlgu ? "Send DLGU Unit to REWORK" : isDgu ? "Send DGU Unit to REWORK" : isLam ? "Send Laminated Unit to REWORK" : "Send Glass Item to REWORK")
+                ? (isCuttingStage ? `Mark Cutting Piece #${item.serialNumber} as REJECTED` : isDlgu ? "Mark DLGU Unit as REJECTED" : isDgu ? "Mark DGU Unit as REJECTED" : isLam ? "Mark Laminated Unit as REJECTED" : "Mark Glass Item as REJECTED")
+                : (isCuttingStage ? `Send Cutting Piece #${item.serialNumber} to REWORK` : isDlgu ? "Send DLGU Unit to REWORK" : isDgu ? "Send DGU Unit to REWORK" : isLam ? "Send Laminated Unit to REWORK" : "Send Glass Item to REWORK")
               }
             </span>
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 my-2 text-xs">
-          {/* Cutting Stage Block Banner */}
+          {/* Cutting Stage Info Banner */}
           {isCuttingStage && (
-            <div className="p-3 rounded-xl border bg-slate-100 border-slate-300 text-slate-800 flex items-start gap-2.5">
-              <AlertOctagon className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+            <div className={`p-3 rounded-xl border flex items-start gap-2.5 ${mode === "reject" ? "bg-red-50/80 border-red-200 text-red-900" : "bg-amber-50/80 border-amber-200 text-amber-900"}`}>
+              <AlertOctagon className={`w-4 h-4 shrink-0 mt-0.5 ${mode === "reject" ? "text-red-600" : "text-amber-600"}`} />
               <div>
-                <div className="font-extrabold text-xs text-slate-900">
-                  Initial Cutting Stage Glass Piece
+                <div className="font-extrabold text-xs">
+                  {mode === "reject" ? "Cutting Table Defect / Scrap Rejection" : "Cutting Table Rework"}
                 </div>
-                <div className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
-                  Quality rejection and rework workflows begin after the Cutting stage (at Edging, Tempering, Pairing Buffer, DGU, or Lamination).
+                <div className="text-[11px] mt-0.5 opacity-90 leading-relaxed">
+                  {mode === "reject"
+                    ? "Rejecting this piece logs the defect at the Cutting Table. When Auto-Remake is enabled, a replacement piece is automatically queued for re-cutting."
+                    : "Sending this piece to rework will re-queue it for re-cutting or defect correction at the selected workstation."}
                 </div>
               </div>
             </div>
@@ -1320,7 +1338,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
           )}
 
           {/* Auto Remake Ticket Toggle (When in Reject Mode) */}
-          {mode === "reject" && !isCuttingStage && (
+          {mode === "reject" && (
             <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-1.5">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1334,7 +1352,9 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
                 </span>
               </label>
               <p className="text-[11px] text-purple-800 ml-6 leading-relaxed">
-                {selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
+                {isCuttingStage
+                  ? "A replacement piece with the same specifications will remain queued at the Cutting Table for re-cutting."
+                  : selectedDefectivePane === "ASSEMBLY" || selectedDefectivePane === "WHOLE_UNIT"
                   ? "All panes (Full Glass) will be queued in Cutting as remake pieces."
                   : `Only defective pane (${activePaneInfo.badgeText}) will be queued in Cutting. Surviving partner panes wait in the pairing buffer.`}
               </p>
@@ -1358,7 +1378,7 @@ export const RejectReworkModal: React.FC<RejectReworkModalProps> = ({
             type="button"
             size="sm"
             onClick={handleSubmit}
-            disabled={loading || isCuttingStage}
+            disabled={loading}
             className={`text-xs font-bold gap-1.5 text-white ${
               mode === "reject"
                 ? "bg-red-600 hover:bg-red-700"
