@@ -48,6 +48,8 @@ import {
   isDguGlass,
   isLaminatedGlass,
   getDisplayStage,
+  isItemInFinishedStage,
+  isDispatchedItem,
 } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { resolveGlassMakeupDetails, buildItemExportRows, standardColWidths } from "@/lib/excelExport";
@@ -599,7 +601,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const inProgressPis = totalPis - completedPis;
 
     const totalItems = items.length;
-    const completedItems = items.filter((i) => i.status === "Completed" || i.currentStage === "Finished").length;
+    const completedItems = items.filter((i) => isItemInFinishedStage(i) || isDispatchedItem(i) || i.status === "Completed").length;
     const inProgressItems = totalItems - completedItems;
 
     let totalSqm = 0;
@@ -618,7 +620,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     items.forEach((i) => {
       const eff = getDguEffectiveQtyAndSqm(i);
       totalSqm += eff.sqm;
-      if (i.status === "Completed" || i.currentStage === "Finished") {
+      if (isItemInFinishedStage(i) || isDispatchedItem(i) || i.status === "Completed") {
         completedSqm += eff.sqm;
       }
       if (i.status === "Rejected" || rejectedSerialSet.has(i.serialNumber) || (i.id && rejectedSerialSet.has(i.id))) {

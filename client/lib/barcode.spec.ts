@@ -449,6 +449,58 @@ describe("Generic Sticker & A1.pdf Barcode Scanning Support", () => {
       expect(typeof simulateBarcodeScan).toBe("function");
     });
   });
+
+  describe("Rack Barcode Formatting and Parsing (@shared/barcodeConfig)", () => {
+    it("formats fixed wall barcodes for all racks A, B, C, D, E without numbers", async () => {
+      const { formatRackBarcode } = await import("@shared/barcodeConfig");
+      expect(formatRackBarcode("Rack A")).toBe("RACK-A");
+      expect(formatRackBarcode("Rack B")).toBe("RACK-B");
+      expect(formatRackBarcode("Rack C")).toBe("RACK-C");
+      expect(formatRackBarcode("Rack D")).toBe("RACK-D");
+      expect(formatRackBarcode("Rack E")).toBe("RACK-E");
+      // Even if slot is passed, the wall barcode is fixed to the rack letter
+      expect(formatRackBarcode("Rack A", "25")).toBe("RACK-A");
+    });
+
+    it("parses rack barcodes in various industrial scanner formats", async () => {
+      const { parseRackBarcode } = await import("@shared/barcodeConfig");
+
+      const matchA = parseRackBarcode("RACK-A");
+      expect(matchA.isRack).toBe(true);
+      expect(matchA.rackLetter).toBe("Rack A");
+      expect(matchA.barcode).toBe("RACK-A");
+
+      const matchB = parseRackBarcode("RACK-B");
+      expect(matchB.isRack).toBe(true);
+      expect(matchB.rackLetter).toBe("Rack B");
+      expect(matchB.barcode).toBe("RACK-B");
+
+      const matchC = parseRackBarcode("RACK-C");
+      expect(matchC.isRack).toBe(true);
+      expect(matchC.rackLetter).toBe("Rack C");
+      expect(matchC.barcode).toBe("RACK-C");
+
+      const matchD = parseRackBarcode("RACK-D");
+      expect(matchD.isRack).toBe(true);
+      expect(matchD.rackLetter).toBe("Rack D");
+      expect(matchD.barcode).toBe("RACK-D");
+
+      const matchE = parseRackBarcode("RACK-E");
+      expect(matchE.isRack).toBe(true);
+      expect(matchE.rackLetter).toBe("Rack E");
+      expect(matchE.barcode).toBe("RACK-E");
+
+      // Alternative formats
+      expect(parseRackBarcode("Rack A").isRack).toBe(true);
+      expect(parseRackBarcode("RACK_B").isRack).toBe(true);
+      expect(parseRackBarcode("RACK-01").rackLetter).toBe("Rack A");
+      expect(parseRackBarcode("RACK-A-25").rackLetter).toBe("Rack A");
+
+      // Guard: piece barcodes should not be treated as rack barcodes
+      expect(parseRackBarcode("1012627007010057").isRack).toBe(false);
+      expect(parseRackBarcode("1812627016610063").isRack).toBe(false);
+    });
+  });
 });
 
 

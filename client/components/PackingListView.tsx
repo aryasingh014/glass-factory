@@ -30,6 +30,10 @@ import {
   X,
   Play,
   RotateCcw,
+  Barcode,
+  QrCode,
+  Eye,
+  History,
 } from "lucide-react";
 import { GlassItem, PIMaster } from "@shared/api";
 import { Button } from "@/components/ui/button";
@@ -39,7 +43,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { scannerAudio } from "@/lib/audioBeep";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
-import { cleanScannedBarcode, formatSejalBarcode } from "@/lib/barcode";
+import { cleanScannedBarcode, formatSejalBarcode, generateBarcodeSVG, isItemMatchingCode } from "@/lib/barcode";
 import {
   isDguGlass,
   isLaminatedGlass,
@@ -54,10 +58,52 @@ import {
 } from "@/lib/utils";
 import { exportStageWipToExcel } from "@/lib/excelExport";
 import { BarcodeStickerModal } from "@/components/BarcodeStickerModal";
+import { RackBarcodeModal } from "@/components/RackBarcodeModal";
+import { RackDetailsModal } from "@/components/RackDetailsModal";
+import { PackingHistoryModule } from "@/components/PackingHistoryModule";
+import { formatRackBarcode, parseRackBarcode } from "@shared/barcodeConfig";
 
 export { parseRackInfo };
 export type RackLetterType = RackLetter;
 export const RACK_OPTIONS: RackLetterType[] = ["Rack A", "Rack B", "Rack C", "Rack D", "Rack E"];
+
+export interface PackingUnitRow {
+  id: string;
+  primaryItem: GlassItem;
+  partnerItem?: GlassItem;
+  partnerItems?: GlassItem[];
+  allPanes?: GlassItem[];
+  allItemIds?: string[];
+  allSerials: string[];
+  customerName: string;
+  projectName?: string;
+  pdfFileName?: string;
+  piNumber?: string;
+  batchNo?: string;
+  obNo?: string;
+  sfoNo?: string;
+  glassCategory?: string;
+  finish?: string;
+  displayBarcode?: string;
+  posNo: string;
+  pieceIndex?: number;
+  totalPieces?: number;
+  width: number;
+  height: number;
+  qty: number;
+  sqm: number;
+  makeup?: string;
+  rackNo: RackLetterType | string;
+  rackSlot?: string;
+  shift?: "Day" | "Night" | "A" | "B";
+  packedAt?: string;
+  packedBy?: string;
+  sentToFinished?: boolean;
+  sentToFinishedAt?: string;
+  sentToFinishedBy?: string;
+  isDispatched?: boolean;
+  dispatchNoteNo?: string;
+}
 
 function resolveValidBarcode(item?: any, fallback?: string): string {
   const b = String(fallback || item?.barcode || "").trim();
@@ -133,11 +179,11 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
     }
   });
 
-  // Separate persistent rack slot numbers for Rack A to Rack E
+  // Separate persistent rack numbers for Rack A to Rack E (manually entered by operator)
   const [rackSlots, setRackSlots] = useState<Record<RackLetterType, string>>(() => {
     const sanitize = (raw: string | null, def = "") => {
       const s = (raw || "").trim();
-      return (s && s.length <= 6) ? s : def;
+      return (s && s.length <= 10) ? s : def;
     };
     try {
       const savedA = sanitize(localStorage.getItem("sejal_finished_packing_rack_slot_Rack A"));
@@ -158,9 +204,10 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
     }
   });
 
-  // Current active rack slot derived from the selected room (Rack A to Rack E)
+  // Current active rack number manually entered by operator
   const rackSlot = rackSlots[rackLetter] || "";
 
+  // The active target rack combines the rack letter and manually entered rack number (e.g. "Rack A - 25")
   const activeTargetRack = useMemo(() => {
     const slot = rackSlot.trim();
     return slot ? `${rackLetter} - ${slot}` : rackLetter;
@@ -211,11 +258,15 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
 
   const rackSlotInputRef = useRef<HTMLInputElement>(null);
   const [selectedPrintSlot, setSelectedPrintSlot] = useState<string>("ALL");
-  const [viewTab, setViewTab] = useState<"pending" | "on_rack">("on_rack");
+  const [viewTab, setViewTab] = useState<"pending" | "on_rack" | "history">("on_rack");
 
   // Sticker modal state
   const [stickerModalItem, setStickerModalItem] = useState<GlassItem | null>(null);
   const [stickerModalOpen, setStickerModalOpen] = useState(false);
+
+  // Rack barcode & details modal state
+  const [rackBarcodeModalOpen, setRackBarcodeModalOpen] = useState(false);
+  const [rackDetailsModalOpen, setRackDetailsModalOpen] = useState(false);
 
   const handleOpenSticker = (item: GlassItem) => {
     setStickerModalItem(item);
@@ -263,8 +314,13 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
       // Has physical rack assignment or was packed on rack
       const hasRackAssignment = Boolean(i.packingRackNo && i.packingRackNo.trim());
 
-      // If already dispatched, we still show in sent history
-      const isPacked = i.packingStatus === "Packed" || hasRackAssignment;
+      // If already dispatched, packed, or assigned to rack
+      const isPacked =
+        i.packingStatus === "Packed" ||
+        hasRackAssignment ||
+        Boolean(i.packedAt) ||
+        Boolean(i.sentToFinished) ||
+        isDispatchedItem(i);
       if (!isPacked) return false;
 
       // Filter by type: IGU vs LAMI
@@ -282,28 +338,29 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
     });
   }, [items, type]);
 
-  // Active units currently sitting on a physical rack in Packing (also visible in Finished until Dispatched)
+  // Active units currently sitting on a physical rack in Packing (empty once sent to History / Finished)
   const activeRackItems = useMemo(() => {
     return eligibleItems.filter((i) => {
       if (isDispatchedItem(i)) return false;
-      // If this pane's assembled DGU/DLGU partner was already dispatched, do not show in active rack manifest
+      // If already sent to Finished/History, it is removed from the active rack (emptying the rack)
+      if (i.sentToFinished) return false;
       const pairId = (i as any).dguPairId || (i as any).lamPairId;
       if (pairId) {
-        const partnerDispatched = items.some(
+        const partnerSentOrDispatched = items.some(
           (other) =>
             other.id !== i.id &&
             ((other as any).dguPairId === pairId || (other as any).lamPairId === pairId) &&
-            isDispatchedItem(other)
+            (other.sentToFinished || isDispatchedItem(other))
         );
-        if (partnerDispatched) return false;
+        if (partnerSentOrDispatched) return false;
       }
       return true;
     });
   }, [eligibleItems, items]);
 
-  // History units already Dispatched (vanished from active rack & Finished)
+  // History units already sent to Finished or Dispatched
   const sentHistoryItems = useMemo(() => {
-    return eligibleItems.filter((i) => isDispatchedItem(i));
+    return eligibleItems.filter((i) => Boolean(i.sentToFinished || isDispatchedItem(i)));
   }, [eligibleItems]);
 
   // Incoming units completed at DGU / Lamination that have NOT been assigned a physical rack yet
@@ -319,43 +376,7 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
   /* ─────────────────────────────────────────────────────────────────────────────
      2. Group into unified units (for IGU: pair colour + clear into 1 unit row)
      ───────────────────────────────────────────────────────────────────────────── */
-  interface PackingUnitRow {
-    id: string;
-    primaryItem: GlassItem;
-    partnerItem?: GlassItem;
-    partnerItems?: GlassItem[];
-    allPanes?: GlassItem[];
-    allItemIds?: string[];
-    allSerials: string[];
-    customerName: string;
-    projectName?: string;
-    pdfFileName?: string;
-    piNumber?: string;
-    batchNo?: string;
-    obNo?: string;
-    sfoNo?: string;
-    glassCategory?: string;
-    finish?: string;
-    displayBarcode?: string;
-    posNo: string;
-    pieceIndex?: number;
-    totalPieces?: number;
-    width: number;
-    height: number;
-    qty: number;
-    sqm: number;
-    makeup?: string;
-    rackNo: RackLetterType | string;
-    rackSlot?: string;
-    shift?: "Day" | "Night" | "A" | "B";
-    packedAt?: string;
-    packedBy?: string;
-    sentToFinished?: boolean;
-    sentToFinishedAt?: string;
-    sentToFinishedBy?: string;
-    isDispatched?: boolean;
-    dispatchNoteNo?: string;
-  }
+
 
   const getRowMeta = useCallback(
     (it: GlassItem) => {
@@ -755,10 +776,32 @@ export const PackingListView: React.FC<PackingListViewProps> = ({
     () => buildUnitRowsFromItems(sentHistoryItems),
     [buildUnitRowsFromItems, sentHistoryItems]
   );
+  const allHistoryUnitRows = useMemo(
+    () => buildUnitRowsFromItems(sentHistoryItems),
+    [buildUnitRowsFromItems, sentHistoryItems]
+  );
   const pendingUnitRows = useMemo(
     () => buildUnitRowsFromItems(pendingRackItems),
     [buildUnitRowsFromItems, pendingRackItems]
   );
+
+  // Per-rack count and area metrics for physical rack stickers
+  const rackCounts = useMemo(() => {
+    const counts: Record<RackLetterType, { units: number; sqm: number }> = {
+      "Rack A": { units: 0, sqm: 0 },
+      "Rack B": { units: 0, sqm: 0 },
+      "Rack C": { units: 0, sqm: 0 },
+      "Rack D": { units: 0, sqm: 0 },
+      "Rack E": { units: 0, sqm: 0 },
+    };
+    unitRows.forEach((r) => {
+      if (counts[r.rackNo]) {
+        counts[r.rackNo].units += 1;
+        counts[r.rackNo].sqm += r.sqm || 0;
+      }
+    });
+    return counts;
+  }, [unitRows]);
 
   // Checkbox selection set for Scanned Manifest units
   const [selectedManifestIds, setSelectedManifestIds] = useState<Set<string>>(new Set());
@@ -1045,12 +1088,6 @@ const handleExportExcel = () => {
 const handleAssignRowsToRack = useCallback(
   async (targetRows: PackingUnitRow[], customSuccessMsg?: string) => {
     if (targetRows.length === 0) return;
-    if (!rackSlot.trim()) {
-      scannerAudio.playError();
-      toast.warning("Please enter the Rack Number first.");
-      rackSlotInputRef.current?.focus();
-      return;
-    }
 
     const moveSerials = Array.from(new Set(targetRows.flatMap((r) => r.allSerials)));
     const moveIds = Array.from(
@@ -1072,7 +1109,7 @@ const handleAssignRowsToRack = useCallback(
           operator: effectiveOperator,
           advanceAll: true,
           packPartners: true,
-          sentToFinished: true,
+          sentToFinished: false,
         }),
       });
       if (!res.ok) {
@@ -1081,7 +1118,7 @@ const handleAssignRowsToRack = useCallback(
       }
       scannerAudio.playSuccess();
       toast.success(
-        customSuccessMsg || `Assigned ${targetRows.length} unit(s) to ${activeTargetRack} & Finished Glass.`,
+        customSuccessMsg || `Packed ${targetRows.length} unit(s) onto ${activeTargetRack}.`,
         { id: "assign-rack-success" }
       );
       setSelectedManifestIds(new Set());
@@ -1145,6 +1182,36 @@ const handleSendUnitsToFinished = async (targetRows: PackingUnitRow[], customSuc
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   Send Entire Selected Rack to History (Empties the rack)
+   ───────────────────────────────────────────────────────────────────────────── */
+const handleSendRackToHistory = async () => {
+  const rackRows = unitRows.filter((r) => r.rackNo === selectedRack);
+  if (rackRows.length === 0) {
+    toast.warning(`No units currently on ${selectedRack} to send to history.`);
+    return;
+  }
+  await handleSendUnitsToFinished(
+    rackRows,
+    `✅ Sent all ${rackRows.length} unit(s) from ${selectedRack} to Packing History & Finished Glass. ${selectedRack} is now empty!`
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Send Selected Units to History
+   ───────────────────────────────────────────────────────────────────────────── */
+const handleSendSelectedToHistory = async () => {
+  const selectedRows = displayedRows.filter((r) => selectedManifestIds.has(r.id));
+  if (selectedRows.length === 0) {
+    toast.warning("Please select at least one unit to send to history.");
+    return;
+  }
+  await handleSendUnitsToFinished(
+    selectedRows,
+    `✅ Sent ${selectedRows.length} selected unit(s) to Packing History & Finished Glass.`
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
    Print Physical Slip
    ───────────────────────────────────────────────────────────────────────────── */
 const handlePrint = () => {
@@ -1166,62 +1233,138 @@ const handleDirectScan = useCallback(
     const clean = cleanScannedBarcode(rawBarcode).trim();
     if (!clean) return;
 
-    if (isDirectScanningRef.current) return;
+    if (isDirectScanningRef.current) {
+      console.warn("Scan ignored: another scan is currently in progress", clean);
+      return;
+    }
     isDirectScanningRef.current = true;
+    const safetyUnlockTimer = setTimeout(() => {
+      isDirectScanningRef.current = false;
+    }, 2500);
 
     try {
-      // 1. Check Pending Rack queue first (incoming from DGU / Lamination without a rack yet)
-      const matchedPendingRow = pendingUnitRows.find(
-        (row) =>
-          row.primaryItem.barcode === clean ||
-          row.primaryItem.serialNumber === clean ||
-          row.partnerItem?.barcode === clean ||
-          row.partnerItem?.serialNumber === clean ||
-          row.allSerials.includes(clean)
-      );
+      // 0. Check if the scanned barcode is a Rack Barcode (e.g. "RACK-A", "RACK-B", "RACK-C", "RACK-D", "RACK-E")
+      const rackMatch = parseRackBarcode(clean);
+      if (rackMatch.isRack && rackMatch.rackLetter) {
+        scannerAudio.playSuccess();
+        const targetLetter = rackMatch.rackLetter;
+        handleSelectRackLetter(targetLetter);
+        setViewTab("on_rack");
+        setSelectedPrintSlot("ALL");
 
-      if (matchedPendingRow) {
-        await handleAssignRowsToRack(
-          [matchedPendingRow],
-          `Assigned POS ${matchedPendingRow.posNo} to ${activeTargetRack} & Finished Glass.`
+        const activeSlot = (rackSlots[targetLetter] || "").trim();
+        const countOnRack = unitRows.filter((r) => r.rackNo === targetLetter).length;
+
+        toast.success(
+          `🎯 TARGET RACK CHANGED TO ${targetLetter.toUpperCase()}! Now scan glass stickers to pack onto ${targetLetter} (${countOnRack} units currently on rack).`,
+          { id: "rack-select", duration: 4000 }
         );
         return;
       }
 
+      const cleanUpper = clean.toUpperCase();
+      const cleanLower = clean.toLowerCase();
+
+      // Robust unit row matcher across all panes, barcodes, serials, POS, and formats
+      const doesRowMatchCode = (row: PackingUnitRow) => {
+        // 1. Direct serial match across all panes in this assembled unit
+        if (row.allSerials && row.allSerials.some((s) => s.toUpperCase() === cleanUpper || s.toLowerCase() === cleanLower)) {
+          return true;
+        }
+        // 2. Barcode or code match across all panes in this assembled unit
+        if (
+          row.allPanes &&
+          row.allPanes.some(
+            (p) =>
+              (p.barcode && cleanScannedBarcode(p.barcode).toUpperCase() === cleanUpper) ||
+              (p.serialNumber && p.serialNumber.toUpperCase() === cleanUpper) ||
+              isItemMatchingCode(p, clean)
+          )
+        ) {
+          return true;
+        }
+        // 3. Display barcode match
+        if (row.displayBarcode && cleanScannedBarcode(row.displayBarcode).toUpperCase() === cleanUpper) {
+          return true;
+        }
+        // 4. Primary or partner item fallback
+        if (
+          isItemMatchingCode(row.primaryItem, clean) ||
+          (row.partnerItem && isItemMatchingCode(row.partnerItem, clean)) ||
+          (row.partnerItems && row.partnerItems.some((pt) => isItemMatchingCode(pt, clean)))
+        ) {
+          return true;
+        }
+        // 5. Exact POS match if scanned (e.g. "POS 7" or "7")
+        if (
+          row.posNo &&
+          (row.posNo === clean ||
+            `pos ${row.posNo}`.toLowerCase() === cleanLower ||
+            `pos#${row.posNo}`.toLowerCase() === cleanLower)
+        ) {
+          return true;
+        }
+        return false;
+      };
+
+      // 1. Check Pending Rack queue first (incoming from DGU / Lamination without a physical rack yet)
+      let matchedPendingRow = pendingUnitRows.find(doesRowMatchCode);
+
+      // Fallback A: Check pendingRackItems directly in case unitRows didn't catch a lone/un-grouped piece
+      if (!matchedPendingRow) {
+        const directPendingItem = pendingRackItems.find(
+          (it) =>
+            isItemMatchingCode(it, clean) ||
+            (it.barcode && cleanScannedBarcode(it.barcode).toUpperCase() === cleanUpper) ||
+            (it.serialNumber && it.serialNumber.toUpperCase() === cleanUpper)
+        );
+        if (directPendingItem) {
+          matchedPendingRow =
+            pendingUnitRows.find((r) => r.allItemIds?.includes(directPendingItem.id)) ||
+            buildUnitRowsFromItems([directPendingItem])[0];
+        }
+      }
+
+      // Fallback B: Scan across raw items list for any pending packing piece awaiting a rack
+      if (!matchedPendingRow) {
+        const rawPendingItem = items.find(
+          (it) =>
+            it.status !== "Rejected" &&
+            !it.sentToFinished &&
+            !it.isDispatched &&
+            (!it.packingRackNo || !it.packingRackNo.trim()) &&
+            (type === "IGU" ? isPackingIguItem(it) : isPackingLamiItem(it)) &&
+            (isItemMatchingCode(it, clean) ||
+              (it.barcode && cleanScannedBarcode(it.barcode).toUpperCase() === cleanUpper) ||
+              (it.serialNumber && it.serialNumber.toUpperCase() === cleanUpper))
+        );
+        if (rawPendingItem) {
+          matchedPendingRow =
+            pendingUnitRows.find((r) => r.allItemIds?.includes(rawPendingItem.id)) ||
+            buildUnitRowsFromItems([rawPendingItem])[0];
+        }
+      }
+
+      if (matchedPendingRow) {
+        await handleAssignRowsToRack(
+          [matchedPendingRow],
+          `Packed POS ${matchedPendingRow.posNo} onto ${activeTargetRack}.`
+        );
+        setViewTab("on_rack");
+        return;
+      }
+
       const findRackedMatch = () =>
-        unitRows.find(
-          (row) =>
-            row.rackNo === selectedRack &&
-            (row.primaryItem.barcode === clean ||
-              row.primaryItem.serialNumber === clean ||
-              row.partnerItem?.barcode === clean ||
-              row.partnerItem?.serialNumber === clean ||
-              row.allSerials.includes(clean))
-        ) ||
-        unitRows.find((row) => {
-          if (row.primaryItem.barcode === clean || row.primaryItem.serialNumber === clean) return true;
-          if (row.partnerItem?.barcode === clean || row.partnerItem?.serialNumber === clean) return true;
-          if (row.allSerials.includes(clean)) return true;
-          return false;
-        });
+        unitRows.find((row) => row.rackNo === selectedRack && doesRowMatchCode(row)) ||
+        unitRows.find(doesRowMatchCode);
 
       const matchedRackedRow = findRackedMatch();
 
-      // Move to target rack if different, or send to Finished if already on target rack
+      // Move to target rack if different, or notify if already on target rack
       if (matchedRackedRow) {
-        const currentSlot = (matchedRackedRow.rackSlot || "").trim();
-        const targetSlot = rackSlot.trim();
-        const isSameTargetRack =
-          matchedRackedRow.rackNo === selectedRack && (!targetSlot || currentSlot === targetSlot);
+        const isSameTargetRack = matchedRackedRow.rackNo === selectedRack;
 
         if (!isSameTargetRack) {
-          if (!targetSlot) {
-            scannerAudio.playError();
-            toast.warning("Please enter the Rack Number first.");
-            rackSlotInputRef.current?.focus();
-            return;
-          }
-
           const moveSerials = matchedRackedRow.allSerials;
           const moveIds =
             matchedRackedRow.allItemIds ||
@@ -1240,7 +1383,7 @@ const handleDirectScan = useCallback(
                 operator: effectiveOperator,
                 advanceAll: true,
                 packPartners: true,
-                sentToFinished: true,
+                sentToFinished: false,
               }),
             });
             if (!res.ok) {
@@ -1251,6 +1394,7 @@ const handleDirectScan = useCallback(
             toast.success(
               `Moved POS ${matchedRackedRow.posNo} to ${activeTargetRack}.`
             );
+            setViewTab("on_rack");
             onRefresh();
           } catch (err: any) {
             scannerAudio.playError();
@@ -1262,44 +1406,52 @@ const handleDirectScan = useCallback(
         }
 
         // Already on the selected target rack
-        if (matchedRackedRow.sentToFinished) {
-          scannerAudio.playSuccess();
-          toast.info(
-            `POS ${matchedRackedRow.posNo} is already on ${activeTargetRack} & in Finished Glass.`
-          );
-          return;
-        }
-
-        await handleSendUnitsToFinished(
-          [matchedRackedRow],
-          `Sent POS ${matchedRackedRow.posNo} from ${matchedRackedRow.rackNo} to Finished Glass.`
+        scannerAudio.playSuccess();
+        toast.info(
+          `POS ${matchedRackedRow.posNo} is already on ${selectedRack}. Click "Send to History" when ready to empty the rack.`,
+          { duration: 3000 }
         );
         return;
       }
 
       // Check if it was already sent to Finished or dispatched
-      const alreadyFinished = historyUnitRows.find(
-        (r) =>
-          r.allSerials.includes(clean) ||
-          r.primaryItem.barcode === clean ||
-          r.primaryItem.serialNumber === clean ||
-          r.partnerItem?.barcode === clean ||
-          r.partnerItem?.serialNumber === clean
-      );
+      const alreadyFinished = allHistoryUnitRows.find(doesRowMatchCode);
       if (alreadyFinished) {
         scannerAudio.playSuccess();
         toast.info(
-          `POS ${alreadyFinished.posNo} is already in Finished Glass (${alreadyFinished.rackNo}${alreadyFinished.rackSlot ? ` - ${alreadyFinished.rackSlot}` : ""}).`
+          `POS ${alreadyFinished.posNo} was already sent to Packing History & Finished Glass (${alreadyFinished.rackNo}${alreadyFinished.rackSlot ? ` - ${alreadyFinished.rackSlot}` : ""}).`
         );
+        return;
       } else {
         scannerAudio.playError();
-        toast.error(`No active unit found on any rack for barcode "${clean}".`);
+        toast.error(`Barcode "${clean}" not recognized in Pending queue or on any active rack.`);
       }
     } finally {
+      clearTimeout(safetyUnlockTimer);
       isDirectScanningRef.current = false;
     }
   },
-  [selectedRack, pendingUnitRows, unitRows, historyUnitRows, rackSlot, type, activeTargetRack, shift, effectiveOperator, getAuthHeaders, onRefresh, handleAssignRowsToRack]
+  [
+    selectedRack,
+    pendingUnitRows,
+    pendingRackItems,
+    items,
+    unitRows,
+    historyUnitRows,
+    allHistoryUnitRows,
+    rackSlot,
+    rackSlots,
+    type,
+    activeTargetRack,
+    shift,
+    effectiveOperator,
+    getAuthHeaders,
+    onRefresh,
+    handleAssignRowsToRack,
+    handleSelectRackLetter,
+    handleSetRackSlot,
+    buildUnitRowsFromItems,
+  ]
 );
 
 useBarcodeScanner({
@@ -1308,7 +1460,9 @@ useBarcodeScanner({
   },
   enabled: true,
   priority: 10,
-  duplicateCooldownMs: 1800,
+  ignoreWhenInputFocused: false,
+  maxIntervalMs: 350,
+  duplicateCooldownMs: 1200,
 });
 
 return (
@@ -1339,34 +1493,41 @@ return (
 
         {/* Action Buttons: Print Rack Dropdown, Print Slip, Refresh */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Rack Number Dropdown to choose which rack number to print */}
+          {/* Rack Selector Dropdown to choose which rack to print */}
           <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-1 shadow-2xs">
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">
               PRINT RACK:
             </span>
             <select
-              value={selectedPrintSlot}
+              value={rackLetter}
               onChange={(e) => {
-                setSelectedPrintSlot(e.target.value);
+                handleSelectRackLetter(e.target.value as RackLetterType);
                 e.currentTarget.blur();
               }}
               className="bg-transparent text-xs font-black text-slate-800 focus:outline-none cursor-pointer py-0.5"
-              title="Choose which rack number to print"
+              title="Choose which rack to print"
             >
-              <option value="ALL">
-                All Racks in {rackLetter} ({unitRows.filter((r) => r.rackNo === rackLetter).length} units)
-              </option>
-              {availableRackSlots.map((slot) => {
-                const letter = rackLetter.replace("Rack ", "").trim();
-                const count = unitRows.filter((r) => r.rackNo === rackLetter && r.rackSlot === slot).length;
+              {RACK_OPTIONS.map((rk) => {
+                const count = unitRows.filter((r) => r.rackNo === rk).length;
                 return (
-                  <option key={slot} value={slot}>
-                    Rack {slot}({letter}) — {count} {count === 1 ? "unit" : "units"}
+                  <option key={rk} value={rk}>
+                    {rk} ({count} {count === 1 ? "unit" : "units"})
                   </option>
                 );
               })}
             </select>
           </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setRackBarcodeModalOpen(true)}
+            className="bg-white hover:bg-indigo-50/60 text-indigo-950 border-indigo-200 font-bold text-xs h-9 px-3 gap-1.5 rounded-xl shadow-2xs cursor-pointer"
+            title="Print physical wall barcodes for Racks A, B, C, D, E"
+          >
+            <Barcode className="w-4 h-4 text-indigo-600" />
+            <span>Wall Barcodes (A-E)</span>
+          </Button>
 
           <Button
             type="button"
@@ -1378,6 +1539,37 @@ return (
             <Printer className="w-4 h-4 text-emerald-400" />
             <span>Print Packing List</span>
           </Button>
+
+          {/* Single Unified Send to History Button (One Place in Top Bar) */}
+          {viewTab === "on_rack" && (
+            <Button
+              type="button"
+              onClick={
+                selectedManifestIds.size > 0
+                  ? handleSendSelectedToHistory
+                  : handleSendRackToHistory
+              }
+              disabled={
+                loading ||
+                (selectedManifestIds.size > 0
+                  ? false
+                  : unitRows.filter((r) => r.rackNo === selectedRack).length === 0)
+              }
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-9 px-3.5 gap-2 rounded-xl shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title={
+                selectedManifestIds.size > 0
+                  ? `Send ${selectedManifestIds.size} selected unit(s) to Packing History & Finished Glass`
+                  : `Send all units on ${selectedRack} to Packing History & Finished Glass (empties the rack)`
+              }
+            >
+              <Send className="w-4 h-4" />
+              <span>
+                {selectedManifestIds.size > 0
+                  ? `Send Selected (${selectedManifestIds.size}) to History`
+                  : `Send ${selectedRack} to History (${unitRows.filter((r) => r.rackNo === selectedRack).length})`}
+              </span>
+            </Button>
+          )}
 
           <Button
             type="button"
@@ -1400,7 +1592,7 @@ return (
               <Boxes className={`w-4 h-4 ${type === "IGU" ? "text-teal-600" : "text-amber-600"}`} />
               <span>TARGET RACK:</span>
             </span>
-            {/* Side-by-side Rack Pills with Integrated Slot Chip & Unit Count */}
+            {/* Side-by-side Rack Pills with Entered Rack Number & Unit Count */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {RACK_OPTIONS.map((rk) => {
                 const isSel = rackLetter === rk;
@@ -1423,7 +1615,7 @@ return (
                           : "bg-amber-600 text-white border-amber-700 shadow-xs ring-2 ring-amber-300/50"
                         : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
                     }`}
-                    title={`Select ${rk} (Slot: ${slot || "none"}, ${count} ${count === 1 ? "unit" : "units"})`}
+                    title={`Select ${rk} (Rack No: ${slot || "none"}, ${count} ${count === 1 ? "unit" : "units"})`}
                   >
                     <span>{rk}</span>
                     {slot && (
@@ -1433,7 +1625,7 @@ return (
                             ? "bg-white/25 text-white"
                             : "bg-slate-100 text-slate-600 border border-slate-200/80"
                         }`}
-                        title={`Assigned Slot: #${slot}`}
+                        title={`Rack Number: #${slot}`}
                       >
                         #{slot}
                       </span>
@@ -1454,10 +1646,16 @@ return (
               })}
             </div>
             <span className="text-slate-300 mx-1">|</span>
-            <span className="text-[11px] font-black text-slate-600 uppercase px-0.5 tracking-wider">NO:</span>
+            {/* Operator Manually Enters Rack Number Here */}
+            <span className="text-[11px] font-black text-slate-600 uppercase px-0.5 tracking-wider">
+              NO:
+            </span>
             <div
-              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-0.5 shadow-inner transition-colors ${!rackSlot.trim() ? "border-amber-400 ring-2 ring-amber-200/60 bg-amber-50/30" : "border-slate-300"
-                }`}
+              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-0.5 shadow-inner transition-colors ${
+                !rackSlot.trim()
+                  ? "border-amber-400 ring-2 ring-amber-200/60 bg-amber-50/30"
+                  : "border-slate-300"
+              }`}
             >
               <input
                 ref={rackSlotInputRef}
@@ -1473,14 +1671,14 @@ return (
                 maxLength={20}
                 placeholder="e.g. 25"
                 className="min-w-[56px] max-w-[140px] w-24 h-6 text-xs font-mono font-black text-center focus:outline-none text-slate-900 bg-transparent px-1"
-                title="Enter rack slot or number (e.g. 1, 2, 25, 50)"
+                title="Manually enter rack number (e.g. 1, 2, 25, 50)"
               />
               <div className="flex flex-col -space-y-0.5">
                 <button
                   type="button"
                   onClick={() => handleIncrementRackSlot(1)}
                   className="text-[9px] text-slate-500 hover:text-slate-900 leading-none cursor-pointer p-0.5"
-                  title="Increment slot number (+1)"
+                  title="Increment rack number (+1)"
                 >
                   ▲
                 </button>
@@ -1488,7 +1686,7 @@ return (
                   type="button"
                   onClick={() => handleIncrementRackSlot(-1)}
                   className="text-[9px] text-slate-500 hover:text-slate-900 leading-none cursor-pointer p-0.5"
-                  title="Decrement slot number (-1)"
+                  title="Decrement rack number (-1)"
                 >
                   ▼
                 </button>
@@ -1498,7 +1696,7 @@ return (
                   type="button"
                   onClick={() => handleSetRackSlot("")}
                   className="text-slate-400 hover:text-rose-600 text-xs ml-0.5 cursor-pointer font-bold px-0.5"
-                  title="Clear slot number"
+                  title="Clear rack number"
                 >
                   ✕
                 </button>
@@ -1506,15 +1704,50 @@ return (
             </div>
           </div>
 
-          {/* Active Target Indicator Badge */}
-          <div
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black shadow-2xs ${type === "IGU" ? "bg-teal-50 border-teal-200 text-teal-800" : "bg-amber-50 border-amber-200 text-amber-800"
-              }`}
+          {/* Active Target Indicator Badge - Clickable to open Rack Manifest & Details */}
+          <button
+            type="button"
+            onClick={() => setRackDetailsModalOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black shadow-2xs transition-all cursor-pointer hover:shadow-xs ${
+              type === "IGU"
+                ? "bg-teal-50 hover:bg-teal-100/70 border-teal-200 text-teal-900"
+                : "bg-amber-50 hover:bg-amber-100/70 border-amber-200 text-amber-900"
+            }`}
+            title="Click to inspect all stickers & units on this rack"
           >
-            <CheckCircle2 className="w-3.5 h-3.5" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             <span>Target:</span>
-            <span className="font-mono text-xs underline decoration-2">{activeTargetRack}</span>
-          </div>
+            <span className="font-mono text-xs font-black underline decoration-2">{activeTargetRack}</span>
+            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700 ml-1">
+              Wall: {formatRackBarcode(rackLetter)}
+            </span>
+          </button>
+
+          {/* Fixed Wall Barcode Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setRackBarcodeModalOpen(true)}
+            className="h-8 px-2.5 rounded-xl text-xs font-black border-indigo-200 bg-indigo-50/50 text-indigo-900 hover:bg-indigo-100 hover:border-indigo-300 gap-1.5 shadow-2xs cursor-pointer"
+            title={`Print physical wall barcode posters for Racks A, B, C, D, E`}
+          >
+            <Barcode className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Wall Barcodes (A-E)</span>
+          </Button>
+
+          {/* Quick Rack Details Inspector */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setRackDetailsModalOpen(true)}
+            className="h-8 px-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 gap-1 cursor-pointer"
+            title="Inspect all stickers on this rack"
+          >
+            <Eye className="w-3.5 h-3.5 text-slate-500" />
+            <span>Rack Details</span>
+          </Button>
         </div>
 
         {/* Date & Interactive Shift Selector */}
@@ -1596,9 +1829,37 @@ return (
             {unitRows.filter((r) => r.rackNo === selectedRack).length}
           </span>
         </button>
+
+        {/* View Mode 3: Packing Operations History (Date-wise) */}
+        <button
+          type="button"
+          onClick={() => {
+            setViewTab("history");
+            setSelectedManifestIds(new Set());
+          }}
+          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 border ${
+            viewTab === "history"
+              ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+              : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+          }`}
+          title="Inspect complete date-wise packing and dispatch history"
+        >
+          <History className="w-3.5 h-3.5" />
+          <span>Packing History</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+              viewTab === "history" ? "bg-white/20 text-white" : "bg-indigo-100 text-indigo-800 font-bold"
+            }`}
+          >
+            {allHistoryUnitRows.length}
+          </span>
+        </button>
       </div>
     </div>
 
+    {/* ── View Tab Workspace: Active Workstation vs Packing History Module ── */}
+    {viewTab !== "history" ? (
+      <>
     {/* ── Search Bar & Client Filter Strip (matching DGU / Assembly Stage View) ── */}
     <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1607,6 +1868,14 @@ return (
           <Input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && searchTerm.trim()) {
+                e.preventDefault();
+                const codeToScan = searchTerm.trim();
+                setSearchTerm("");
+                handleDirectScan(codeToScan);
+              }
+            }}
             placeholder={`Search ${type === "IGU" ? "IGU Packing List" : "Auto Clave Packing List"} queue by Serial, Barcode, POS #, Spec, Order #...`}
             className="pl-9 pr-8 h-9 text-xs bg-slate-50/70 border-slate-200 rounded-xl focus:bg-white"
           />
@@ -1703,11 +1972,13 @@ return (
           )}
         </div>
 
-        <div className="text-[11px] text-slate-500 font-mono">
-          Total in {selectedRack} Manifest:{" "}
-          <strong className={type === "IGU" ? "text-teal-700 font-bold" : "text-amber-700 font-bold"}>
-            {displayedRows.length} {displayedRows.length === 1 ? "Unit" : "Units"}
-          </strong>
+        <div className="flex items-center gap-3">
+          <div className="text-[11px] text-slate-500 font-mono">
+            Total in {selectedRack} Manifest:{" "}
+            <strong className={type === "IGU" ? "text-teal-700 font-bold" : "text-amber-700 font-bold"}>
+              {displayedRows.length} {displayedRows.length === 1 ? "Unit" : "Units"}
+            </strong>
+          </div>
         </div>
       </div>
     </div>
@@ -1737,21 +2008,17 @@ return (
               <Boxes className="w-3.5 h-3.5" />
               <span>Assign Selected ({selectedManifestIds.size}) to {activeTargetRack}</span>
             </Button>
-          ) : viewTab === "on_rack" ? (
+          ) : (
             <Button
               type="button"
               size="sm"
-              disabled={loading}
-              onClick={() => {
-                const sel = displayedRows.filter((r) => selectedManifestIds.has(r.id));
-                handleSendUnitsToFinished(sel);
-              }}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-8 px-3.5 rounded-xl gap-1.5 shadow-xs cursor-pointer"
+              variant="outline"
+              onClick={() => setSelectedManifestIds(new Set())}
+              className="bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs h-7 px-3 rounded-lg border-slate-300 cursor-pointer shadow-2xs"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>Send Selected ({selectedManifestIds.size}) to Finished Stage</span>
+              Clear Selection
             </Button>
-          ) : null}
+          )}
         </div>
       </div>
     )}
@@ -1936,7 +2203,6 @@ return (
                           <th className="py-2.5 px-2 whitespace-nowrap">Finish</th>
                           <th className="py-2.5 px-2 whitespace-nowrap">Route Flow</th>
                           <th className="py-2.5 px-2 text-center whitespace-nowrap">Rack</th>
-                          <th className="py-2.5 px-2 text-center whitespace-nowrap">Rack No</th>
                           <th className="py-2.5 px-2 text-center whitespace-nowrap">Status</th>
                           <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                         </tr>
@@ -2140,7 +2406,7 @@ return (
                                 </div>
                               </td>
 
-                              {/* Rack & Slot & Status */}
+                              {/* Physical Rack */}
                               <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
                                 {viewTab === "pending" ? (
                                   <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-mono font-bold text-xs inline-flex items-center justify-center gap-1 shadow-2xs">
@@ -2150,14 +2416,9 @@ return (
                                 ) : (
                                   <span className="px-2.5 py-0.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 font-mono font-black text-xs inline-flex items-center justify-center gap-1 shadow-2xs">
                                     <Boxes className="w-3 h-3 text-teal-600" />
-                                    <span>{row.rackNo}</span>
+                                    <span>{row.rackNo}{row.rackSlot ? ` (#${row.rackSlot})` : ""}</span>
                                   </span>
                                 )}
-                              </td>
-                              <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
-                                <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-300 text-slate-800 font-mono font-black text-xs inline-block min-w-[32px]">
-                                  {viewTab === "pending" ? "—" : row.rackSlot || "—"}
-                                </span>
                               </td>
                               <td className="py-2.5 px-2 text-center align-middle whitespace-nowrap">
                                 {viewTab === "pending" ? (
@@ -2211,7 +2472,7 @@ return (
                                       title="Send unit from rack into Finished Glass stage"
                                     >
                                       <Send className="w-3 h-3" />
-                                      <span>Send to Finished</span>
+                                      <span>Send to History</span>
                                     </button>
                                   )}
 
@@ -2317,97 +2578,153 @@ return (
         </div>
       )}
     </div>
+    </>
+    ) : (
+      /* ── Dedicated Packing Operations History Module with Date-wise Filtering ── */
+      <PackingHistoryModule
+        type={type}
+        rows={allHistoryUnitRows}
+        onOpenSticker={handleOpenSticker}
+        onRefresh={onRefresh}
+      />
+    )}
 
     {/* ─────────────────────────────────────────────────────────────────────────────
          PRINTABLE PACKING LIST (A4 Strictly matching user's requirements)
+         Suppressed when printing rack wall barcodes
          ───────────────────────────────────────────────────────────────────────────── */}
-    <div id="printable-packing-list" className="hidden print:block bg-white text-black p-6 font-sans">
-      {/* Printable Header */}
-      <div className="flex items-start justify-between border-b-2 border-black pb-4 mb-4">
-        <div>
-          <h1 className="text-2xl font-black uppercase tracking-tight">
-            {type === "IGU" ? "IGU PACKING LIST" : "AUTO CLAVE PACKING LIST"}
-          </h1>
-          <div className="text-xs font-bold uppercase tracking-wide text-gray-700 mt-0.5">
-            SEJAL GLASS MANUFACTURING PRODUCTS LLC
+    {!rackBarcodeModalOpen && (
+      <div id="printable-packing-list" className="hidden print:block bg-white text-black p-6 font-sans">
+        {/* Printable Header */}
+        <div className="flex items-start justify-between border-b-2 border-black pb-4 mb-4">
+          <div>
+            <h1 className="text-2xl font-black uppercase tracking-tight">
+              {type === "IGU" ? "IGU PACKING LIST" : "AUTO CLAVE PACKING LIST"}
+            </h1>
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-700 mt-0.5">
+              SEJAL GLASS MANUFACTURING PRODUCTS LLC
+            </div>
+          </div>
+
+          <div className="text-right text-xs space-y-1.5">
+            <div>
+              <span className="font-bold">DATE:</span>{" "}
+              <span className="font-mono font-bold">{todayDubaiFormatted}</span>
+              <span className="font-bold ml-3">TIME:</span>{" "}
+              <span className="font-mono font-bold">{nowDubaiTime}</span>
+              <span className="font-bold ml-3">SHIFT:</span>{" "}
+              <span className="font-mono font-bold">{shift}</span>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <div>
+                <span className="font-bold">RACK NO:</span>{" "}
+                <span className="font-mono font-black text-sm border-2 border-black px-2.5 py-0.5 ml-1">
+                  {printedRackDisplay}
+                </span>
+              </div>
+              {/* Scannable Rack Barcode SVG on Printed Slip */}
+              <div
+                className="w-36 flex justify-end"
+                dangerouslySetInnerHTML={{
+                  __html: generateBarcodeSVG(formatRackBarcode(rackLetter, selectedPrintSlot !== "ALL" ? selectedPrintSlot : rackSlot), 34, 1.4),
+                }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="text-right text-xs space-y-1.5">
-          <div>
-            <span className="font-bold">DATE:</span>{" "}
-            <span className="font-mono font-bold">{todayDubaiFormatted}</span>
-            <span className="font-bold ml-3">TIME:</span>{" "}
-            <span className="font-mono font-bold">{nowDubaiTime}</span>
-            <span className="font-bold ml-3">SHIFT:</span>{" "}
-            <span className="font-mono font-bold">{shift}</span>
-          </div>
-          <div>
-            <span className="font-bold">RACK NO:</span>{" "}
-            <span className="font-mono font-black text-sm border-2 border-black px-2.5 py-0.5 ml-1">
-              {printedRackDisplay}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Printable Table matching sketch */}
-      <table className="w-full border-collapse border border-black text-xs my-3">
-        <thead>
-          <tr className="bg-gray-100 border-b border-black text-[10px] font-black uppercase">
-            <th className="border border-black py-2 px-1 text-center w-10">SNO</th>
-            <th className="border border-black py-2 px-2 text-left">CUSTOMER NAME</th>
-            <th className="border border-black py-2 px-1.5 text-center w-20">PI NO</th>
-            <th className="border border-black py-2 px-1.5 text-center w-20">BATCH NO</th>
-            <th className="border border-black py-2 px-1.5 text-center w-20">OB NO</th>
-            <th className="border border-black py-2 px-1.5 text-center w-20">SFO NO</th>
-            <th className="border border-black py-2 px-1.5 text-center w-16">POS NO</th>
-            <th className="border border-black py-2 px-1.5 text-right w-16">WIDTH</th>
-            <th className="border border-black py-2 px-1.5 text-right w-16">HEIGHT</th>
-            <th className="border border-black py-2 px-1.5 text-center w-14">QTY</th>
-          </tr>
-        </thead>
-        <tbody>
-          {displayedRows.map((row, idx) => (
-            <tr key={row.id} className="border-b border-gray-300">
-              <td className="border border-black py-1.5 px-1 text-center font-mono font-bold">{idx + 1}</td>
-              <td className="border border-black py-1.5 px-2 font-bold truncate max-w-xs">{row.customerName}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.piNumber || "—"}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.batchNo || "—"}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.obNo || "—"}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.sfoNo || "—"}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.posNo}</td>
-              <td className="border border-black py-1.5 px-1.5 text-right font-mono">{row.width}</td>
-              <td className="border border-black py-1.5 px-1.5 text-right font-mono">{row.height}</td>
-              <td className="border border-black py-1.5 px-1.5 text-center font-mono font-black">{row.qty}</td>
+        {/* Printable Table matching sketch */}
+        <table className="w-full border-collapse border border-black text-xs my-3">
+          <thead>
+            <tr className="bg-gray-100 border-b border-black text-[10px] font-black uppercase">
+              <th className="border border-black py-2 px-1 text-center w-10">SNO</th>
+              <th className="border border-black py-2 px-2 text-left">CUSTOMER NAME</th>
+              <th className="border border-black py-2 px-1.5 text-center w-20">PI NO</th>
+              <th className="border border-black py-2 px-1.5 text-center w-20">BATCH NO</th>
+              <th className="border border-black py-2 px-1.5 text-center w-20">OB NO</th>
+              <th className="border border-black py-2 px-1.5 text-center w-20">SFO NO</th>
+              <th className="border border-black py-2 px-1.5 text-center w-16">POS NO</th>
+              <th className="border border-black py-2 px-1.5 text-right w-16">WIDTH</th>
+              <th className="border border-black py-2 px-1.5 text-right w-16">HEIGHT</th>
+              <th className="border border-black py-2 px-1.5 text-center w-14">QTY</th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-black font-black text-xs bg-gray-50">
-            <td colSpan={9} className="border border-black py-2 px-3 text-right uppercase">
-              TOTAL QTY:
-            </td>
-            <td className="border border-black py-2 px-1.5 text-center font-mono font-black text-sm">
-              {totalQty}
-            </td>
-          </tr>
-        </tfoot>
-      </table>
+          </thead>
+          <tbody>
+            {displayedRows.map((row, idx) => (
+              <tr key={row.id} className="border-b border-gray-300">
+                <td className="border border-black py-1.5 px-1 text-center font-mono font-bold">{idx + 1}</td>
+                <td className="border border-black py-1.5 px-2 font-bold truncate max-w-xs">{row.customerName}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.piNumber || "—"}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.batchNo || "—"}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.obNo || "—"}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.sfoNo || "—"}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-bold">{row.posNo}</td>
+                <td className="border border-black py-1.5 px-1.5 text-right font-mono">{row.width}</td>
+                <td className="border border-black py-1.5 px-1.5 text-right font-mono">{row.height}</td>
+                <td className="border border-black py-1.5 px-1.5 text-center font-mono font-black">{row.qty}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-black font-black text-xs bg-gray-50">
+              <td colSpan={9} className="border border-black py-2 px-3 text-right uppercase">
+                TOTAL QTY:
+              </td>
+              <td className="border border-black py-2 px-1.5 text-center font-mono font-black text-sm">
+                {totalQty}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
 
-      {/* Printable Footer with empty line for physical pen signature and Total Area */}
-      <div className="mt-8 pt-4 border-t border-black flex items-end justify-between">
-        <div className="text-xs text-gray-800 font-bold font-mono">
-          Total Area: {totalSqm.toFixed(2)} m²
-        </div>
+        {/* Printable Footer with empty line for physical pen signature and Total Area */}
+        <div className="mt-8 pt-4 border-t border-black flex items-end justify-between">
+          <div className="text-xs text-gray-800 font-bold font-mono">
+            Total Area: {totalSqm.toFixed(2)} m²
+          </div>
 
-        {/* Operator Signature (Empty line for physical signature) */}
-        <div className="text-right flex items-end justify-end">
-          <span className="text-xs font-bold mr-2">Operator SIGN:</span>
-          <span className="inline-block border-b-2 border-black w-56 pb-1"></span>
+          {/* Operator Signature (Empty line for physical signature) */}
+          <div className="text-right flex items-end justify-end">
+            <span className="text-xs font-bold mr-2">Operator SIGN:</span>
+            <span className="inline-block border-b-2 border-black w-56 pb-1"></span>
+          </div>
         </div>
       </div>
-    </div>
+    )}
+
+    {/* ── Physical Rack Barcode Sticker Modal ── */}
+    <RackBarcodeModal
+      open={rackBarcodeModalOpen}
+      onOpenChange={setRackBarcodeModalOpen}
+      type={type}
+      currentRack={rackLetter}
+      currentSlot={rackSlot}
+      rackSlots={rackSlots}
+      rackCounts={rackCounts}
+      onSelectRack={(rk, sl) => {
+        handleSelectRackLetter(rk);
+        if (sl) handleSetRackSlot(sl);
+      }}
+    />
+
+    {/* ── Rack Details & Sticker Manifest Modal ── */}
+    <RackDetailsModal
+      open={rackDetailsModalOpen}
+      onOpenChange={setRackDetailsModalOpen}
+      type={type}
+      rackLetter={rackLetter}
+      rackSlot={rackSlot}
+      shift={shift}
+      rows={unitRows}
+      onOpenSticker={handleOpenSticker}
+      onOpenRackBarcodeModal={() => {
+        setRackDetailsModalOpen(false);
+        setRackBarcodeModalOpen(true);
+      }}
+      onPrintPackingList={handlePrint}
+      onSendUnitsToFinished={handleSendUnitsToFinished}
+      loading={loading}
+    />
 
     {/* ── Physical Barcode Sticker Modal ── */}
     <BarcodeStickerModal
@@ -2419,3 +2736,5 @@ return (
   </div>
 );
 };
+
+export default PackingListView;

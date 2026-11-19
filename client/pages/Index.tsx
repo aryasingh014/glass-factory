@@ -84,6 +84,7 @@ import { UploadedPdfsModal } from "@/components/UploadedPdfsModal";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
 import { scannerAudio } from "@/lib/audioBeep";
 import { findBestMatchingItem, cleanScannedBarcode, evaluateScanStatus } from "@/lib/barcode";
+import { parseRackBarcode, formatRackBarcode } from "@shared/barcodeConfig";
 // Lazy-load heavy modals and sub-views to keep initial page bundle ultra-fast over ngrok/tunnels
 const ManualPIModal = React.lazy(() =>
   import("@/components/ManualPIModal").then((m) => ({ default: m.ManualPIModal }))
@@ -877,6 +878,34 @@ export default function Index() {
           return;
         }
 
+        // In Packing List tabs (IGU or Lami Auto Clave), yield completely to PackingListView's dedicated scanner handler
+        if (activeTab === "packing-igu" || activeTab === "packing-lami") {
+          return;
+        }
+
+        // 0. Check if the scanned barcode is a physical Rack Barcode (e.g. "RACK-A-25", "RACK-B-10")
+        const rackMatch = parseRackBarcode(cleanCode);
+        if (rackMatch.isRack && rackMatch.rackLetter) {
+          scannerAudio.playSuccess();
+          const targetLetter = rackMatch.rackLetter;
+          const targetSlot = rackMatch.rackSlot || "";
+          try {
+            localStorage.setItem("sejal_finished_packing_rack_letter", targetLetter);
+            if (targetSlot) {
+              localStorage.setItem(`sejal_finished_packing_rack_slot_${targetLetter}`, targetSlot);
+              localStorage.setItem("sejal_finished_packing_rack_slot", targetSlot);
+              localStorage.setItem("sejal_finished_packing_rack", `${targetLetter} - ${targetSlot}`);
+            }
+          } catch {}
+
+          const targetTab = currentWorkstationStage === "Lamination" ? "packing-lami" : "packing-igu";
+          setActiveTab(targetTab);
+          toast.success(
+            `Scanned Rack Barcode ${rackMatch.barcode}. Switched to ${targetLetter}${targetSlot ? ` (#${targetSlot})` : ""}.`
+          );
+          return;
+        }
+
         // 1. Evaluate scan status against active production state & current workstation stage
         const scanEval = evaluateScanStatus(items, cleanCode, currentWorkstationStage);
 
@@ -1576,7 +1605,7 @@ export default function Index() {
       const custUnitMetrics = calculateAssembledUnits(uniqueCustItems);
       const totalUnits = custUnitMetrics.totalUnits > 0 ? custUnitMetrics.totalUnits : totalPieces;
       const completedCustItems = uniqueCustItems.filter(
-        (i) => i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i)
+        (i) => isItemInFinishedStage(i) || isDispatchedItem(i) || i.status === "Completed"
       );
       const completedUnits = calculateAssembledUnits(completedCustItems).totalUnits;
 
@@ -2514,19 +2543,19 @@ export default function Index() {
                   Boolean(item.dispatchedAt && item.dispatchedAt.startsWith(todayIsoDubai));
 
                 if (summaryTimeFilter === "Today") {
-                  return isToday || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+                  return isToday || (!isDispatchedItem(item) && !isItemInFinishedStage(item));
                 }
 
                 if (summaryTimeFilter === "Week") {
                   const itemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : now.getTime();
                   const diffDays = Math.abs(now.getTime() - itemTime) / (1000 * 60 * 60 * 24);
-                  return diffDays <= 7 || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+                  return diffDays <= 7 || (!isDispatchedItem(item) && !isItemInFinishedStage(item));
                 }
 
                 if (summaryTimeFilter === "Month") {
                   const itemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : now.getTime();
                   const diffDays = Math.abs(now.getTime() - itemTime) / (1000 * 60 * 60 * 24);
-                  return diffDays <= 30 || (!isDispatchedItem(item) && item.currentStage !== "Finished");
+                  return diffDays <= 30 || (!isDispatchedItem(item) && !isItemInFinishedStage(item));
                 }
 
                 return true;
@@ -2537,7 +2566,7 @@ export default function Index() {
                 (i) => (i.status === "Rejected" || ((i as any).isRejected && i.status !== "Completed") || unresolvedRejectSerials.has(i.serialNumber)) && i.status !== "Completed"
               );
               const completedSummaryItems = filteredSummaryItems.filter(
-                (i) => i.status !== "Rejected" && !(i as any).isRejected && !unresolvedRejectSerials.has(i.serialNumber) && (i.status === "Completed" || i.currentStage === "Finished" || isDispatchedItem(i))
+                (i) => i.status !== "Rejected" && !(i as any).isRejected && !unresolvedRejectSerials.has(i.serialNumber) && (isItemInFinishedStage(i) || isDispatchedItem(i) || i.status === "Completed")
               );
               const inProgressSummaryItems = filteredSummaryItems.filter(
                 (i) =>
@@ -2547,6 +2576,7 @@ export default function Index() {
                   !completedSummaryItems.some((c) => c.id === i.id) &&
                   (i.status === "In Production" ||
                     i.status === "Reworking" ||
+                    isItemInPackingStage(i) ||
                     (i.completedStages && i.completedStages.length > 0) ||
                     (i.currentStage && i.currentStage !== "Cutting"))
               );
@@ -2566,11 +2596,16 @@ export default function Index() {
               const rejectedItems = stats?.rejectItems !== undefined ? stats.rejectItems : rejectedSummaryItems.reduce((acc, curr) => acc + (curr.qty || 1), 0);
 
               // Assembled Unit Counts
-              const totalUnits = calculateAssembledUnits(filteredSummaryItems).totalUnits || Math.ceil(totalItems / 2);
-              const completedUnits = calculateAssembledUnits(completedSummaryItems).totalUnits || (effectiveStats.finishedItems ?? Math.ceil(completedItems / 2));
-              const inProgressUnits = calculateAssembledUnits(inProgressSummaryItems).totalUnits || Math.ceil(inProgressItems / 2);
-              const pendingUnits = calculateAssembledUnits(pendingSummaryItems).totalUnits || Math.ceil(pendingItems / 2);
-              const rejectedUnits = calculateAssembledUnits(rejectedSummaryItems).totalUnits || Math.ceil(rejectedItems / 2);
+              const totalUnitsCalculated = calculateAssembledUnits(filteredSummaryItems).totalUnits;
+              const totalUnits = totalItems > 0 ? (totalUnitsCalculated > 0 ? totalUnitsCalculated : Math.ceil(totalItems / 2)) : 0;
+              const completedUnitsCalculated = calculateAssembledUnits(completedSummaryItems).totalUnits;
+              const completedUnits = completedItems > 0 ? (completedUnitsCalculated > 0 ? completedUnitsCalculated : Math.ceil(completedItems / 2)) : 0;
+              const inProgressUnitsCalculated = calculateAssembledUnits(inProgressSummaryItems).totalUnits;
+              const inProgressUnits = inProgressItems > 0 ? (inProgressUnitsCalculated > 0 ? inProgressUnitsCalculated : Math.ceil(inProgressItems / 2)) : 0;
+              const pendingUnitsCalculated = calculateAssembledUnits(pendingSummaryItems).totalUnits;
+              const pendingUnits = pendingItems > 0 ? (pendingUnitsCalculated > 0 ? pendingUnitsCalculated : Math.ceil(pendingItems / 2)) : 0;
+              const rejectedUnitsCalculated = calculateAssembledUnits(rejectedSummaryItems).totalUnits;
+              const rejectedUnits = rejectedItems > 0 ? (rejectedUnitsCalculated > 0 ? rejectedUnitsCalculated : Math.ceil(rejectedItems / 2)) : 0;
 
               const grandTotal = Math.max(1, totalItems);
               const grandTotalUnits = Math.max(1, totalUnits);

@@ -192,6 +192,9 @@ loadDatabaseFromDisk(true);
         if (req.headers.accept?.includes("text/event-stream") || req.path.endsWith("/production/events")) {
           return false;
         }
+        if (process.env.NODE_ENV !== "production" && !req.path.startsWith("/api")) {
+          return false;
+        }
         return compression.filter(req, res);
       },
     })

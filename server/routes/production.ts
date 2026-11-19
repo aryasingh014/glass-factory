@@ -4161,14 +4161,17 @@ export const handleGetDashboardStats: RequestHandler = (_req, res) => {
     return dlguUnits + pureDguUnits + lamUnits + monoUnits;
   };
 
-  const finishedPendingList = glassItemsDatabase.filter(
-    (i) =>
-      isUndispatched(i) &&
-      i.currentStage === "Finished" &&
-      i.status !== "Rejected" &&
-      !isPackingIguServerItem(i) &&
-      !isPackingLamiServerItem(i)
-  );
+  const finishedPendingList = glassItemsDatabase.filter((i) => {
+    if (!isUndispatched(i) || i.status === "Rejected") return false;
+    if (i.currentStage !== "Finished") return false;
+    const isIgu = isDgu(i) || isDlguItem(i);
+    const isLami = isLam(i);
+    if (isIgu || isLami) {
+      const hasRack = Boolean(i.packingRackNo && String(i.packingRackNo).trim());
+      return hasRack || Boolean(i.sentToFinished);
+    }
+    return true;
+  });
   const dispatchedList = glassItemsDatabase.filter((i) => (!isUndispatched(i) || (i as any).isDispatched === true || (i as any).currentStage === "Dispatched") && i.status !== "Rejected");
 
   const finishedItems = computeUnits(finishedPendingList);

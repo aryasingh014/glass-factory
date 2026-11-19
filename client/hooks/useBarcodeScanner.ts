@@ -66,14 +66,14 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
     clearTimeout(resetTimer);
     resetTimer = null;
   }
-  // Schedule safety reset after 600ms of inactivity
+  // Schedule safety reset after 1000ms of inactivity
   resetTimer = setTimeout(() => {
     globalBuffer = "";
     isScannerBurst = false;
     charCountBurst = 0;
     focusedInputElement = null;
     valueBeforeBurst = "";
-  }, 600);
+  }, 1000);
 
   // Handle Enter or Tab (Scanner gun termination suffix)
   if (e.key === "Enter" || e.key === "Tab") {
@@ -231,7 +231,7 @@ export function simulateBarcodeScan(rawCode: string): boolean {
 export function useBarcodeScanner({
   onScan,
   minLen = 3,
-  maxIntervalMs = 200,
+  maxIntervalMs = 280,
   duplicateCooldownMs = 1800,
   enabled = true,
   ignoreWhenInputFocused = true,

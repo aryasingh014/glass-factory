@@ -270,9 +270,39 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   #printable-glass-sticker *,
   #printable-packing-list,
   #printable-packing-list *,
+  #printable-history-manifest,
+  #printable-history-manifest *,
+  #printable-rack-barcode,
+  #printable-rack-barcode *,
   #printable-batch-details,
   #printable-batch-details * {
     visibility: visible !important;
+  }
+
+  /* When printing physical rack barcodes from modal, suppress packing list table completely */
+  body.printing-rack-barcode #printable-packing-list,
+  body.printing-rack-barcode #printable-packing-list *,
+  body.printing-rack-barcode #printable-history-manifest,
+  body.printing-rack-barcode #printable-history-manifest * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* When printing from History, suppress active packing list table completely */
+  body.printing-history #printable-packing-list,
+  body.printing-history #printable-packing-list * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* When printing normal active packing list, hide history manifest */
+  body:not(.printing-history) #printable-history-manifest {
+    display: none !important;
+  }
+
+  /* When printing normal reports, hide rack barcode container */
+  body:not(.printing-rack-barcode) #printable-rack-barcode {
+    display: none !important;
   }
 
   /* 4. Strip Radix UI modal dialog centering transforms */
@@ -297,6 +327,8 @@ div[class*="overflow-x-auto"]:hover::-webkit-scrollbar-thumb {
   /* 5. Position printable reports cleanly at top-left 0 */
   #printable-opt-report,
   #printable-packing-list,
+  #printable-history-manifest,
+  #printable-rack-barcode,
   #printable-batch-details {
     position: absolute !important;
     left: 0 !important;

@@ -698,16 +698,19 @@ export function isItemInPackingStage(i: any): boolean {
 }
 
 /**
- * Checks whether an item has genuinely completed packing and is now in Finished Glass stage
+ * Checks whether an item has completed packing (placed on a rack or sent to finished) and is in Finished Glass stage
  */
 export function isItemInFinishedStage(i: any): boolean {
   if (!i || isDispatchedItem(i) || i.status === "Rejected") return false;
-  if (isItemInPackingStage(i)) return false;
-  return (
-    Boolean(i.sentToFinished) ||
-    parseRackInfo(i.packingRackNo).rackNo === "Direct Finish" ||
-    (i.currentStage === "Finished" && Boolean(i.packingRackNo) && !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i))
-  );
+  // If explicitly sent to finished or history
+  if (Boolean(i.sentToFinished)) return true;
+  // If direct finish
+  if (i.packingRackNo && parseRackInfo(i.packingRackNo).rackNo === "Direct Finish") return true;
+  // Any unit placed on a physical rack (e.g. "Rack A - 25", "Rack C - 10") is in Finished Glass stage!
+  if (Boolean(i.packingRackNo && i.packingRackNo.trim())) return true;
+  // Monolithic glass that reached Finished stage directly
+  if (i.currentStage === "Finished" && !isDguGlass(i) && !isDlguGlass(i) && !isLaminatedGlass(i)) return true;
+  return false;
 }
 
 const VALID_RACK_LETTERS: RackLetter[] = ["Rack A", "Rack B", "Rack C", "Rack D", "Rack E"];
